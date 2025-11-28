@@ -99,6 +99,7 @@ CONTROLES :
   S       : Afficher positions
   Q       : Quitter
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 """)
 
 mode_precis = False
@@ -167,7 +168,7 @@ try:
             print("="*40)
             for i in range(1, 7):
                 print(f"Servo {i} ({servo_names[i]:10}): {positions[i]:4}")
-            print("="*40)
+            print("="*40 + "\n")
             
 except KeyboardInterrupt:
     pass
