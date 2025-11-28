@@ -1,4 +1,3 @@
-[README.md](https://github.com/user-attachments/files/23821020/README.md)
 # SO-ARM 101 - Projet Robotique Éducative
 
 Système complet pour l'apprentissage de la robotique avec les bras SO-ARM 101.
