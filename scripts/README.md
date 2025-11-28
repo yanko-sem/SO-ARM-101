@@ -2,6 +2,16 @@
 
 Collection de scripts Python pour la configuration, calibration et contrôle des robots SO-ARM 101.
 
+## 🔧 Prérequis
+
+```bash
+# Environnement conda activé
+conda activate lerobot
+
+# Permissions USB
+sudo chmod 666 /dev/ttyACM*
+```
+
 ## 📋 Liste des Scripts
 
 ### 1️⃣ **SEM_so101_config_servo.py**
@@ -64,15 +74,6 @@ python SEM_so101_control_leader.py
 | Q | Quitter (avec repos sécurisé) |
 | X | ARRÊT D'URGENCE |
 
-## 🔧 Prérequis
-
-```bash
-# Environnement conda activé
-conda activate lerobot
-
-# Permissions USB
-sudo chmod 666 /dev/ttyACM*
-```
 
 ## 📁 Fichiers de Calibration
 
