@@ -3,16 +3,14 @@
 Script SEM_so101_calibrate.py
 Service Ecoles Médias - Calibration des servos SO-ARM 101
 
-Ce script permet de :
-1. Calibrer les limites min/max de chaque servo
-2. Sauvegarder automatiquement après chaque calibration
-3. Afficher un tableau récapitulatif
+Ce script permet de calibrer les limites min/max de chaque servo
+et sauvegarde automatiquement après chaque calibration.
 """
 
-import json
-import os
 import sys
+import os
 import time
+import json
 import math
 
 # Ajout du chemin LeRobot
@@ -27,233 +25,251 @@ def detect_port():
             return port
     return None
 
-print("""
-==================================================
-       CALIBRATION SO-ARM-101
-       Service Ecoles Médias (SEM)
-==================================================
-""")
-
-PORT = detect_port()
-if not PORT:
-    print("ERREUR: Pas d'adaptateur USB detecte")
-    exit()
-
-print(f"Port detecte : {PORT}")
-
-print("\nQuel bras ?")
-print("  1 - LEADER (avec poignee)")
-print("  2 - FOLLOWER (avec pince)")
-choix_bras = input("Choix (1 ou 2) : ")
-
-arm_name = "leader" if choix_bras == "1" else "follower"
-
-# Affichage clair du robot actif
-print("\n" + "="*50)
-print(f"     ROBOT ACTIF: {arm_name.upper()}")
-print("="*50)
-
-# Charger calibration existante
-calib_dir = os.path.expanduser("~/.cache/calibration/so101")
-os.makedirs(calib_dir, exist_ok=True)
-calib_file = os.path.join(calib_dir, f"{arm_name}_calibration.json")
-
-if os.path.exists(calib_file):
-    with open(calib_file, 'r') as f:
-        calibration = json.load(f)
-    print(f"Calibration existante chargee pour {arm_name.upper()}")
-else:
-    calibration = {}
-    print(f"Nouvelle calibration pour {arm_name.upper()}")
-
-BAUDRATE = 1000000
-portHandler = PortHandler(PORT)
-packetHandler = PacketHandler(1.0)
-
-if not portHandler.openPort() or not portHandler.setBaudRate(BAUDRATE):
-    print("ERREUR: connexion")
-    exit()
-
-servo_names = {
-    1: "BASE", 2: "EPAULE", 3: "COUDE",
-    4: "POIGNET FLEXION", 5: "POIGNET ROTATION", 6: "PINCE/POIGNEE"
-}
-
-def sauvegarder_calibration():
-    """Sauvegarde automatique"""
-    with open(calib_file, 'w') as f:
-        json.dump(calibration, f, indent=2)
-    print("  [Sauvegarde automatique effectuee]")
-
-def centrage_doux(servo_id, position_cible, duree=1.5):
-    """Centrage avec mouvement fluide"""
+def centrage_doux(packetHandler, portHandler, servo_id, pos_min, pos_max):
+    """Centre le servo avec un mouvement fluide"""
+    centre = (pos_min + pos_max) // 2
     pos_actuelle, _, _ = packetHandler.read2ByteTxRx(portHandler, servo_id, 56)
-    packetHandler.write1ByteTxRx(portHandler, servo_id, 40, 1)
     
+    print(f"  🔄 Centrage fluide vers {centre}...")
+    
+    # Mouvement sinusoïdal pour la fluidité
     steps = 50
     for step in range(steps + 1):
         t = step / steps
+        # Courbe sinusoïdale
         smooth_t = (1 - math.cos(t * math.pi)) / 2
-        
-        pos_inter = int(pos_actuelle + (position_cible - pos_actuelle) * smooth_t)
-        packetHandler.write2ByteTxRx(portHandler, servo_id, 42, pos_inter)
-        time.sleep(duree / steps)
+        pos = int(pos_actuelle + (centre - pos_actuelle) * smooth_t)
+        packetHandler.write2ByteTxRx(portHandler, servo_id, 42, pos)
+        time.sleep(1.5 / steps)  # 1.5 secondes au total
     
-    time.sleep(0.5)
-    packetHandler.write1ByteTxRx(portHandler, servo_id, 40, 0)
+    return centre
 
-def afficher_tableau_recap():
-    """Affiche le tableau recapitulatif"""
-    print("\n" + "="*60)
-    print("         TABLEAU RECAPITULATIF")
-    print("="*60)
-    print("ID  Nom                MIN    CENTRE  MAX    Amplitude")
-    print("-"*60)
+def calibrer_servo(packetHandler, portHandler, servo_id, servo_name):
+    """Calibre un servo individuellement"""
+    print(f"\n{'='*60}")
+    print(f"CALIBRATION DU SERVO {servo_id} - {servo_name}")
+    print(f"{'='*60}")
+    
+    # Activer le servo
+    packetHandler.write1ByteTxRx(portHandler, servo_id, 40, 1)
+    
+    # Lire position actuelle
+    pos_actuelle, _, _ = packetHandler.read2ByteTxRx(portHandler, servo_id, 56)
+    print(f"Position actuelle: {pos_actuelle}")
+    
+    # Relâcher pour manipulation manuelle
+    print("\n⚠️  Le servo est maintenant LIBRE")
+    packetHandler.write1ByteTxRx(portHandler, servo_id, 40, 0)
+    
+    print("\n📋 Instructions:")
+    print("1. Bougez MANUELLEMENT le servo à sa position MINIMALE")
+    print("2. Maintenez la position et appuyez sur ENTRÉE")
+    input("\n➡️  Position MIN prête? [ENTRÉE]")
+    
+    # Lire position MIN
+    pos_min, _, _ = packetHandler.read2ByteTxRx(portHandler, servo_id, 56)
+    print(f"✅ Position MIN enregistrée: {pos_min}")
+    
+    print("\n3. Bougez MANUELLEMENT le servo à sa position MAXIMALE")
+    print("4. Maintenez la position et appuyez sur ENTRÉE")
+    input("\n➡️  Position MAX prête? [ENTRÉE]")
+    
+    # Lire position MAX
+    pos_max, _, _ = packetHandler.read2ByteTxRx(portHandler, servo_id, 56)
+    print(f"✅ Position MAX enregistrée: {pos_max}")
+    
+    # Vérification cohérence
+    if pos_max <= pos_min:
+        print("⚠️  ATTENTION: MAX <= MIN, inversion automatique")
+        pos_min, pos_max = pos_max, pos_min
+    
+    # Calcul du centre et amplitude
+    centre = (pos_min + pos_max) // 2
+    amplitude = pos_max - pos_min
+    
+    print(f"\n📊 Résumé calibration:")
+    print(f"  • MIN: {pos_min}")
+    print(f"  • MAX: {pos_max}")
+    print(f"  • CENTRE: {centre}")
+    print(f"  • Amplitude: {amplitude}")
+    
+    # Réactiver et centrer avec mouvement fluide
+    packetHandler.write1ByteTxRx(portHandler, servo_id, 40, 1)
+    centrage_doux(packetHandler, portHandler, servo_id, pos_min, pos_max)
+    
+    print(f"✅ Servo {servo_id} centré")
+    
+    # Désactiver le servo
+    packetHandler.write1ByteTxRx(portHandler, servo_id, 40, 0)
+    
+    return {
+        "min": pos_min,
+        "max": pos_max,
+        "center": centre,
+        "amplitude": amplitude
+    }
+
+def sauvegarder_calibration(calibration, robot_type):
+    """Sauvegarde la calibration dans un fichier JSON"""
+    # Créer le dossier si nécessaire
+    calib_dir = os.path.expanduser("~/.cache/calibration/so101")
+    os.makedirs(calib_dir, exist_ok=True)
+    
+    # Nom du fichier selon le robot
+    filename = f"{calib_dir}/{robot_type.lower()}_calibration.json"
+    
+    # Sauvegarder
+    with open(filename, 'w') as f:
+        json.dump(calibration, f, indent=2)
+    
+    print(f"\n💾 Calibration sauvegardée: {filename}")
+
+def charger_calibration(robot_type):
+    """Charge une calibration existante"""
+    filename = os.path.expanduser(f"~/.cache/calibration/so101/{robot_type.lower()}_calibration.json")
+    
+    if os.path.exists(filename):
+        with open(filename, 'r') as f:
+            return json.load(f)
+    return {}
+
+def afficher_tableau_calibration(calibration):
+    """Affiche un tableau récapitulatif de la calibration"""
+    print("\n" + "="*80)
+    print("TABLEAU RÉCAPITULATIF DE CALIBRATION")
+    print("="*80)
+    print(f"{'ID':<4} {'Nom':<15} {'MIN':<8} {'CENTRE':<8} {'MAX':<8} {'Amplitude':<10}")
+    print("-"*80)
+    
+    servo_names = {
+        1: "BASE",
+        2: "ÉPAULE", 
+        3: "COUDE",
+        4: "POIGNET-F",
+        5: "POIGNET-R",
+        6: "PINCE/POIGNÉE"
+    }
     
     for i in range(1, 7):
-        if f"servo_{i}" in calibration:
-            data = calibration[f"servo_{i}"]
-            print(f"{i}   {data['name']:<18} {data['min']:<6} {data['center']:<7} {data['max']:<6} {data['amplitude']}")
+        key = f"servo_{i}"
+        if key in calibration:
+            cal = calibration[key]
+            print(f"{i:<4} {servo_names[i]:<15} {cal['min']:<8} {cal['center']:<8} {cal['max']:<8} {cal['amplitude']:<10}")
         else:
-            print(f"{i}   {servo_names[i]:<18} ---    ---     ---    ---")
-    print("="*60)
-
-# Liberer tous les servos au debut
-print("\nLiberation des servos...")
-for i in range(1, 7):
-    packetHandler.write1ByteTxRx(portHandler, i, 40, 0)
-
-while True:
-    print(f"\n[ROBOT: {arm_name.upper()}]")
-    print("="*50)
-    print("MENU PRINCIPAL:")
-    print("  1-6 : Calibrer UN servo specifique")
-    print("  T   : Calibrer TOUS les servos")
-    print("  V   : Voir calibration actuelle")
-    print("  Q   : QUITTER et sauvegarder")
-    print("="*50)
+            print(f"{i:<4} {servo_names[i]:<15} {'---':<8} {'---':<8} {'---':<8} {'---':<10}")
     
-    choix = input(f"\n{arm_name}> ").upper().strip()
+    print("="*80)
+
+def main():
+    print("""
+╔══════════════════════════════════════════════════════════╗
+║     SEM - CALIBRATION SO-ARM 101                        ║
+║     Service Ecoles Médias                               ║
+╚══════════════════════════════════════════════════════════╝
+
+Ce script calibre les limites de mouvement de chaque servo.
+IMPORTANT: La calibration est SAUVEGARDÉE après chaque servo!
+""")
+
+    # Détection du port
+    PORT = detect_port()
+    if not PORT:
+        print("❌ Aucun adaptateur USB détecté!")
+        return
     
-    if choix == 'Q':
-        sauvegarder_calibration()
-        print(f"Calibration finale sauvegardee pour {arm_name.upper()}")
-        break
+    print(f"✅ Port détecté: {PORT}")
+    
+    # Choix du robot
+    print("\n🤖 Quel robot calibrez-vous?")
+    print("  L → LEADER")
+    print("  F → FOLLOWER")
+    
+    choix_robot = input("\nVotre choix (L/F): ").strip().upper()
+    
+    if choix_robot == 'L':
+        robot_type = "LEADER"
+    elif choix_robot == 'F':
+        robot_type = "FOLLOWER"
+    else:
+        print("❌ Choix invalide")
+        return
+    
+    print(f"\n✅ Calibration du {robot_type}")
+    
+    # Charger calibration existante
+    calibration = charger_calibration(robot_type)
+    if calibration:
+        print("📁 Calibration existante chargée")
+        afficher_tableau_calibration(calibration)
+    
+    # Connexion
+    BAUDRATE = 1000000
+    portHandler = PortHandler(PORT)
+    packetHandler = PacketHandler(1.0)
+    
+    if not portHandler.openPort():
+        print("❌ Impossible d'ouvrir le port")
+        return
+    
+    if not portHandler.setBaudRate(BAUDRATE):
+        print("❌ Impossible de configurer le baudrate")
+        return
+    
+    servo_names = {
+        1: "BASE",
+        2: "ÉPAULE",
+        3: "COUDE", 
+        4: "POIGNET-FLEXION",
+        5: "POIGNET-ROTATION",
+        6: "PINCE" if robot_type == "FOLLOWER" else "POIGNÉE"
+    }
+    
+    while True:
+        print("\n" + "="*60)
+        print("MENU PRINCIPAL")
+        print("="*60)
+        print("1-6 → Calibrer un servo spécifique")
+        print("  T → Calibrer TOUS les servos")
+        print("  V → Voir calibration actuelle")
+        print("  Q → Quitter")
+        print("="*60)
         
-    elif choix == 'V':
-        print(f"\nCALIBRATION ACTUELLE ({arm_name.upper()}):")
-        for i in range(1, 7):
-            if f"servo_{i}" in calibration:
-                data = calibration[f"servo_{i}"]
-                print(f"  Servo {i}: MIN={data['min']}, CENTRE={data['center']}, MAX={data['max']}")
-            else:
-                print(f"  Servo {i}: Non calibre")
+        choix = input("\nVotre choix: ").strip().upper()
+        
+        if choix == 'Q':
+            break
+        elif choix == 'V':
+            afficher_tableau_calibration(calibration)
+        elif choix == 'T':
+            # Calibrer tous les servos
+            print("\n🔄 CALIBRATION COMPLÈTE")
+            for servo_id in range(1, 7):
+                result = calibrer_servo(packetHandler, portHandler, 
+                                      servo_id, servo_names[servo_id])
+                calibration[f"servo_{servo_id}"] = result
                 
-    elif choix == 'T':
-        print(f"\nCALIBRATION COMPLETE ({arm_name.upper()} - 6 servos)")
-        for servo_id in range(1, 7):
-            print(f"\n{'='*40}")
-            print(f"SERVO {servo_id} : {servo_names[servo_id]}")
-            print("="*40)
+                # SAUVEGARDE APRÈS CHAQUE SERVO
+                sauvegarder_calibration(calibration, robot_type)
+                print(f"💾 Servo {servo_id} sauvegardé!")
             
-            print("-> Bougez le servo a une BUTEE (extreme 1)")
-            input("   Appuyez ENTREE... ")
-            pos1, _, _ = packetHandler.read2ByteTxRx(portHandler, servo_id, 56)
-            print(f"   Position 1 = {pos1}")
+            print("\n✅ CALIBRATION COMPLÈTE TERMINÉE")
+            afficher_tableau_calibration(calibration)
             
-            print("\n-> Bougez le servo a l'AUTRE BUTEE (extreme 2)")
-            input("   Appuyez ENTREE... ")
-            pos2, _, _ = packetHandler.read2ByteTxRx(portHandler, servo_id, 56)
-            print(f"   Position 2 = {pos2}")
+        elif choix in ['1', '2', '3', '4', '5', '6']:
+            servo_id = int(choix)
+            result = calibrer_servo(packetHandler, portHandler, 
+                                  servo_id, servo_names[servo_id])
+            calibration[f"servo_{servo_id}"] = result
             
-            pos_min = min(pos1, pos2)
-            pos_max = max(pos1, pos2)
-            pos_center = (pos_min + pos_max) // 2
-            amplitude = pos_max - pos_min
-            
-            print(f"\n  MIN={pos_min}, CENTRE={pos_center}, MAX={pos_max}")
-            print(f"  Amplitude={amplitude}")
-            
-            print("\n-> Centrage dans 2 secondes...")
-            time.sleep(2)
-            print("-> Centrage en douceur...")
-            centrage_doux(servo_id, pos_center)
-            print("OK: Servo recentre et libere")
-            
-            calibration[f"servo_{servo_id}"] = {
-                "min": pos_min,
-                "max": pos_max,
-                "center": pos_center,
-                "amplitude": amplitude,
-                "name": servo_names[servo_id]
-            }
-            
-            # Sauvegarde automatique apres chaque servo
-            sauvegarder_calibration()
-        
-        # Afficher tableau recap a la fin
-        afficher_tableau_recap()
-            
-    elif choix in '123456':
-        servo_id = int(choix)
-        print(f"\n{'='*40}")
-        print(f"CALIBRATION SERVO {servo_id} : {servo_names[servo_id]}")
-        print(f"ROBOT: {arm_name.upper()}")
-        print("="*40)
-        
-        if f"servo_{servo_id}" in calibration:
-            old = calibration[f"servo_{servo_id}"]
-            print(f"Ancienne: MIN={old['min']}, MAX={old['max']}, CENTRE={old['center']}")
-        
-        print("\n-> Bougez le servo a une BUTEE (extreme 1)")
-        input("   Appuyez ENTREE... ")
-        pos1, _, _ = packetHandler.read2ByteTxRx(portHandler, servo_id, 56)
-        print(f"   Position 1 = {pos1}")
-        
-        print("\n-> Bougez le servo a l'AUTRE BUTEE (extreme 2)")
-        input("   Appuyez ENTREE... ")
-        pos2, _, _ = packetHandler.read2ByteTxRx(portHandler, servo_id, 56)
-        print(f"   Position 2 = {pos2}")
-        
-        pos_min = min(pos1, pos2)
-        pos_max = max(pos1, pos2)
-        pos_center = (pos_min + pos_max) // 2
-        amplitude = pos_max - pos_min
-        
-        print(f"\nNOUVELLE CALIBRATION:")
-        print(f"  MIN    : {pos_min}")
-        print(f"  CENTRE : {pos_center}")
-        print(f"  MAX    : {pos_max}")
-        print(f"  Amplitude : {amplitude}")
-        
-        # Alerte si amplitude anormale
-        if amplitude < 500:
-            print("  ATTENTION: Amplitude faible!")
-        elif amplitude > 3500 and not (arm_name == "leader" and servo_id == 3):
-            print("  ATTENTION: Amplitude elevee!")
-        
-        print("\n-> Centrage dans 2 secondes...")
-        time.sleep(2)
-        print("-> Centrage en douceur...")
-        centrage_doux(servo_id, pos_center)
-        print("OK: Servo recentre et libere")
-        
-        calibration[f"servo_{servo_id}"] = {
-            "min": pos_min,
-            "max": pos_max,
-            "center": pos_center,
-            "amplitude": amplitude,
-            "name": servo_names[servo_id]
-        }
-        
-        # Sauvegarde automatique
-        sauvegarder_calibration()
-        print("Calibration enregistree et sauvegardee!")
+            # SAUVEGARDE IMMÉDIATE
+            sauvegarder_calibration(calibration, robot_type)
+            print(f"💾 Calibration du servo {servo_id} sauvegardée!")
+        else:
+            print("❌ Choix invalide")
+    
+    portHandler.closePort()
+    print("\n✅ Calibration terminée")
+    print(f"📁 Fichier: ~/.cache/calibration/so101/{robot_type.lower()}_calibration.json")
 
-# Liberation finale
-for i in range(1, 7):
-    packetHandler.write1ByteTxRx(portHandler, i, 40, 0)
-portHandler.closePort()
-
-print(f"\nTERMINE! Calibration {arm_name.upper()} complete.")
-print(f"Fichier: {calib_file}")
+if __name__ == "__main__":
+    main()
