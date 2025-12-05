@@ -1,109 +1,71 @@
-# Supports de Caméra pour SO-ARM 101
+# Pièces STL - Leader SO-ARM 101
 
-Supports d'impression 3D pour caméras InnoMaker U20CAM-1080P-S1 (32x32mm).
+Fichiers d'impression 3D pour le bras Leader (contrôle).
 
-## 📸 Configuration 2 caméras
+## 🤖 Spécificités du Leader
 
-Pour l'apprentissage par imitation optimal, chaque robot nécessite 2 caméras :
+Le Leader utilise des servos avec **3 ratios différents** :
+- **Servos 1, 3** : Ratio 1:191 (code C044)
+- **Servo 2** : Ratio 1:345 (code C001)
+- **Servos 4, 5, 6** : Ratio 1:147 (code C046)
 
-### 1️⃣ **Caméra Poignet**
-- **Fichier** : `SO101_Wrist_Cam_Mount_32x32.stl`
-- **Position** : Montée sur le servo 6 (poignet)
-- **Vue** : Rapprochée de la pince et de l'objet
-- **Utilité** : Précision de préhension
+## 📥 Téléchargement
 
-### 2️⃣ **Caméra Aérienne**
-- **Dossier** : `Aerienne/` (3 pièces)
-  - `arm_base.stl` - Base de fixation
-  - `cam_mount_bottom.stl` - Support inférieur
-  - `cam_mount_top.stl` - Support supérieur
-- **Position** : Au-dessus de l'espace de travail
-- **Vue** : Ensemble de la zone de manipulation
-- **Utilité** : Contexte spatial
+Les fichiers STL du Leader sont disponibles sur le GitHub officiel :
 
-## 🔧 Installation
+**🔗 Lien direct :**
+[TheRobotStudio/SO-ARM100 - Leader STL](https://github.com/TheRobotStudio/SO-ARM100/tree/main/STL/SO101/Leader)
 
-### Caméra Poignet
+### Fichiers à télécharger :
+- `Prusa_Leader_SO101.stl` - Toutes les pièces en une plaque
+OU
+- Pièces individuelles si disponibles
 
-1. **Imprimer** `SO101_Wrist_Cam_Mount_32x32.stl`
-   - Remplissage : 40%
-   - Supports : Arborescent
+## 🖨️ Paramètres d'impression
 
-2. **Matériel nécessaire**
-   - 4x vis M2 (des servos)
-   - 2x vis M3
-   - 2x écrous hexagonaux M3
+### Configuration recommandée
+- **Matériau** : PLA ou PETG
+- **Hauteur de couche** : 0.2 mm
+- **Remplissage** : 30% minimum
+- **Supports** : Selon géométrie
+- **Adhérence** : Brim si nécessaire
 
-3. **Montage**
-   - Démonter le servo 6
-   - Insérer les écrous hex dans les logements
-   - Remonter le servo 6
-   - Fixer l'adaptateur avec les vis M3
-   - Monter la caméra avec les vis M2
+### Temps estimé
+- **Impression complète** : 15-20 heures
+- **Filament nécessaire** : ~200-300g
 
-### Caméra Aérienne
+## 🔧 Assemblage
 
-1. **Imprimer les 3 pièces**
-   - Remplissage : 40%
-   - Supports : Arborescent
+### Ordre de montage
+1. Base (Servo 1)
+2. Épaule (Servo 2)
+3. Coude (Servo 3)
+4. Poignet Flexion (Servo 4)
+5. Poignet Rotation (Servo 5)
+6. Poignée de contrôle (Servo 6)
 
-2. **Matériel nécessaire**
-   - 8x vis M2
-   - 1x boulon hexagonal
+### ⚠️ Points d'attention
+- **Ratios différents** : Vérifier codes C044/C001/C046
+- **Poignée** : Pas de pince, mais une poignée pour la main
+- **Câblage** : Regrouper proprement les câbles
 
-3. **Assemblage**
-   - Assembler `cam_mount_top` + `cam_mount_bottom`
-   - Fixer avec 4x vis M2
-   - Monter sur `arm_base`
-   - Fixer l'ensemble à la base du robot
+## 📋 Liste des pièces imprimées
 
-## 📐 Dimensions caméra
+1. **Structure principale**
+   - Base
+   - Supports articulations
+   - Éléments de liaison
 
-**InnoMaker U20CAM-1080P-S1**
-- Taille PCB : 32 x 32 mm
-- Trous de fixation : 27 mm d'entraxe
-- Diamètre trous : 2.2 mm (pour vis M2)
-- Épaisseur : ~3 mm
+2. **Poignée de contrôle**
+   - Corps de poignée
+   - Gâchette/bouton (optionnel)
 
-## ⚙️ Configuration logicielle
+## 💡 Conseils spécifiques Leader
 
-### Paramètres recommandés
-```
-Résolution : 640 x 480
-FPS : 30
-Format : MJPEG
-```
-
-### Mise au point
-- **IMPORTANT** : Focus manuel sur la caméra
-- Ajuster avant de fixer définitivement
-- Distance optimale : 15-30 cm pour poignet
-
-## 🎯 Positionnement optimal
-
-```
-        [Caméra Aérienne]
-         ↓ (50-70 cm)
-    ┌─────────────┐
-    │   Espace    │
-    │  de travail │
-    │   30x30cm   │
-    └─────────────┘
-         ↑
-    [Robot + Caméra Poignet]
-```
-
-## 💡 Conseils
-
-1. **Câbles USB** : Prévoir câbles suffisamment longs
-2. **Hub USB** : Recommandé pour 2+ caméras
-3. **Éclairage** : Uniforme, éviter ombres portées
-4. **Calibration** : Faire après installation fixe
-
-## 📥 Sources originales
-
-- [Support Poignet GitHub](https://github.com/TheRobotStudio/SO-ARM100/tree/main/Optional/SO101_Wrist_Cam_Hex-Nut_Mount_32x32_UVC_Module)
-- [Support Aérien GitHub](https://github.com/TheRobotStudio/SO-ARM100/tree/main/Optional/Overhead_Cam_Mount_Webcam)
+- **Ergonomie** : La poignée doit être confortable
+- **Équilibrage** : Centre de gravité bien réparti
+- **Fluidité** : Vérifier que tous les axes bougent librement
+- **Identification** : Marquer "LEADER" sur la base
 
 ---
 Service Ecoles Médias - Genève
