@@ -1,7 +1,6 @@
 # SO-ARM 101 - Projet Robotique Éducative
 
-Système complet pour l'apprentissage de la robotique avec les bras SO-ARM 101.
-Développé par le Service Ecoles Médias (SEM) du Département de l'Instruction Publique (DIP) de Genève en Suisse.
+Système complet pour l'apprentissage de la robotique avec les bras SO-ARM 101. Développé par le Service Ecoles Médias (SEM) du Département de l'Instruction Publique (DIP) de Genève en Suisse.
 
 ## 🎯 Objectif du Projet
 
@@ -14,14 +13,14 @@ Former un robot à effectuer des tâches de manipulation d'objets par apprentiss
 - **Phase 2** : Configuration des servos (IDs et ratios)
 - **Phase 3** : Calibration des limites de mouvement
 - **Phase 4** : Tests et contrôle manuel
+- **Phase 5** : Téléopération (Leader contrôle Follower) - Scripts 5 et 6 disponibles
 
 ### 🚀 Phases à Venir
-- **Phase 5** : Téléopération (Leader contrôle Follower)
-- **Phase 6** : Installation et configuration des caméras
-- **Phase 7** : Enregistrement de trajectoires
-- **Phase 8** : Configuration du système d'IA (ACT - Action Chunking Transformers)
-- **Phase 9** : Entraînement du modèle
-- **Phase 10** : Déploiement et test autonome
+- Phase 6 : Installation et configuration des caméras
+- Phase 7 : Enregistrement de trajectoires
+- Phase 8 : Configuration du système d'IA (ACT - Action Chunking Transformers)
+- Phase 9 : Entraînement du modèle
+- Phase 10 : Déploiement et test autonome
 
 ## 📦 Installation
 
@@ -39,8 +38,8 @@ git clone https://github.com/yanko-sem/SO-ARM-101.git Docs_SEM
 
 # Structure créée :
 # ~/lerobot/Docs_SEM/
-#   ├── scripts_SEM/     (scripts Python)
-#   └── guides/          (guides PDF)
+#   ├── scripts/          (scripts Python)
+#   └── docs/            (guides PDF)
 ```
 
 ## 🔧 Configuration Matérielle
@@ -48,18 +47,16 @@ git clone https://github.com/yanko-sem/SO-ARM-101.git Docs_SEM
 ### Matériel Requis
 - 2x Bras SO-ARM 101 (Leader + Follower)
 - 2x Adaptateurs USB Feetech
-- 2x Alimentations (5V 3A minimum)
-- 2x Caméras USB (pour les phases avancées)
-- 1x PC avec Ubuntu 20.04+ (GPU recommandé pour l'IA)
+- 2x Alimentations 12V 3A
+- 1x PC avec Ubuntu 20.04+
 
 ### Configuration des Servos
-
-#### Leader (Bras de contrôle)
+**Leader** (Bras de contrôle)
 - Servos 1,3 : Ratio 1:191 (C044)
 - Servo 2 : Ratio 1:345 (C001)
 - Servos 4,5,6 : Ratio 1:147 (C046)
 
-#### Follower (Bras suiveur)
+**Follower** (Bras suiveur)
 - Tous les servos : Ratio 1:345 (identiques)
 
 ## 📚 Guide d'Utilisation par Phase
@@ -72,8 +69,8 @@ git clone https://github.com/yanko-sem/SO-ARM-101.git Docs_SEM
 
 ### Phase 2 : Configuration des Servos
 ```bash
-cd ~/lerobot/Docs_SEM/scripts_SEM
-python SEM_so101_config_servo.py
+cd ~/lerobot/Docs_SEM/scripts
+python SEM_so101_1_configure.py
 
 # Configure chaque servo avec son ID (1-6)
 # Un servo à la fois, test de mouvement inclus
@@ -81,145 +78,79 @@ python SEM_so101_config_servo.py
 
 ### Phase 3 : Calibration
 ```bash
-python SEM_so101_calibrate.py
+python SEM_so101_2_calibrate.py
 
 # Définit les limites min/max de chaque servo
-# Sauvegarde automatique dans ~/.cache/calibration/so101/
+# Sauvegarde automatique dans ~/lerobot/calibration/
 ```
 
 ### Phase 4 : Test et Contrôle Manuel
 ```bash
-# Pour le Follower
-python SEM_so101_control_follower.py
+# Monitoring temps réel
+python SEM_so101_3_monitor.py
 
-# Pour le Leader
-python SEM_so101_control_leader.py
+# Contrôle manuel
+python SEM_so101_4_control.py
 
 # Contrôles clavier disponibles :
 # ↑/↓ : Augmenter/Diminuer position
 # ←/→ : Changer de servo
 # ESPACE : Centrer le servo actif
+# I : Position initiale
 # C : Centrer tous les servos
 # P : Mode précis ON/OFF
 # S : Afficher positions
 # A : Position ATTRAPER
 # R : Position REPOS
-# Q : Quitter (repos sécurisé)
+# Q : Quitter
 # X : Arrêt d'urgence
 ```
 
-### Phase 5 : Téléopération (À venir)
+### Phase 5 : Téléopération
 ```bash
+# Configuration de la téléopération
+python SEM_so101_5_config_teleoperation.py
+
 # Contrôle simultané Leader → Follower
-cd ~/lerobot
-python lerobot/scripts/control_robot.py teleoperate \
-    --robot-path lerobot/configs/robot/so_arm_100.yaml
-```
+python SEM_so101_6_teleoperation.py
 
-### Phase 6 : Configuration Caméras (À venir)
-- Installation de 2 caméras USB
-- Configuration dans LeRobot
-- Calibration de la vision
-
-### Phase 7 : Enregistrement de Données (À venir)
-```bash
-# Enregistrer des démonstrations
-python lerobot/scripts/control_robot.py record \
-    --robot-path lerobot/configs/robot/so_arm_100.yaml \
-    --fps 30 \
-    --episode-time-s 60 \
-    --repo-id ${HF_USER}/so_arm_pick_place \
-    --num-episodes 50
-```
-
-### Phase 8 : Configuration IA (À venir)
-- Installation des modèles ACT (Action Chunking Transformers)
-- Configuration des hyperparamètres
-- Préparation du dataset
-
-### Phase 9 : Entraînement (À venir)
-```bash
-# Entraîner le modèle sur les démonstrations
-python lerobot/scripts/train.py \
-    --config-path lerobot/configs/policy/act_so_arm_real.yaml \
-    --dataset-repo-id ${HF_USER}/so_arm_pick_place
-```
-
-### Phase 10 : Déploiement Autonome (À venir)
-```bash
-# Exécuter le robot en mode autonome
-python lerobot/scripts/control_robot.py replay \
-    --robot-path lerobot/configs/robot/so_arm_100.yaml \
-    --policy-path outputs/train/act_so_arm_real/checkpoints/last.ckpt
+# Modes disponibles :
+# MIROIR : Mouvement inversé
+# COPIE : Mouvement identique
 ```
 
 ## 📁 Structure Complète des Fichiers
 
 ```
-~/lerobot/
-├── Docs_SEM/
-│   ├── scripts_SEM/
-│   │   ├── SEM_so101_config_servo.py
-│   │   ├── SEM_so101_calibrate.py
-│   │   ├── SEM_so101_control_follower.py
-│   │   └── SEM_so101_control_leader.py
-│   ├── guides/
-│   │   ├── Phase1_Installation.pdf
-│   │   ├── Phase2_Configuration.pdf
-│   │   ├── Phase3_Calibration.pdf
-│   │   └── Phase4_Tests.pdf
-│   └── README.md
-├── lerobot/
-│   ├── configs/
-│   │   ├── policy/
-│   │   │   └── act_so_arm_real.yaml
-│   │   └── robot/
-│   │       ├── so_arm_100.yaml
-│   │       └── feetech.yaml
-│   ├── scripts/
-│   │   ├── configure_motor.py
-│   │   ├── control_robot.py
-│   │   ├── train.py
-│   │   ├── eval.py
-│   │   └── visualize_dataset.py
-│   ├── common/
-│   │   ├── datasets/
-│   │   ├── envs/
-│   │   ├── policies/
-│   │   └── utils/
-│   └── __init__.py
-├── dynamixel_sdk/
-│   ├── port_handler.py
-│   ├── packet_handler.py
-│   └── __init__.py
-├── outputs/
-│   └── train/
-│       └── act_so_arm_real/
-│           └── checkpoints/
-└── setup.py
-
-~/.cache/
-├── calibration/
-│   └── so101/
-│       ├── leader_calibration.json
-│       └── follower_calibration.json
-├── huggingface/
-│   └── hub/
-│       └── datasets/
-└── torch/
+~/lerobot/Docs_SEM/                    (après git clone)
+├── scripts/
+│   ├── SEM_so101_1_configure.py
+│   ├── SEM_so101_2_calibrate.py
+│   ├── SEM_so101_3_monitor.py
+│   ├── SEM_so101_4_control.py
+│   ├── SEM_so101_5_config_teleoperation.py
+│   └── SEM_so101_6_teleoperation.py
+├── docs/
+│   ├── SEM_SO101_Phase1.pdf
+│   ├── SEM_SO101_Phase2.pdf
+│   ├── SEM_SO101_Phase3.pdf
+│   ├── SEM_SO101_Phase4.pdf
+│   └── SEM_SO101_Phase5.pdf          (à venir)
+└── README.md
 ```
+
+**Note :** Le dossier `~/lerobot/calibration/` sera créé automatiquement lors de l'utilisation du script 2 avec les fichiers `leader_calibration.json` et `follower_calibration.json`.
 
 ## 🔧 Dépannage
 
 | Problème | Solution |
 |----------|----------|
 | Port USB non détecté | `sudo chmod 666 /dev/ttyACM*` |
-| Servo ne répond pas | Vérifier alimentation (LED allumée) |
-| Calibration perdue | Refaire Phase 3 |
+| Servo ne répond pas | Vérifier alimentation 12V |
+| Calibration perdue | Relancer script 2 |
 | Mouvement brusque | Activer mode précis (P) |
-| Import error Python | Vérifier `conda activate lerobot` |
-| Caméra non détectée | `ls /dev/video*` et vérifier USB |
-| GPU non utilisé | Vérifier CUDA : `nvidia-smi` |
+| Import error | `conda activate lerobot` |
+| Script ne démarre pas | Vérifier environnement Python 3.10 |
 
 ## 📊 Spécifications Techniques
 
@@ -230,50 +161,42 @@ python lerobot/scripts/control_robot.py replay \
 - Centre : 2048
 - Couple : 15 kg.cm
 
-### Performances Attendues
+### Performances
 - Fréquence contrôle : 30-50 Hz
+- Mouvements fluides : 100 steps
 - Latence téléopération : < 50ms
-- Temps entraînement : 2-4h (50 épisodes)
-- Précision finale : ~90% sur tâche pick & place
 
 ## 🌐 Ressources
 
-### Documentation source
+### Documentation
 - [LeRobot GitHub](https://github.com/huggingface/lerobot)
-- [SO-ARM Wiki Seeed](https://wiki.seeedstudio.com/so_arm_100/)
+- [SO-ARM Wiki](https://wiki.seeedstudio.com/guide_so-arm_100)
 - [Feetech Robotics](https://www.feetechrc.com/)
-
-### Tutoriels Vidéo
-- [Installation LeRobot](https://www.youtube.com/watch?v=...)
-- [Calibration SO-ARM](https://www.youtube.com/watch?v=...)
-- [Imitation Learning Demo](https://www.youtube.com/watch?v=...)
-
-### Communauté
-- [Discord LeRobot](https://discord.gg/lerobot)
-- [Forum HuggingFace](https://discuss.huggingface.co/c/lerobot)
 
 ## 👥 Contributeurs
 
-- **Yanko Michel pour le Service Ecoles Médias (SEM)** - Genève
-- **Opus 4.1 de Claude AI** - Développement et tests
+- **Yanko Michel** - Service Ecoles Médias (SEM) - Genève
+- **Claude AI Opus 4.1** - Assistant développement
 
 ## 📝 Licence
 
 ![Licence Creative Commons](https://licensebuttons.net/l/by-nc-sa/4.0/88x31.png)
 
-Cette œuvre est mise à disposition selon les termes de la [Licence Creative Commons Attribution - Pas d'Utilisation Commerciale - Partage dans les Mêmes Conditions 4.0 International](http://creativecommons.org/licenses/by-nc-sa/4.0/).
+Cette œuvre est mise à disposition selon les termes de la Licence Creative Commons Attribution - Pas d'Utilisation Commerciale - Partage dans les Mêmes Conditions 4.0 International.
 
-### Vous êtes autorisé à :
-- **Partager** — copier, distribuer et communiquer le matériel par tous moyens et sous tous formats
-- **Adapter** — remixer, transformer et créer à partir du matériel
+**Vous êtes autorisé à :**
+- Partager — copier, distribuer et communiquer le matériel
+- Adapter — remixer, transformer et créer à partir du matériel
 
-### Selon les conditions suivantes :
-- **Attribution** — Vous devez créditer l'Œuvre, intégrer un lien vers la licence et indiquer si des modifications ont été effectuées
-- **Pas d'Utilisation Commerciale** — Vous n'êtes pas autorisé à faire un usage commercial de cette Œuvre
-- **Partage dans les Mêmes Conditions** — Si vous transformez ou créez à partir du matériel, vous devez diffuser vos contributions sous la même licence
+**Selon les conditions suivantes :**
+- Attribution — Créditer l'œuvre et indiquer les modifications
+- Pas d'Utilisation Commerciale
+- Partage dans les Mêmes Conditions
 
 ---
 
-**Note :** Ce projet est en développement actif. Les phases 5-10 seront documentées au fur et à mesure de leur finalisation.
+*Note : Ce projet est en développement actif. Les phases 6-10 seront documentées au fur et à mesure de leur finalisation.*
 
-**28.11.2024**
+**Dernière mise à jour : 17.12.2024**
+
+
