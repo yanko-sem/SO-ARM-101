@@ -22,26 +22,6 @@ Former un robot à effectuer des tâches de manipulation d'objets par apprentiss
 - Phase 9 : Entraînement du modèle
 - Phase 10 : Déploiement et test autonome
 
-## 📦 Installation
-
-```bash
-# 1. Installer LeRobot (voir Phase 1 pour détails complets)
-conda create -n lerobot python=3.10 -y
-conda activate lerobot
-git clone https://github.com/ZhuYaoHui1998/lerobot.git ~/lerobot
-cd ~/lerobot
-pip install -e ".[feetech]"
-
-# 2. Installer les scripts SEM
-cd ~/lerobot
-git clone https://github.com/yanko-sem/SO-ARM-101.git Docs_SEM
-
-# Structure créée :
-# ~/lerobot/Docs_SEM/
-#   ├── scripts/          (scripts Python)
-#   └── docs/            (guides PDF)
-```
-
 ## 🔧 Configuration Matérielle
 
 ### Matériel Requis
@@ -91,20 +71,7 @@ python SEM_so101_3_monitor.py
 
 # Contrôle manuel
 python SEM_so101_4_control.py
-
-# Contrôles clavier disponibles :
-# ↑/↓ : Augmenter/Diminuer position
-# ←/→ : Changer de servo
-# ESPACE : Centrer le servo actif
-# I : Position initiale
-# C : Centrer tous les servos
-# P : Mode précis ON/OFF
-# S : Afficher positions
-# A : Position ATTRAPER
-# R : Position REPOS
-# Q : Quitter
-# X : Arrêt d'urgence
-```
+...
 
 ### Phase 5 : Téléopération
 ```bash
