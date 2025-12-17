@@ -164,6 +164,6 @@ Cette œuvre est mise à disposition selon les termes de la Licence Creative Com
 
 *Note : Ce projet est en développement actif. Les phases 6-10 seront documentées au fur et à mesure de leur finalisation.*
 
-**Dernière mise à jour : 17.12.2024**
+**Dernière mise à jour : 17.12.2025**
 
 
