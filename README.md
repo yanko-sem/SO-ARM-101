@@ -102,7 +102,7 @@ python SEM_so101_6_teleoperation.py
 │   ├── SEM_SO101_Phase2.pdf
 │   ├── SEM_SO101_Phase3.pdf
 │   ├── SEM_SO101_Phase4.pdf
-│   └── SEM_SO101_Phase5.pdf          (à venir)
+│   └── SEM_SO101_Phase5.pdf
 └── README.md
 ```
 
