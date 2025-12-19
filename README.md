@@ -14,9 +14,9 @@ Former un robot à effectuer des tâches de manipulation d'objets par apprentiss
 - **Phase 3** : Calibration des limites de mouvement
 - **Phase 4** : Tests et contrôle manuel
 - **Phase 5** : Téléopération (Leader contrôle Follower) - Scripts 5 et 6 disponibles
+- **Phase 6 : Installation et configuration des caméras
 
 ### 🚀 Phases à Venir
-- Phase 6 : Installation et configuration des caméras
 - Phase 7 : Enregistrement de trajectoires
 - Phase 8 : Configuration du système d'IA (ACT - Action Chunking Transformers)
 - Phase 9 : Entraînement du modèle
