@@ -96,13 +96,15 @@ python SEM_so101_6_teleoperation.py
 │   ├── SEM_so101_3_monitor.py
 │   ├── SEM_so101_4_control.py
 │   ├── SEM_so101_5_config_teleoperation.py
-│   └── SEM_so101_6_teleoperation.py
+│   ├── SEM_so101_6_teleoperation.py
+│   └── SEM_so101_7_teleoperation_camera.py
 ├── docs/
 │   ├── SEM_SO101_Phase1.pdf
 │   ├── SEM_SO101_Phase2.pdf
 │   ├── SEM_SO101_Phase3.pdf
 │   ├── SEM_SO101_Phase4.pdf
-│   └── SEM_SO101_Phase5.pdf
+│   ├── SEM_SO101_Phase5.pdf
+│   └── SEM_SO101_Phase6.pdf
 └── README.md
 ```
 
