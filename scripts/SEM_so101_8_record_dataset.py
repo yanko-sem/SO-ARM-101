@@ -37,40 +37,45 @@ from pathlib import Path
 # Supprimer les messages d'erreur OpenCV
 os.environ["OPENCV_LOG_LEVEL"] = "FATAL"
 
-# Tentative d'import OpenCV
-try:
-    import cv2
-    # Limiter OpenCV à 1 thread (recommandation LeRobot)
-    cv2.setNumThreads(1)
-    CV2_AVAILABLE = True
-except ImportError:
-    CV2_AVAILABLE = False
-    print("⚠️  OpenCV non disponible - enregistrement sans vidéo")
-
-# Tentative d'import pandas pour Parquet
-try:
-    import pandas as pd
-    PANDAS_AVAILABLE = True
-except ImportError:
-    PANDAS_AVAILABLE = False
-    print("⚠️  Pandas non disponible - sauvegarde en JSON")
-
 # Auto-activation de l'environnement lerobot si nécessaire
 try:
     sys.path.append(os.path.expanduser('~/lerobot'))
     from dynamixel_sdk import *
+    import cv2
+    cv2.setNumThreads(1)
+    CV2_AVAILABLE = True
+    import pandas as pd
+    PANDAS_AVAILABLE = True
 except ImportError:
-    print("\n🔧 Activation automatique de l'environnement lerobot...")
+    # Tenter l'auto-activation
     import subprocess
     lerobot_python = os.path.expanduser("~/miniconda3/envs/lerobot/bin/python3")
     if os.path.exists(lerobot_python):
+        print("\n🔧 Activation automatique de l'environnement lerobot...")
         print("✅ Relancement avec lerobot...")
         subprocess.call([lerobot_python] + sys.argv)
         sys.exit(0)
     else:
-        print("❌ Environnement lerobot non trouvé!")
-        print("Solution: conda activate lerobot")
-        sys.exit(1)
+        # On est dans lerobot mais il manque des modules optionnels
+        try:
+            from dynamixel_sdk import *
+        except ImportError:
+            print("❌ Environnement lerobot non trouvé!")
+            print("Solution: conda activate lerobot")
+            sys.exit(1)
+        try:
+            import cv2
+            cv2.setNumThreads(1)
+            CV2_AVAILABLE = True
+        except ImportError:
+            CV2_AVAILABLE = False
+            print("⚠️  OpenCV non disponible - enregistrement sans vidéo")
+        try:
+            import pandas as pd
+            PANDAS_AVAILABLE = True
+        except ImportError:
+            PANDAS_AVAILABLE = False
+            print("⚠️  Pandas non disponible - sauvegarde en JSON")
 
 # ============================================
 # CONFIGURATION
