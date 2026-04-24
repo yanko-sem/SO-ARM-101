@@ -132,7 +132,7 @@ python SEM_so101_11_train.py
 │   ├── SEM_so101_6_teleoperation.py
 │   ├── SEM_so101_7_teleoperation_camera.py
 │   ├── SEM_so101_8_record_dataset.py
-│   ├── SEM_so101_9_consolidate_dataset.py
+│   ├── SEM_so101_9_dataset.py
 │   ├── SEM_so101_10_visualize_dataset.py
 │   ├── SEM_so101_11_train.py
 │   └── README.md
@@ -192,7 +192,7 @@ python SEM_so101_11_train.py
 ## 👥 Contributeurs
 
 - **Yanko Michel** - Service Écoles-Médias (SEM) - Genève
-- **Claude AI Opus 4.5** - Assistant développement
+- **Claude AI Opus 4.6** - Assistant développement
 
 ## 📝 Licence
 
