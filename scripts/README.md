@@ -236,29 +236,9 @@ Le dataset consolidé (prêt pour l'entraînement) :
 
 1. **Un seul robot connecté à la fois** (sauf scripts 5, 6, 7 et 8)
 2. **Alimentation :** 5V ou 12V selon le kit
-3. **Ordre d'exécution :** Script 1 → 2 → 3/4 → 5 → 6 → 7 → 8 → 9 → 10 → 11
-4. **Sauvegarde automatique :** Pas besoin de sauver manuellement
-5. **Permissions USB :** L'utilisateur doit être dans les groupes `dialout` et `video` (voir Phase 1, Étape 6)
-6. **Environnement :** Toujours activer avec `conda activate lerobot` (les scripts 7 et 8 s'auto-activent si lancés depuis `base`)
-7. **2 caméras USB** requises pour le script 8
-8. **GPU NVIDIA** requis pour le script 11 (entraînement)
-
-
-## 🔄 Workflow Complet
-
-```
-1.  SEM_so101_1_configure.py       → Configuration des IDs pendant le montage
-2.  SEM_so101_2_calibrate.py       → Calibration des limites après montage
-3.  SEM_so101_3_monitor.py         → Vérification des positions
-4.  SEM_so101_4_control.py         → Test de contrôle manuel
-5.  SEM_so101_5_config_teleoperation.py → Configuration COPIE/MIROIR
-6.  SEM_so101_6_teleoperation.py   → Téléopération temps réel
-7.  SEM_so101_7_teleoperation_camera.py → Téléopération avec caméra
-8.  SEM_so101_8_record_dataset.py  → Enregistrement de dataset (2 caméras)
-9.  SEM_so101_9_dataset.py         → Consolidation du dataset
-10. SEM_so101_10_visualize_dataset.py → Vérification et visualisation
-11. SEM_so101_11_train.py          → Entraînement du modèle ACT
-```
+3. **Sauvegarde automatique :** Pas besoin de sauver manuellement
+4. **Permissions USB :** L'utilisateur doit être dans les groupes `dialout` et `video` (voir Phase 1, Étape 6)
+5. **Environnement :** Toujours activer avec `conda activate lerobot` (les scripts 7 et 8 s'auto-activent si lancés depuis `base`)
 
 ---
 
