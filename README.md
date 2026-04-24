@@ -104,7 +104,7 @@ python SEM_so101_8_record_dataset.py
 ### Phase 8 : Consolidation et Visualisation
 ```bash
 # Fusionner les 5 positions en un dataset unifié
-python SEM_so101_9_consolidate_dataset.py
+python SEM_so101_9_dataset.py
 
 # Vérifier et visualiser le dataset
 python SEM_so101_10_visualize_dataset.py
