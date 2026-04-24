@@ -212,7 +212,7 @@ Le script suit exactement le même flux que le script 6 (Phase 5) :
 | q | Quitter (dans la fenêtre vidéo OpenCV) |
 
 **Fenêtre vidéo :**
-- Résolution : 640×480 pixels
+- Résolution : 640×360 pixels (16:9)
 - La fenêtre affiche le flux en temps réel de la caméra
 - La caméra est ouverte sur l'index 0 par défaut
 
