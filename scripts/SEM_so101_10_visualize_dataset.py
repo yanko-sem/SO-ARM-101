@@ -278,6 +278,35 @@ def afficher_resume(info):
     print()
 
 
+def mettre_a_jour_codec_info_json():
+    """Met à jour video.codec ('mp4v' → 'h264') dans info.json après une conversion H.264 réussie.
+
+    Sans cela, info.json continuerait de déclarer 'mp4v' alors que les fichiers .mp4 sont
+    désormais en H.264. LeRobot décode d'après le flux réel et non d'après ce champ, donc ce
+    n'est pas bloquant, mais une métadonnée fausse n'a pas lieu d'être. Idempotent : ne modifie
+    que les champs encore à 'mp4v'.
+    """
+    info_file = DATASET_PATH / "meta" / "info.json"
+    if not info_file.exists():
+        return
+
+    with open(info_file) as f:
+        info = json.load(f)
+
+    modifie = False
+    for spec in info.get("features", {}).values():
+        if isinstance(spec, dict) and spec.get("dtype") == "video":
+            vinfo = spec.get("info", {})
+            if vinfo.get("video.codec") == "mp4v":
+                vinfo["video.codec"] = "h264"
+                modifie = True
+
+    if modifie:
+        with open(info_file, 'w') as f:
+            json.dump(info, f, indent=2)
+        print("  🔧 info.json : video.codec mis à jour (mp4v → h264)")
+
+
 def convertir_videos_h264():
     """Convertit les vidéos mp4v en H.264 pour la compatibilité navigateur"""
     vid_dir = DATASET_PATH / "videos" / "chunk-000"
@@ -298,6 +327,7 @@ def convertir_videos_h264():
     marker = DATASET_PATH / "meta" / ".h264_converted"
     if marker.exists():
         print("  ✅ Vidéos déjà converties en H.264")
+        mettre_a_jour_codec_info_json()
         return
 
     print("\n🎬 Conversion des vidéos en H.264 (compatibilité navigateur)...")
@@ -305,6 +335,7 @@ def convertir_videos_h264():
     mp4_files = list(vid_dir.rglob("*.mp4"))
     total = len(mp4_files)
 
+    erreurs = 0
     for i, mp4_file in enumerate(mp4_files):
         tmp_file = mp4_file.with_suffix('.tmp.mp4')
         result = subprocess.run(
@@ -322,11 +353,79 @@ def convertir_videos_h264():
         else:
             if tmp_file.exists():
                 tmp_file.unlink()
+            erreurs += 1
             print(f"  ❌ [{i+1}/{total}] {mp4_file.name} — échec conversion")
 
-    # Marquer comme converti
-    marker.touch()
-    print(f"\n  ✅ {total} vidéos converties en H.264")
+    # Marquer comme converti UNIQUEMENT si toutes les conversions ont réussi.
+    # Sinon, ne pas créer le marqueur : un relancement réessaiera les vidéos manquantes.
+    if erreurs == 0:
+        marker.touch()
+        mettre_a_jour_codec_info_json()
+        print(f"\n  ✅ {total} vidéos converties en H.264")
+    else:
+        print(f"\n  ❌ {erreurs}/{total} vidéo(s) non converti(s) — marqueur NON créé (relancez pour réessayer).")
+
+
+def verifier_frames_video():
+    """Vérifie que chaque vidéo contient exactement autant de frames que son parquet.
+
+    Diagnostic de sécurité avant l'entraînement : un écart révélerait une désynchronisation
+    parquet/vidéo. LeRobot apparie les frames par timestamp avec tolérance (donc une frame en
+    trop ne casse rien), mais on contrôle ici par précaution. Le comptage utilise ffprobe
+    (-count_frames) qui décode réellement les frames, donc fiable même si l'en-tête est approximatif.
+    """
+    print("\n🔍 Vérification frames vidéo vs parquet...")
+
+    # ffprobe requis pour un comptage fiable
+    try:
+        r = subprocess.run(["ffprobe", "-version"], capture_output=True)
+        if r.returncode != 0:
+            print("  ⚠️  ffprobe non disponible — vérification ignorée.")
+            return 0
+    except FileNotFoundError:
+        print("  ⚠️  ffprobe non trouvé — vérification ignorée.")
+        return 0
+
+    def compter_frames(video_path):
+        try:
+            r = subprocess.run(
+                [
+                    "ffprobe", "-v", "error", "-count_frames",
+                    "-select_streams", "v:0",
+                    "-show_entries", "stream=nb_read_frames",
+                    "-of", "default=nokey=1:noprint_wrappers=1",
+                    str(video_path)
+                ],
+                capture_output=True, text=True
+            )
+            return int(r.stdout.strip())
+        except (ValueError, FileNotFoundError):
+            return None
+
+    parquets = sorted((DATASET_PATH / "data" / "chunk-000").glob("*.parquet"))
+    incoherences = 0
+    for pf in parquets:
+        ep_idx = int(pf.stem.split('_')[1])
+        n_parquet = len(pd.read_parquet(pf))
+        fname = f"episode_{ep_idx:06d}.mp4"
+        for cam in [CAM_TOP, CAM_FOLLOWER]:
+            vid = DATASET_PATH / "videos" / "chunk-000" / f"observation.images.{cam}" / fname
+            if not vid.exists():
+                print(f"  ❌ Épisode {ep_idx:3d} ({cam}) : vidéo manquante")
+                incoherences += 1
+                continue
+            n_video = compter_frames(vid)
+            if n_video is None:
+                print(f"  ⚠️  Épisode {ep_idx:3d} ({cam}) : comptage de frames impossible")
+            elif n_video != n_parquet:
+                print(f"  ❌ Épisode {ep_idx:3d} ({cam}) : {n_video} frames vidéo ≠ {n_parquet} lignes parquet")
+                incoherences += 1
+
+    if incoherences == 0:
+        print(f"  ✅ Frames vidéo = lignes parquet pour tous les épisodes ({len(parquets)})")
+    else:
+        print(f"  ⚠️  {incoherences} incohérence(s) — à examiner avant l'entraînement.")
+    return incoherences
 
 
 def lancer_visualisation():
@@ -399,6 +498,13 @@ def main():
 
     # 5. Convertir vidéos en H.264 si nécessaire
     convertir_videos_h264()
+
+    # 5bis. Vérifier la correspondance frames vidéo / parquet
+    incoherences_frames = verifier_frames_video()
+    if incoherences_frames:
+        choix = input("\n⚠️  Des incohérences vidéo/parquet ont été détectées. Continuer quand même ? [O/N] : ").strip().upper()
+        if choix != 'O':
+            return
 
     # 6. Menu
     print("\n" + "=" * 55)
