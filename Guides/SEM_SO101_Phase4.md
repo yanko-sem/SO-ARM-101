@@ -33,7 +33,7 @@ Les tests permettent de :
 # Activer l'environnement conda
 conda activate lerobot
 # Se placer dans le dossier des scripts
-cd ~/lerobot/SO-ARM-101/scripts
+cd ~/lerobot/Scripts_SEM/scripts
 # Vérifier que le script est présent
 ls SEM_so101_4_control.py
 ```
@@ -140,6 +140,8 @@ Position: 2048
 | ATTRAPER | Bras prêt pour saisir un objet | Tests de manipulation |
 | REPOS | Bras replié compact | Rangement, fin de session |
 
+> **Note :** La position REPOS (touche `R`, ainsi que le retour automatique lors de `Q`) utilise la position de repos définie en Phase 3 (`repos_position.json`). Si ce fichier n'existe pas encore, le script applique une position par défaut.
+
 
 ### 🧪 Étape 4 : Tests systématiques
 
@@ -221,7 +223,7 @@ Pour mettre le robot en position de repos sécurisée :
 | Problème | Cause possible | Solution |
 | :--- | :--- | :--- |
 | Script ne démarre pas | Port USB non détecté | Vérifier branchement et groupe `dialout` (voir Phase 1, Étape 6) |
-| "Pas de calibration" | Phase 3 non complétée | Lancer d'abord `SEM_so101_calibrate.py` |
+| "Pas de calibration" | Phase 3 non complétée | Lancer d'abord `SEM_so101_2_calibrate.py` |
 | Servo ne bouge pas | Alimentation coupée | Vérifier alimentation (LED) |
 | Mouvement saccadé | Pas trop grand | Activer mode précis avec P |
 | Servo force en butée | Calibration incorrecte | Refaire calibration Phase 3 |
@@ -272,7 +274,7 @@ Position: 2048
 ```bash
 # Lancement
 conda activate lerobot
-cd ~/lerobot/SO-ARM-101/scripts
+cd ~/lerobot/Scripts_SEM/scripts
 python SEM_so101_4_control.py
 ```
 
