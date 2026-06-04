@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+title: "SO-ARM 101 - Projet Robotique Éducative"
+message: "Si vous utilisez ce projet, merci de le citer comme indiqué."
+type: software
+authors:
+  - family-names: "Michel"
+    given-names: "Yanko"
+    affiliation: "Service Écoles-Médias (SEM), Département de l’Instruction Publique (DIP), Genève"
+abstract: "Projet éducatif DIY et reproductible pour apprendre la robotique moderne, l’apprentissage par imitation et le déploiement autonome avec deux bras SO-ARM 101, LeRobot, deux caméras, un dataset de démonstrations et un modèle ACT."
+keywords:
+  - "SO-ARM 101"
+  - "robotique éducative"
+  - "LeRobot"
+  - "imitation learning"
+  - "apprentissage par imitation"
+  - "Action Chunking Transformers"
+  - "ACT"
+  - "PyTorch"
+  - "Dynamixel SDK"
+  - "Feetech STS3215"
+license: "CC-BY-NC-SA-4.0"
+version: "1.0.0"
+date-released: "2026-06-04"
