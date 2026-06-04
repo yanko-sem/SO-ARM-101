@@ -1,3 +1,4 @@
+```markdown
 # Scripts SEM pour SO-ARM 101
 
 Collection de scripts Python pour la configuration, calibration et contrôle des robots SO-ARM 101.
@@ -12,235 +13,259 @@ conda activate lerobot
 # L'utilisateur doit être dans les groupes dialout et video
 groups | grep dialout
 groups | grep video
+
+# Outils vidéo nécessaires pour le verrouillage matériel des caméras
+sudo apt update && sudo apt install v4l-utils guvcview
+
 ```
 
 ## 📋 Liste des Scripts
 
 ### 1️⃣ SEM_so101_1_configure.py
+
 Configuration initiale des servos avec leurs IDs (1-6) pendant le montage.
-- Configuration un servo à la fois
-- Test de mouvement automatique
-- Centre et bloque pour le montage
-- Options B (bloquer) et L (libérer) dans le menu
+
+* Configure un servo à la fois
+* Test de mouvement automatique
+* Centre et bloque pour le montage
+* Options B (bloquer) et L (libérer) dans le menu
 
 **Utilisation :**
+
 ```bash
 python SEM_so101_1_configure.py
+
 ```
 
 ### 2️⃣ SEM_so101_2_calibrate.py
-Calibration des limites de mouvement (min/max) pour chaque servo.
-- Sauvegarde automatique après chaque servo
-- Mode manuel : bougez le bras aux limites physiques
-- Mouvement fluide de centrage (courbe sinusoïdale)
 
-**Fichiers sauvés dans :** `~/lerobot/calibration/`
+Calibration des limites de mouvement (min/max) pour chaque servo.
+
+* Sauvegarde automatique après chaque servo
+* Mode manuel : bougez le bras aux limites physiques
+* Mouvement fluide de centrage (courbe sinusoïdale)
 
 **Utilisation :**
+
 ```bash
 python SEM_so101_2_calibrate.py
 # Choisir L (Leader) ou F (Follower)
 # Option T pour calibrer tous les servos
+
 ```
 
 ### 3️⃣ SEM_so101_3_monitor.py
+
 Monitoring temps réel des positions des servos.
-- Affichage en tableau avec barres graphiques
-- Servos libérés pour manipulation manuelle
-- Calcul FPS en temps réel
-- Ctrl+C pour quitter
+
+* Affichage en tableau avec barres graphiques
+* Servos libres (torque off) pour manipulation
+* Utile pour vérifier la position de repos ou débugger
 
 **Utilisation :**
+
 ```bash
 python SEM_so101_3_monitor.py
-# Choisir L (Leader) ou F (Follower)
+
 ```
 
 ### 4️⃣ SEM_so101_4_control.py
-Contrôle manuel du robot avec le clavier (script unifié Leader/Follower).
-- Choix Leader ou Follower au lancement
-- Mouvements fluides (100 steps)
-- Positions prédéfinies : Initiale (I), Attraper (A), Repos (R)
-- Mode précis ON/OFF (P)
-- Arrêt d'urgence (X)
+
+Contrôle manuel (clavier) d'un robot.
+
+* Mode normal (pas de 50) ou précis (pas de 10)
+* Mouvements fluides interpolés
+* Arrêt d'urgence (touche X)
 
 **Utilisation :**
+
 ```bash
 python SEM_so101_4_control.py
-# Choisir L (Leader) ou F (Follower)
+
 ```
 
 ### 5️⃣ SEM_so101_5_config_teleoperation.py
-Configuration COPIE/MIROIR de la téléopération, servo par servo.
-- Identification guidée des robots (débrancher/brancher)
-- Choix côte à côte ou face à face
-- Test interactif COPIE puis MIROIR pour chaque servo
-- Sauvegarde de la configuration par disposition
+
+Configuration du comportement de chaque servo (Copie ou Miroir).
+
+* Indispensable pour l'installation "Face à face" (miroir sur la base)
+* Sauvegarde la configuration pour la téléopération
+* Inclut un test de centrage parallèle et un retour à la position de repos
 
 **Utilisation :**
+
 ```bash
 python SEM_so101_5_config_teleoperation.py
+
 ```
 
 ### 6️⃣ SEM_so101_6_teleoperation.py
-Téléopération en temps réel : le Leader contrôle le Follower.
-- Identification guidée des robots
-- Centrage et position repos automatiques
-- Basculement côté à côte ↔ face à face avec F + Entrée
-- Position repos sécurisée en fin de session
 
-**Commandes :**
-- `Q` + Entrée — Quitter
-- `F` + Entrée — Basculer le mode
+Téléopération maître-esclave (Leader → Follower) pure.
+
+* Mouvement fluide et synchronisé à haute fréquence
+* Mappage intelligent respectant les calibrations de chaque robot
+* Gestion propre du positionnement initial et final (séquences sûres)
 
 **Utilisation :**
+
 ```bash
 python SEM_so101_6_teleoperation.py
+
 ```
 
 ### 7️⃣ SEM_so101_7_teleoperation_camera.py
-Téléopération avec retour vidéo d'une caméra.
-- Identique au script 6 + affichage vidéo en temps réel
-- Fenêtre OpenCV `Camera SO-ARM 101`
-- Test de la caméra avant enregistrement (Phase 7)
 
-**Commandes :**
-- `Q` + Entrée — Quitter (terminal)
-- `F` + Entrée — Basculer le mode (terminal)
-- `q` — Quitter (fenêtre vidéo)
+Téléopération maître-esclave avec affichage vidéo (1 caméra).
+
+* Permet de vérifier le flux vidéo et de cadrer la zone de travail
+* Dessin interactif (souris) pour créer un masque de la zone utile (polygone)
+* Masque sauvegardé pour isoler la zone d'intérêt lors de l'enregistrement
 
 **Utilisation :**
+
 ```bash
 python SEM_so101_7_teleoperation_camera.py
+
+```
+
+### 📸 Module Utilitaires : SEM_8_camera_config.py
+
+*Ce module n'est pas une étape numérotée, mais une dépendance critique des scripts 8 et 12.*
+Fige les réglages matériels (Exposition, Balance des blancs, Gain) via `v4l2-ctl` et `guvcview`.
+
+* Garantit la cohérence visuelle stricte entre l'enregistrement (dataset) et le déploiement (inférence).
+* Tolérant aux pannes (ignore les paramètres illisibles, évite les valeurs par défaut destructrices).
+
+**Utilisation autonome (Optionnel) :**
+
+```bash
+python SEM_8_camera_config.py --show
+python SEM_8_camera_config.py --capture cam_top /dev/video0
+
 ```
 
 ### 8️⃣ SEM_so101_8_record_dataset.py
-Enregistrement de dataset pour l'apprentissage par imitation.
-- 2 caméras simultanées (cam_top + cam_follower)
-- Identification caméras via le terminal (G = Globale, P = Pince)
-- Affichage des 2 flux vidéo pendant la téléopération
-- Format LeRobotDataset v2.1
-- 5 positions × 10 épisodes = 50 démonstrations
-- Tâche : prendre un cube et le déposer dans une boîte
+
+Enregistrement du dataset (2 caméras : *cam_top* et *cam_follower*) pour l'apprentissage par imitation.
+
+* Intègre automatiquement le verrouillage matériel des caméras (via `SEM_8_camera_config`).
+* Applique le masque vidéo généré au script 7.
+* Architecture robuste contre les micro-coupures USB (cache des positions) et la saturation CPU.
+* Sauvegarde au format LeRobotDataset v2.1.
 
 **Utilisation :**
+
 ```bash
 python SEM_so101_8_record_dataset.py
-# G = identifier caméra Globale (vue d'ensemble)
-# P = identifier caméra Pince (sur le follower)
-# D = Démarrer un enregistrement
-# T = Terminer l'épisode, A = Annuler, S = Stopper
+
 ```
 
 ### 9️⃣ SEM_so101_9_dataset.py
-Consolidation du dataset pour l'entraînement.
-- Fusionne les 5 dossiers de positions en un dataset unifié
-- Renumérotation séquentielle des épisodes (0 à 50)
-- Normalisation des timestamps (exactement 1/FPS)
-- Génération des métadonnées LeRobot v2.1 (info.json, tasks.jsonl, episodes.jsonl)
+
+Consolidation des données enregistrées.
+
+* Fusionne les dossiers des différentes positions (1 à 5) en un seul dataset unifié.
+* Vérifie l'intégrité globale et l'inventaire des frames/vidéos.
 
 **Utilisation :**
+
 ```bash
 python SEM_so101_9_dataset.py
-# E = Écraser le dataset consolidé existant
+
 ```
 
 ### 🔟 SEM_so101_10_visualize_dataset.py
-Vérification et visualisation du dataset consolidé.
-- Vérifie l'intégrité du dataset (parquets, vidéos, métadonnées)
-- Complète info.json si nécessaire
-- Génère episodes_stats.jsonl (statistiques par épisode)
-- Convertit les vidéos en H.264 (compatibilité navigateur)
-- Lance l'outil officiel de visualisation LeRobot
+
+Vérification technique et visualisation du dataset consolidé.
+
+* Génère les statistiques (`episodes_stats.jsonl`) requises par LeRobot.
+* Lance l'outil officiel LeRobot dans le navigateur pour rejouer les épisodes.
 
 **Utilisation :**
+
 ```bash
 python SEM_so101_10_visualize_dataset.py
-# R = Regénérer les statistiques
-# V = Lancer la visualisation dans le navigateur
+
 ```
 
 ### 1️⃣1️⃣ SEM_so101_11_train.py
-Entraînement du modèle ACT (Action Chunking with Transformers).
-- 3 profils : Rapide (30min), Standard (4-6h), Intensif (8-12h)
-- Optimisé pour Quadro RTX 4000 (8 Go VRAM, batch size 4)
-- Sauvegarde de checkpoints régulière
-- Reprise d'entraînement interrompu
+
+Entraînement de la politique ACT sur le dataset consolidé (optimisé Quadro RTX 4000).
+
+* 3 profils d'entraînement : Rapide (test), Standard (recommandé), Intensif.
+* Protège la session contre la mise en veille de l'OS (`systemd-inhibit`).
+* Gestion sécurisée de la reprise d'entraînement basée sur le fichier `train_config.json` du checkpoint.
 
 **Utilisation :**
+
 ```bash
 python SEM_so101_11_train.py
-# 1 = Rapide (10k steps), 2 = Standard (100k), 3 = Intensif (200k)
+
 ```
 
+### 1️⃣2️⃣ SEM_so101_12_deploy.py
 
-## 🎮 Contrôles Clavier (Script 4 — Contrôle manuel)
+Déploiement du modèle (Inférence autonome).
 
-| Touche | Action |
-|--------|--------|
-| ↑/↓ | Augmenter/Diminuer position |
-| ←/→ | Changer de servo (1-6) |
-| ESPACE | Centrer le servo actif |
-| I | Position initiale |
-| C | Centrer TOUS les servos |
-| P | Mode précis ON/OFF |
-| S | Afficher tableau des positions |
-| A | Position ATTRAPER |
-| R | Position REPOS |
-| Q | Quitter (avec repos sécurisé) |
-| X | ARRÊT D'URGENCE |
+* Le robot agit seul basé sur le flux des 2 caméras à ~30 Hz.
+* Applique obligatoirement le verrouillage des caméras au démarrage pour éviter un "Distribution Shift".
+* Architecture défensive : tolérance aux pertes de paquets série (maintien de la dernière position connue).
 
+**Utilisation :**
 
-## 🎮 Contrôles (Script 8 — Enregistrement)
+```bash
+python SEM_so101_12_deploy.py
 
-**Identification caméras :**
+```
+
+## ⌨️ Commandes Utiles
+
+**Pendant l'identification des caméras (Scripts 8 & 12) :**
 
 | Touche | Action |
-|--------|--------|
-| G + Entrée | Identifier caméra Globale (vue d'ensemble) |
-| P + Entrée | Identifier caméra Pince (follower) |
+| --- | --- |
+| G + Entrée | Identifier la caméra comme GLOBALE (*cam_top*) |
+| P + Entrée | Identifier la caméra comme PINCE (*cam_follower*) |
 | Q + Entrée | Passer la caméra |
 
-**Pendant l'enregistrement :**
+**Pendant l'enregistrement (Script 8) :**
 
 | Touche | Action |
-|--------|--------|
-| D | Démarrer l'enregistrement d'un épisode |
-| T | Terminer l'épisode (succès) |
+| --- | --- |
+| D | Démarrer l'enregistrement d'un épisode (libère le robot) |
+| T | Terminer l'épisode avec succès (fige le robot, sauvegarde) |
 | A | Annuler l'épisode en cours |
 | S | Stopper la session |
 | Q | Quitter le programme |
 
+## 📁 Fichiers de Calibration & Configuration
 
-## 📁 Fichiers de Calibration
+Les paramètres globaux sont automatiquement sauvegardés dans `~/lerobot/calibration/` :
 
-Les calibrations sont automatiquement sauvegardées dans :
-- `~/lerobot/calibration/leader_calibration.json`
-- `~/lerobot/calibration/follower_calibration.json`
+* `leader_calibration.json` / `follower_calibration.json` : Limites min/max.
+* `teleoperation_config_cote.json` / `teleoperation_config_face.json` : Profils de mappage.
+* `repos_position.json` : Position de repos universelle (partagée par tous les scripts).
+* `camera_mask.json` : Polygone de la zone utile (généré par le script 7, utilisé par les scripts 8 et 12).
+* `camera_settings.json` : Valeurs d'exposition et WB verrouillées (générées et utilisées par `SEM_8_camera_config.py`).
 
-Les configurations de téléopération :
-- `~/lerobot/calibration/teleoperation_config_cote.json`
-- `~/lerobot/calibration/teleoperation_config_face.json`
+## 📁 Datasets & Modèles
 
+**Données :**
 
-## 📁 Datasets
+* Brutes (par position) : `~/.cache/huggingface/lerobot/local/so101_pick_place/`
+* Consolidées : `~/.cache/huggingface/lerobot/local/so101_pick_place_consolidated/`
 
-Les données brutes (par position) :
-- `~/.cache/huggingface/lerobot/local/so101_pick_place/`
+**Modèles entraînés :**
 
-Le dataset consolidé (prêt pour l'entraînement) :
-- `~/.cache/huggingface/lerobot/local/so101_pick_place_consolidated/`
-
+* Dossier d'export : `~/lerobot/outputs/train/act_so101_pick_place/`
 
 ## ⚠️ Notes Importantes
 
-1. **Un seul robot connecté à la fois** (sauf scripts 5, 6, 7 et 8)
-2. **Alimentation :** 5V ou 12V selon le kit
-3. **Sauvegarde automatique :** Pas besoin de sauver manuellement
-4. **Permissions USB :** L'utilisateur doit être dans les groupes `dialout` et `video` (voir Phase 1, Étape 6)
-5. **Environnement :** Toujours activer avec `conda activate lerobot` (les scripts 7 et 8 s'auto-activent si lancés depuis `base`)
+1. **Un seul robot connecté à la fois** (sauf scripts 5, 6, 7, 8 et 12).
+2. **Alimentation :** Toujours vérifier que l'alimentation (5V ou 12V) est active pour détecter les ports série.
+3. **Sauvegardes des modèles :** Pensez à renommer le dossier d'export `act_so101_pick_place` pour archiver vos modèles avant de lancer un nouvel entraînement avec le script 11.
 
----
+```
 
-**Service Écoles-Médias — DIP Genève**
-*Dernière mise à jour : 24.04.2026*
+```
