@@ -39,7 +39,7 @@ L'entraînement permet de :
 
 | Paramètre | Valeur | Description |
 | :--- | :--- | :--- |
-| Paramètres totaux | ~52 millions | Taille du réseau de neurones |
+| Paramètres totaux | Entre 50 et 80 millions | Taille du réseau, selon la configuration |
 | Vision backbone | ResNet18 | Extracteur de caractéristiques visuelles |
 | Chunk size | 50 | Nombre de pas d'action prédits |
 | Action steps | 15 | Nombre de pas exécutés avant recalcul |
@@ -164,7 +164,7 @@ Si vous relancez le script 11 après une interruption :
 2. Il propose : **R** (Reprendre), **N** (Nouveau), **V** (Voir checkpoints), **Q** (Quitter)
 3. En choisissant **R**, l'entraînement reprend depuis le dernier checkpoint
 
-> **💡 Note :** La reprise utilise le paramètre `--resume=true` de LeRobot, qui recharge le modèle, l'optimiseur et le compteur de steps à partir du dernier checkpoint sauvegardé.
+> **💡 Note :** La reprise s'appuie sur deux paramètres : `--config_path` (vers le `train_config.json` du dernier checkpoint) et `--resume=true`. LeRobot recharge ainsi le modèle, l'optimiseur et le compteur de steps à partir du dernier checkpoint sauvegardé.
 
 **Sauvegarde des checkpoints**
 
@@ -211,8 +211,8 @@ Les checkpoints sont stockés dans :
 | "CUDA non disponible" | Driver NVIDIA non chargé | `nvidia-smi`, réinstaller le driver si nécessaire |
 | "CUDA out of memory" | VRAM insuffisante | Fermer les applications lourdes (Chrome, etc.) |
 | "Dataset introuvable" | Script 9 non exécuté | Lancer d'abord le script 9 |
-| "episodes_stats.jsonl manquant" | Script 10 non exécuté | Lancer le script 10, choisir R |
-| "Output directory exists" | Entraînement précédent | Choisir R (reprendre) ou supprimer le dossier |
+| "episodes_stats.jsonl manquant" | Script 10 non exécuté | Lancer le script 10 (il le génère automatiquement) |
+| Dossier d'entraînement déjà présent | Entraînement précédent | Le script propose Reprendre / Nouveau / Voir ; l'ancien n'est supprimé qu'après confirmation finale |
 | Loss ne descend pas | Données de mauvaise qualité | Vérifier les épisodes, réenregistrer si nécessaire |
 | Entraînement très lent | GPU non utilisé | Vérifier `nvidia-smi`, GPU-Util doit être > 90% |
 | Erreur torchcodec | Backend vidéo incompatible | Le script utilise `pyav` automatiquement |
