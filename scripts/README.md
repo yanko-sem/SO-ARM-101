@@ -14,7 +14,7 @@ conda activate lerobot
 groups | grep dialout
 groups | grep video
 
-# Outils vidéo nécessaires pour le verrouillage matériel des caméras
+# Outils vidéo nécessaires pour le verrouillage matériel des caméras (installé en Phase 1, Étape 7)
 sudo apt update && sudo apt install v4l-utils guvcview
 
 ```
