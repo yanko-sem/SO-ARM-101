@@ -164,7 +164,24 @@ Les mots `dialout` et `video` doivent apparaître dans la liste.
 > **Note :** Cette étape est indispensable. Sans elle, les scripts des phases suivantes ne pourront pas communiquer avec les robots ni accéder aux caméras. Répétez cette opération pour chaque compte utilisateur (enseignant, élèves).
 
 
-### 🎮 Étape 7 : Installation des drivers NVIDIA (Optionnel)
+### 📷 Étape 7 : Installation des outils caméra (v4l-utils + guvcview)
+
+Pourquoi cette installation ? Les scripts SEM des phases suivantes verrouillent l'exposition, la balance des blancs et le gain des caméras, afin que les images soient identiques entre l'enregistrement du dataset (phase 8) et le déploiement du modèle (phase 12). Ce verrouillage s'appuie sur `v4l2-ctl` (paquet `v4l-utils`), et le réglage de l'image en direct se fait avec `guvcview`. Sans ces outils, la phase 8 ne pourra ni régler ni verrouiller les caméras.
+
+```bash
+sudo apt update
+sudo apt install v4l-utils guvcview -y
+```
+
+**Vérification :**
+
+```bash
+v4l2-ctl --version
+guvcview --version
+```
+
+
+### 🎮 Étape 8 : Installation des drivers NVIDIA (Optionnel)
 
 **Vérifier la présence d'un GPU NVIDIA**
 
@@ -208,7 +225,7 @@ nvidia-smi
 ```
 
 
-### 🔥 Étape 8 : Configuration de PyTorch
+### 🔥 Étape 9 : Configuration de PyTorch
 
 **Configuration CPU (sans GPU)**
 
@@ -234,7 +251,7 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 ```
 
 
-### ✅ Étape 9 : Vérifications finales
+### ✅ Étape 10 : Vérifications finales
 
 **Test PyTorch**
 
@@ -270,6 +287,8 @@ which lerobot-calibrate
 | LeRobot | Latest | `python -c "from lerobot import available_tasks"` |
 | Groupe dialout | — | `groups \| grep dialout` |
 | Groupe video | — | `groups \| grep video` |
+| v4l-utils | — | `v4l2-ctl --version` |
+| guvcview | — | `guvcview --version` |
 
 
 ### 🔧 Dépannage
@@ -301,3 +320,4 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 3. **GPU :** Non obligatoire sauf pour l'entraînement
 4. **Environnement :** Toujours activer avec `conda activate lerobot`
 5. **Permissions USB :** Chaque utilisateur doit être dans les groupes `dialout` et `video`
+6. **Outils caméra :** `v4l-utils` (verrouillage via `v4l2-ctl`) et `guvcview` (réglage en direct) sont nécessaires aux phases 8 et 12 pour figer l'exposition, la balance des blancs et le gain des caméras
