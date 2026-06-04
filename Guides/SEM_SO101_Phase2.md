@@ -59,11 +59,12 @@ cd ~/lerobot/Scripts_SEM/scripts
 
 Le script effectue automatiquement les opérations suivantes :
 
-1. **Détection du port USB** — il trouve automatiquement l'adaptateur branché
-2. **Attribution de l'ID** — il assigne un numéro unique (1 à 6) au servo connecté
+1. **Détection du port USB** — il trouve automatiquement l'adaptateur branché (l'option `D` du menu permet de relancer cette détection)
+2. **Attribution de l'ID** — il lit d'abord l'ID actuel du servo connecté, puis lui assigne le numéro voulu (1 à 6)
 3. **Test de mouvement** — il fait bouger le servo vers trois positions (MIN → MAX → CENTRE) pour vérifier son bon fonctionnement
-4. **Centrage** — il positionne le servo à 2048 (position neutre) pour le montage
-5. **Mode détection** — il permet d'identifier un servo déjà configuré
+4. **Centrage et blocage** — il positionne le servo à 2048 (position neutre) et l'y maintient bloqué, couple actif, pour le montage
+5. **Configuration groupée** — l'option `T` enchaîne automatiquement la configuration des six servos
+6. **Blocage / libération** — les options `B` et `L` bloquent ou libèrent le servo connecté (utiliser `L` pour relâcher le couple après le montage)
 
 **Correspondance des servos :**
 
@@ -82,7 +83,7 @@ Le script effectue automatiquement les opérations suivantes :
 python SEM_so101_1_configure.py
 ```
 
-Le script affiche un menu qui vous guide : choisissez le numéro du servo (1 à 6) ou `D` pour détecter un servo existant.
+Le script affiche un menu : choisissez le numéro d'un servo (1 à 6), `T` pour les configurer tous, `B` ou `L` pour bloquer ou libérer le servo connecté, `D` pour relancer la détection du port USB, ou `Q` pour quitter.
 
 
 ### ⚙️ Étape 3 : Procédure de configuration
@@ -124,19 +125,21 @@ Répéter la même procédure avec l'adaptateur USB du Follower.
 
 > **💡 Astuce :** Après avoir monté chaque servo, il est normal que la position centrale soit perdue. N'hésitez pas à relancer le script pour recentrer le servo après montage. C'est pourquoi nous configurons AVANT le montage (pour avoir l'ID) puis APRÈS si nécessaire (pour recentrer).
 
+> **⚠️ Servo 6 (pince) :** lors du montage, fixez la pince en position **OUVERTE** (le script le rappelle au moment de configurer ce servo).
+
 
 ### 🔍 Étape 4 : Vérification et dépannage
 
-**Utilisation du mode Détection**
+**Options de gestion du menu**
 
-Pour identifier un servo déjà configuré :
+Au-delà de la configuration d'un servo (touches 1 à 6), le menu propose :
 
-```bash
-python SEM_so101_1_configure.py
-# Choisir 'D' pour détecter
-```
+- `T` — configure les six servos l'un après l'autre, avec une invite avant chaque branchement
+- `B` — bloque au centre (2048) le servo actuellement connecté
+- `L` — libère le servo connecté (relâche le couple), à utiliser après le montage
+- `D` — relance la détection du port USB (utile si l'adaptateur a été rebranché)
 
-Le script affichera l'ID et la position actuelle du servo connecté.
+> **Note :** Les options `B` et `L` recherchent le servo branché et affichent son ID — c'est le moyen le plus simple de vérifier quel servo est connecté.
 
 **Tableau de dépannage**
 
@@ -146,7 +149,7 @@ Le script affichera l'ID et la position actuelle du servo connecté.
 | Servo ne bouge pas | Alimentation non connectée, câble 3-pins mal branché, servo défectueux | Vérifier l'alimentation (LED allumée), reconnecter le câble 3-pins, tester avec un autre servo |
 | Position incorrecte après montage | Normal — le montage fait bouger le servo, palonnier mal positionné | Relancer le script pour recentrer, démonter et remonter le palonnier |
 | Plusieurs servos détectés | Plusieurs servos connectés en chaîne | Débrancher tous sauf un, configurer un par un |
-| ID déjà utilisé | Servo déjà configuré, mauvais servo branché | Utiliser mode 'D' pour identifier, brancher le bon servo |
+| ID déjà utilisé | Servo déjà configuré, mauvais servo branché | Utiliser `B` ou `L` pour afficher l'ID du servo branché, brancher le bon servo |
 
 
 ### 📝 Notes importantes
@@ -172,9 +175,9 @@ cd ~/lerobot/Scripts_SEM/scripts
 # Configurer un servo
 python SEM_so101_1_configure.py
 
-# Détecter un servo existant
-python SEM_so101_1_configure.py
-# Puis choisir 'D'
+# Options du menu après lancement :
+#   T = configurer les six servos       B / L = bloquer / libérer (affiche l'ID)
+#   D = relancer la détection du port    Q = quitter
 ```
 
 > **Note :** Si vous obtenez une erreur de permission sur les ports USB, vérifiez que votre utilisateur est bien dans le groupe `dialout` (voir Phase 1, Étape 6).
