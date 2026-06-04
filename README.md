@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="#-démarrage-rapide">Démarrage rapide</a> •
+  <a href="#-parcours-des-scripts-principaux">Parcours des scripts principaux</a> •
   <a href="#-guide-dutilisation-par-phase">Phases du projet</a> •
   <a href="#-structure-complète-des-fichiers">Structure</a> •
   <a href="#-ressources">Ressources</a>
@@ -131,7 +131,9 @@ La tâche de référence est volontairement simple et pédagogique : **prendre u
 
 ---
 
-## ⚡ Démarrage rapide
+## ⚡ Parcours des scripts principaux
+
+Cette section donne une vue synthétique de l'ordre général des scripts. Elle ne remplace pas les guides détaillés : chaque phase demande des vérifications matérielles, des choix opérateur et des étapes de sécurité.
 
 ```bash
 # Activer l'environnement
@@ -378,23 +380,6 @@ Les scripts SEM intègrent plusieurs garde-fous :
 
 ---
 
-## 🖼️ Médias à ajouter
-
-Pour maximiser la visibilité du projet, ajoutez idéalement :
-
-```text
-assets/
-├── so-arm101-demo.gif              # Démo courte du robot autonome
-├── setup-overview.jpg              # Photo du setup complet
-├── dataset-recording.jpg           # Enregistrement avec Leader/Follower + caméras
-├── autonomous-deployment.jpg       # Déploiement du modèle entraîné
-└── pipeline-overview.png           # Schéma des phases du projet
-```
-
-Recommandation : placer un GIF court en haut du README. C’est souvent l’élément le plus efficace pour donner envie de lire la suite.
-
----
-
 ## 🌐 Ressources
 
 ### Documentation
@@ -425,9 +410,10 @@ Les contributions sont les bienvenues :
 
 ## 👥 Contributeurs
 
-- **Yanko Michel** — Service Écoles-Médias (SEM), Genève
-- **Claude AI Opus 4.6** — Assistant développement
-- **ChatGPT** — Assistance à l’audit, à la documentation et à la structuration
+- Yanko Michel — Service Écoles-Médias (SEM), Genève
+- Claude AI — Assistant développement
+- ChatGPT — Assistance à l’audit, à la documentation et à la structuration
+
 
 ---
 
