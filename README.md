@@ -5,14 +5,6 @@
 </p>
 
 <p align="center">
-  <img src="assets/so-arm101-demo.gif" alt="Démo SO-ARM 101 - apprentissage par imitation" width="800">
-</p>
-
-<p align="center">
-  <em>Apprentissage par imitation : le robot reproduit un geste appris par démonstration.</em>
-</p>
-
-<p align="center">
   <a href="#-parcours-des-scripts-principaux">Parcours des scripts principaux</a> •
   <a href="#-guide-dutilisation-par-phase">Phases du projet</a> •
   <a href="#-structure-complète-des-fichiers">Structure</a> •
@@ -165,6 +157,8 @@ Pour une installation complète et sûre, suivez les guides détaillés dans le 
 
 ## 📚 Guide d'Utilisation par Phase
 
+> **Note :** les phases pédagogiques regroupent parfois plusieurs scripts. Les numéros de phase ne correspondent donc pas toujours aux numéros des fichiers Python (par exemple, la Phase 8 utilise les scripts 9 et 10).
+
 ### Phase 1 : Installation LeRobot
 
 ```bash
@@ -240,11 +234,11 @@ python SEM_so101_8_record_dataset.py
 ### Phase 8 : Consolidation et Visualisation
 
 ```bash
-# Fusionner les 5 positions en un dataset unifié
+# Script 9 — fusionner les 5 positions en un dataset unifié
 python SEM_so101_9_dataset.py
 
-# Vérifier le dataset, générer les statistiques, convertir les vidéos en H.264
-# et visualiser dans le navigateur
+# Script 10 — vérifier le dataset, générer les statistiques,
+# convertir les vidéos en H.264 et visualiser dans le navigateur
 python SEM_so101_10_visualize_dataset.py
 
 # Dataset consolidé et vérifié, prêt pour l'entraînement
@@ -290,6 +284,8 @@ python SEM_so101_12_deploy.py
 │   ├── SEM_SO101_Phase8.md
 │   ├── SEM_SO101_Phase9.md
 │   └── SEM_SO101_Phase10.md
+├── Hardware
+│   └── Modèles 3D (STL) et fichiers matériels
 ├── README.md
 └── scripts
     ├── __pycache__
