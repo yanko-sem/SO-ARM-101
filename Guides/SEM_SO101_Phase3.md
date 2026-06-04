@@ -1,6 +1,6 @@
 # Guide Calibration SO-ARM 101
 
-## Phase 3 : Calibration des limites de mouvement
+## Phase 3 : Calibration et position de repos
 
 Service Écoles-Médias (SEM)
 
@@ -33,9 +33,9 @@ La calibration permet de :
 # Activer l'environnement conda
 conda activate lerobot
 # Se placer dans le dossier des scripts
-cd ~/lerobot/SO-ARM-101/scripts
+cd ~/lerobot/Scripts_SEM/scripts
 # Vérifier que le script est présent
-ls SEM_so101_calibrate.py
+ls SEM_so101_2_calibrate.py
 ```
 
 **Vérification du matériel**
@@ -55,38 +55,41 @@ ls SEM_so101_calibrate.py
 **Démarrage**
 
 ```bash
-python SEM_so101_calibrate.py
+python SEM_so101_2_calibrate.py
 ```
 
 **Sélection du bras**
 
 ```
-==================================================
-        CALIBRATION SO-ARM-101
-        Service Écoles-Médias (SEM)
-==================================================
+╔══════════════════════════════════════════════════════════╗
+║     CALIBRATION SO-ARM 101                              ║
+║     Service Ecoles Médias                               ║
+╚══════════════════════════════════════════════════════════╝
 
-Quel bras ?
-  1 - LEADER (avec poignée)
-  2 - FOLLOWER (avec pince)
+✅ Port détecté: /dev/ttyACM0
 
-Choix (1 ou 2) : _
+🤖 Quel robot calibrer ?
+  [L] LEADER
+  [F] FOLLOWER
+
+Votre choix : _
 ```
 
-Entrez 1 pour le Leader ou 2 pour le Follower.
+Tapez `L` pour le Leader ou `F` pour le Follower (une entrée vide équivaut à Leader).
 
 **Menu principal**
 
 ```
-[ROBOT: FOLLOWER]
-==================================================
-MENU PRINCIPAL:
-  1-6 : Calibrer UN servo spécifique
-  T   : Calibrer TOUS les servos
-  V   : Voir calibration actuelle
-  Q   : QUITTER et sauvegarder
-==================================================
-follower> _
+============================================================
+MENU PRINCIPAL
+============================================================
+1-6 → Calibrer un servo spécifique
+  T → Calibrer TOUS les servos
+  V → Voir calibration actuelle
+  Q → Quitter
+============================================================
+
+Votre choix: _
 ```
 
 > **💡 Conseil :** Pour une première calibration, utilisez T pour calibrer tous les servos d'un coup. Pour des ajustements, utilisez les numéros 1-6.
@@ -98,41 +101,44 @@ follower> _
 
 Pour chaque servo, vous devez :
 
-1. Bouger manuellement le servo jusqu'à une butée (extrême 1)
-2. Valider cette position avec ENTRÉE
-3. Bouger jusqu'à l'autre butée (extrême 2)
-4. Valider cette seconde position
-5. Le script calcule automatiquement le centre et les limites
-6. Le servo se recentre automatiquement en douceur
+1. Bouger manuellement le servo jusqu'à sa position MINIMALE
+2. Valider avec ENTRÉE (le script lit la position MIN)
+3. Bouger jusqu'à sa position MAXIMALE
+4. Valider avec ENTRÉE (le script lit la position MAX)
+5. Le script calcule automatiquement le centre et l'amplitude
+6. Le servo se recentre automatiquement en douceur, puis est libéré
 
 **Exemple pratique : Calibration du servo 3 (Coude)**
 
 ```
-========================================
-  SERVO 3 : COUDE
-========================================
+============================================================
+CALIBRATION DU SERVO 3 - COUDE
+============================================================
+Position actuelle: 1800
 
--> Bougez le servo a une BUTEE (extreme 1)
-   Appuyez ENTREE...
+⚠️  Le servo est maintenant LIBRE
 
-Position 1 = 512
+📋 Instructions:
+1. Bougez MANUELLEMENT le servo à sa position MINIMALE
+2. Maintenez la position et appuyez sur ENTRÉE
 
--> Bougez le servo a l'AUTRE BUTEE (extreme 2)
-   Appuyez ENTREE...
+➡️  Position MIN prête? [ENTRÉE]
+✅ Position MIN enregistrée: 512
 
-Position 2 = 3584
+3. Bougez MANUELLEMENT le servo à sa position MAXIMALE
+4. Maintenez la position et appuyez sur ENTRÉE
 
-NOUVELLE CALIBRATION:
-  MIN    : 512
-  CENTRE : 2048
-  MAX    : 3584
-  Amplitude : 3072
+➡️  Position MAX prête? [ENTRÉE]
+✅ Position MAX enregistrée: 3584
 
--> Centrage dans 2 secondes...
--> Centrage en douceur...
-OK: Servo recentré et libéré
-
-[Sauvegarde automatique effectuée]
+📊 Résumé calibration:
+  • MIN: 512
+  • MAX: 3584
+  • CENTRE: 2048
+  • Amplitude: 3072
+  🔄 Centrage fluide vers 2048...
+✅ Servo 3 centré
+💾 Calibration du servo 3 sauvegardée!
 ```
 
 > **✅ Important :** La sauvegarde est automatique après chaque servo. Vous ne perdrez jamais votre travail !
@@ -156,18 +162,18 @@ L'option T permet de calibrer les 6 servos à la suite :
 À la fin de la calibration complète, un tableau s'affiche :
 
 ```
-============================================================
-                  TABLEAU RECAPITULATIF
-============================================================
-ID  Nom                  MIN    CENTRE  MAX    Amplitude
-------------------------------------------------------------
-1   BASE                 1024   2048    3072   2048
-2   EPAULE               768    2304    3840   3072
-3   COUDE                512    2048    3584   3072
-4   POIGNET FLEXION      1280   2176    3072   1792
-5   POIGNET ROTATION     1024   2048    3072   2048
-6   PINCE/POIGNEE        1536   2560    3584   2048
-============================================================
+================================================================================
+TABLEAU RÉCAPITULATIF DE CALIBRATION
+================================================================================
+ID   Nom             MIN      CENTRE   MAX      Amplitude
+--------------------------------------------------------------------------------
+1    BASE            1024     2048     3072     2048
+2    ÉPAULE          768      2304     3840     3072
+3    COUDE           512      2048     3584     3072
+4    POIGNET-F       1280     2176     3072     1792
+5    POIGNET-R       1024     2048     3072     2048
+6    PINCE/POIGNÉE   1536     2560     3584     2048
+================================================================================
 ```
 
 > **Note :** Les valeurs ci-dessus sont des exemples. Vos valeurs seront différentes selon votre montage mécanique.
@@ -180,16 +186,10 @@ ID  Nom                  MIN    CENTRE  MAX    Amplitude
 Utilisez l'option V pour voir les valeurs enregistrées :
 
 ```
-follower> V
-
-CALIBRATION ACTUELLE (FOLLOWER):
-  Servo 1: MIN=1024, CENTRE=2048, MAX=3072
-  Servo 2: MIN=768,  CENTRE=2304, MAX=3840
-  Servo 3: MIN=512,  CENTRE=2048, MAX=3584
-  Servo 4: MIN=1280, CENTRE=2176, MAX=3072
-  Servo 5: MIN=1024, CENTRE=2048, MAX=3072
-  Servo 6: MIN=1536, CENTRE=2560, MAX=3584
+Votre choix: V
 ```
+
+`V` réaffiche le **tableau récapitulatif** (identique à celui de l'option `T`, voir Étape 4) avec les valeurs actuellement enregistrées pour le robot sélectionné.
 
 **Recalibrer un servo spécifique**
 
@@ -206,10 +206,66 @@ Si un servo nécessite un ajustement :
 Utilisez Q pour quitter et confirmer la sauvegarde :
 
 ```
-follower> Q
-Calibration finale sauvegardée pour FOLLOWER
-Fichier: ~/.cache/calibration/so101/follower_calibration.json
+Votre choix: Q
+
+🏁 Libération des servos...
+
+✅ Calibration terminée
+📁 Fichier: ~/lerobot/calibration/follower_calibration.json
 ```
+
+
+### 📡 Étape 6 : Définir la position de repos (script 3)
+
+**Pourquoi cette étape ?** Une fois la calibration faite, il reste à définir la **position de repos** : le point de départ et de retour commun à *tous* les scripts (contrôle, téléopération, enregistrement, déploiement). Elle est enregistrée dans un fichier partagé, `~/lerobot/calibration/repos_position.json`, et stockée en **pourcentages** relatifs à la calibration de chaque servo — elle reste donc cohérente même après une recalibration.
+
+Le script `SEM_so101_3_monitor.py` sert à cela. Il affiche aussi en temps réel les positions des servos, utile pour diagnostiquer le montage.
+
+> **⚠️ Prérequis :** la calibration du robot doit être faite (Étapes 1 à 5), car le script s'en sert pour convertir les positions en pourcentages.
+
+**Lancement**
+
+```bash
+conda activate lerobot
+cd ~/lerobot/Scripts_SEM/scripts
+python SEM_so101_3_monitor.py
+```
+
+Le script détecte le port, puis demande le robot :
+
+```
+🤖 Quel robot monitorer ?
+  [L] LEADER
+  [F] FOLLOWER
+
+Votre choix : _
+```
+
+Tapez `L` ou `F`. Les servos sont alors **libérés** (vous pouvez bouger le bras à la main) et le monitoring démarre :
+
+```
+╔═══════════╦═══════╦═══════╦═══════╦═══════╦═══════╦══════════════════════╗
+║ SERVO     ║  POS  ║   %   ║  MIN  ║ CENTRE║  MAX  ║     GRAPHIQUE        ║
+╠═══════════╬═══════╬═══════╬═══════╬═══════╬═══════╬══════════════════════╣
+║ 1:BASE    ║  2048 ║  50.0 ║  1024 ║  2048 ║  3072 ║ ██████████░░░░░░░░░░ ║
+...
+╚═══════════╩═══════╩═══════╩═══════╩═══════╩═══════╩══════════════════════╝
+```
+
+**Définir la position de repos**
+
+Sous le tableau, deux touches permettent de créer ou modifier le repos :
+
+- **`C`** — **capture** la position physique actuelle du bras. Placez le bras à la main dans la pose de repos souhaitée, pressez `C`, vérifiez le récapitulatif (ticks, %, contrôle des limites), puis confirmez par `O`.
+- **`M`** — **saisie manuelle** des 6 valeurs en ticks (le script vérifie que chaque valeur est dans les limites de calibration).
+
+Dans les deux cas, un récapitulatif s'affiche avant la confirmation, puis la position est enregistrée dans `repos_position.json`.
+
+> **💡 Recommandation :** capturez la position de repos depuis le **FOLLOWER** — c'est lui qui sert de référence au déploiement. Le script le rappelle si vous monitorez le Leader.
+
+**Quitter**
+
+Pressez `Ctrl+C` : le script libère tous les servos et ferme proprement le port.
 
 
 ### 📖 Comprendre les valeurs de calibration
@@ -236,8 +292,8 @@ Fichier: ~/.cache/calibration/so101/follower_calibration.json
 Les calibrations sont stockées dans :
 
 ```
-~/.cache/calibration/so101/leader_calibration.json
-~/.cache/calibration/so101/follower_calibration.json
+~/lerobot/calibration/leader_calibration.json
+~/lerobot/calibration/follower_calibration.json
 ```
 
 
@@ -265,14 +321,10 @@ Les calibrations sont stockées dans :
 ### 🚀 Commandes de référence
 
 ```bash
-# Installation des scripts (si pas déjà fait)
-cd ~/lerobot
-git clone https://github.com/yanko-sem/SO-ARM-101.git
-
-# Utilisation
+# Les scripts sont installés en Phase 1 (dépôt SEM cloné dans ~/lerobot/Scripts_SEM)
 conda activate lerobot
-cd ~/lerobot/SO-ARM-101/scripts
-python SEM_so101_calibrate.py
+cd ~/lerobot/Scripts_SEM/scripts
+python SEM_so101_2_calibrate.py
 ```
 
 **Options du menu :**
