@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <em>Image/GIF à ajouter : démonstration pick-and-place du Follower après entraînement.</em>
+  <em>Image/. .</em>
 </p>
 
 <p align="center">
