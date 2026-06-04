@@ -159,16 +159,21 @@ Le script procède en plusieurs étapes automatiques :
 
 **Visualisation dans le navigateur**
 
-En choisissant **V**, le script lance l'outil officiel LeRobot `visualize_dataset_html.py` :
+En choisissant **V**, le script lance l'outil officiel LeRobot `visualize_dataset_html.py` et démarre un serveur web local dans le terminal.
 
-- Un serveur web local démarre et le navigateur s'ouvre automatiquement
-- Sinon, ouvrez votre navigateur à l'adresse `http://127.0.0.1:9090`
-- L'interface affiche pour chaque épisode :
-  - Les flux vidéo des deux caméras (cam_top et cam_follower)
-  - Les courbes des 6 positions moteurs (observation.state)
-  - Les courbes des 6 actions (action)
-  - Les contrôles de lecture (play, pause, navigation)
-  - La liste de tous les épisodes dans le panneau gauche
+> **⚠️ IMPORTANT — l'ouverture du navigateur n'est PAS automatique.**
+>
+> Firefox ne s'ouvre **pas** tout seul. **Ouvrez Firefox manuellement**, puis **copiez-collez** l'adresse `http://127.0.0.1:9090` dans la barre d'adresse.
+>
+> *(Possible bug du script, à corriger ultérieurement ; en attendant, l'ouverture manuelle est nécessaire.)*
+
+Une fois la page ouverte, l'interface affiche pour chaque épisode :
+
+- Les flux vidéo des deux caméras (cam_top et cam_follower)
+- Les courbes des 6 positions moteurs (observation.state)
+- Les courbes des 6 actions (action)
+- Les contrôles de lecture (play, pause, navigation)
+- La liste de tous les épisodes dans le panneau gauche
 - Pour arrêter le serveur : **Ctrl+C** dans le terminal
 
 > **💡 Conseil :** Vérifiez quelques épisodes de chaque position. Assurez-vous que les vidéos sont fluides et que les mouvements des courbes correspondent aux gestes visibles dans les vidéos.
