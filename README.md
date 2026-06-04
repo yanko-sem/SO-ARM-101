@@ -426,7 +426,7 @@ Les contributions sont les bienvenues :
 ## 👥 Contributeurs
 
 - **Yanko Michel** — Service Écoles-Médias (SEM), Genève
-- **Claude AI** — Assistant développement
+- **Claude AI Opus 4.6** — Assistant développement
 - **ChatGPT** — Assistance à l’audit, à la documentation et à la structuration
 
 ---
