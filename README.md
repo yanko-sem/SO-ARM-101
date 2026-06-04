@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <em>Image/. .</em>
+  <em>Apprentissage par imitation : le robot reproduit un geste appris par démonstration.</em>
 </p>
 
 <p align="center">
@@ -73,7 +73,7 @@ Développé par le **Service Écoles-Médias (SEM)** du **Département de l’In
 7. entraîner un modèle ACT ;
 8. déployer le modèle pour que le robot agisse seul.
 
-La tâche de référence est volontairement simple et pédagogique : **prendre un cube à l’une de cinq positions et le déposer dans une boîte**.
+La tâche de référence est volontairement simple et pédagogique : **prendre un prisme hexagonal (désigné « cube » dans le dataset) à l’une de cinq positions et le déposer dans une boîte**.
 
 ---
 
@@ -85,14 +85,12 @@ La tâche de référence est volontairement simple et pédagogique : **prendre u
 - **Phase 2** : Configuration des servos (IDs, test, centrage et montage)
 - **Phase 3** : Calibration des limites de mouvement
 - **Phase 4** : Tests et contrôle manuel
-- **Phase 5** : Configuration de la téléopération
-- **Phase 6** : Téléopération Leader → Follower
-- **Phase 7** : Téléopération avec caméras et définition du masque de zone utile
-- **Phase 8** : Enregistrement de dataset pour l'apprentissage par imitation (2 caméras)
-- **Phase 9** : Consolidation du dataset
-- **Phase 10** : Vérification et conversion vidéo du dataset
-- **Phase 11** : Entraînement du modèle ACT (*Action Chunking Transformers*)
-- **Phase 12** : Déploiement autonome du modèle entraîné
+- **Phase 5** : Téléopération Leader → Follower (configuration + téléopération temps réel)
+- **Phase 6** : Téléopération avec caméras et définition du masque de zone utile
+- **Phase 7** : Enregistrement de dataset pour l'apprentissage par imitation (2 caméras)
+- **Phase 8** : Consolidation et vérification du dataset (statistiques, conversion vidéo, visualisation)
+- **Phase 9** : Entraînement du modèle ACT (*Action Chunking Transformers*)
+- **Phase 10** : Déploiement autonome du modèle entraîné
 
 ### 🚀 Extensions possibles
 
@@ -223,7 +221,7 @@ python SEM_so101_6_teleoperation.py
 # Téléopération avec retour vidéo et création du masque de zone utile
 python SEM_so101_7_teleoperation_camera.py
 
-# Le masque est partagé avec les phases 8 et 12
+# Le masque est partagé avec les phases 7 et 10
 # Fichier : ~/lerobot/calibration/camera_mask.json
 ```
 
@@ -233,7 +231,7 @@ python SEM_so101_7_teleoperation_camera.py
 # Enregistrement avec 2 caméras (cam_top + cam_follower)
 python SEM_so101_8_record_dataset.py
 
-# Tâche : Prendre un cube et le déposer dans une boîte
+# Tâche : Prendre un prisme hexagonal (désigné « cube » dans le dataset) et le déposer dans une boîte
 # 5 positions × 10 épisodes = 50 démonstrations
 # Format de sortie : LeRobotDataset v2.1
 # Les réglages caméra sont capturés et verrouillés pour garantir la cohérence entraînement/déploiement
@@ -245,19 +243,14 @@ python SEM_so101_8_record_dataset.py
 # Fusionner les 5 positions en un dataset unifié
 python SEM_so101_9_dataset.py
 
-# Dataset consolidé utilisé ensuite pour l'entraînement
-```
-
-### Phase 9 : Vérification et conversion vidéo
-
-```bash
-# Vérifier le dataset et convertir les vidéos au format H.264 si nécessaire
+# Vérifier le dataset, générer les statistiques, convertir les vidéos en H.264
+# et visualiser dans le navigateur
 python SEM_so101_10_visualize_dataset.py
 
-# Objectif : garantir la compatibilité vidéo avec l'entraînement LeRobot
+# Dataset consolidé et vérifié, prêt pour l'entraînement
 ```
 
-### Phase 10 : Entraînement du modèle ACT
+### Phase 9 : Entraînement du modèle ACT
 
 ```bash
 # Lancer l'entraînement
@@ -268,7 +261,7 @@ python SEM_so101_11_train.py
 # Entraînement CPU possible, GPU NVIDIA recommandé
 ```
 
-### Phase 11 : Déploiement autonome
+### Phase 10 : Déploiement autonome
 
 ```bash
 # Déployer le modèle ACT entraîné
@@ -293,7 +286,10 @@ python SEM_so101_12_deploy.py
 │   ├── SEM_SO101_Phase4.md
 │   ├── SEM_SO101_Phase5.md
 │   ├── SEM_SO101_Phase6.md
-│   └── SEM_SO101_Phase7.md
+│   ├── SEM_SO101_Phase7.md
+│   ├── SEM_SO101_Phase8.md
+│   ├── SEM_SO101_Phase9.md
+│   └── SEM_SO101_Phase10.md
 ├── README.md
 └── scripts
     ├── __pycache__
@@ -368,7 +364,7 @@ Les scripts SEM intègrent plusieurs garde-fous :
 - Latence téléopération : < 50ms
 - Déploiement autonome : environ 30 Hz
 
-### Caméras (Phases 7, 8 et 12)
+### Caméras (Phases 6, 7 et 10)
 
 - Résolution : 640 × 360 pixels (16:9)
 - FPS : 30 images/seconde
