@@ -20,6 +20,7 @@ import os
 import sys
 import json
 import subprocess
+import shutil
 from pathlib import Path
 from datetime import datetime
 
@@ -136,7 +137,6 @@ def verifier_prerequis():
         print(f"  ✅ CUDA : {torch.version.cuda}")
 
     # 6. Espace disque
-    import shutil
     free_space = shutil.disk_usage(str(LEROBOT_DIR)).free / (1024**3)
     if free_space < 5:
         erreurs.append(f"Espace disque insuffisant : {free_space:.1f} Go (minimum 5 Go)")
@@ -179,7 +179,64 @@ def afficher_menu_config():
         return None
 
 
-def lancer_entrainement(config_key):
+def ajouter_inhibition_systeme(cmd):
+    """Protège l'entraînement contre veille, extinction et inactivité si systemd-inhibit existe.
+
+    systemd-inhibit ne nécessite normalement pas de mot de passe utilisateur.
+    Si l'outil n'est pas disponible, on lance la commande normale avec un avertissement.
+    """
+    inhibit = shutil.which("systemd-inhibit")
+    if inhibit is None:
+        print("⚠️  systemd-inhibit introuvable : entraînement lancé sans protection veille/extinction.")
+        return cmd
+
+    return [
+        inhibit,
+        "--what=sleep:shutdown:idle",
+        "--why=Entraînement LeRobot ACT en cours",
+        "--mode=block",
+    ] + cmd
+
+
+def charger_params_sem():
+    """Charge sem_training_params.json sans jamais bloquer la reprise.
+
+    Ce fichier est informatif pour l'interface SEM. La reprise LeRobot fiable
+    utilise le train_config.json du checkpoint, pas ce fichier. S'il est absent,
+    vide ou corrompu, on l'ignore proprement.
+    """
+    params_file = Path(__file__).parent / "sem_training_params.json"
+    if not params_file.exists():
+        return None
+    try:
+        with open(params_file) as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"   ⚠️  sem_training_params.json illisible — ignoré ({e})")
+        return None
+
+
+def checkpoint_pour_reprise(checkpoints):
+    """Retourne le checkpoint à reprendre : priorité à 'last', sinon dernier checkpoint valide trié.
+
+    Un checkpoint est considéré reprenable seulement s'il contient
+    pretrained_model/train_config.json, requis par la version actuelle de LeRobot.
+    """
+    checkpoints_dir = OUTPUT_DIR / "checkpoints"
+    last = checkpoints_dir / "last"
+    if last.exists() and (last / "pretrained_model" / "train_config.json").exists():
+        return last
+
+    checkpoints_valides = [
+        cp for cp in checkpoints
+        if (cp / "pretrained_model" / "train_config.json").exists()
+    ]
+    if checkpoints_valides:
+        return checkpoints_valides[-1]
+    return None
+
+
+def lancer_entrainement(config_key, effacer_ancien=False):
     """Lance l'entraînement avec la configuration choisie"""
     config = TRAINING_CONFIGS[config_key]
 
@@ -223,6 +280,14 @@ def lancer_entrainement(config_key):
         print("   Annulé.")
         return False
 
+    # Si l'utilisateur a demandé un nouvel entraînement, on supprime l'ancien
+    # uniquement après cette confirmation finale. Cela évite de perdre
+    # un ancien modèle/checkpoint si l'utilisateur annule au menu suivant.
+    if effacer_ancien and OUTPUT_DIR.exists():
+        print(f"\n🗑️  Suppression de l'ancien entraînement : {OUTPUT_DIR}")
+        shutil.rmtree(OUTPUT_DIR)
+        print("   ✅ Ancien entraînement supprimé.")
+
     # Sauvegarder les paramètres (à côté du script, pas dans output_dir)
     params = {
         "config": config_key,
@@ -245,7 +310,8 @@ def lancer_entrainement(config_key):
     start_time = datetime.now()
 
     try:
-        result = subprocess.run(cmd, cwd=str(LEROBOT_DIR))
+        cmd_exec = ajouter_inhibition_systeme(cmd)
+        result = subprocess.run(cmd_exec, cwd=str(LEROBOT_DIR))
 
         end_time = datetime.now()
         duration = end_time - start_time
@@ -293,76 +359,105 @@ def afficher_checkpoints():
         print("   Aucun checkpoint trouvé")
 
 
+
 def reprendre_entrainement():
-    """Vérifie si un entraînement précédent peut être repris"""
+    """Vérifie si un entraînement précédent existe et peut être repris.
+
+    Retourne :
+      - "done" si une reprise a été lancée ou si l'utilisateur quitte ;
+      - "new" si l'utilisateur demande un nouvel entraînement ;
+      - "none" si aucun ancien dossier n'existe.
+    """
+    if not OUTPUT_DIR.exists():
+        return "none"
+
     checkpoints_dir = OUTPUT_DIR / "checkpoints"
+
     if not checkpoints_dir.exists():
-        return False
+        print(f"\n⚠️  Dossier d'entraînement existant mais non reprenable :")
+        print(f"   {OUTPUT_DIR}")
+        print("   Aucun dossier checkpoints/ n'a été trouvé.")
+        print("\n  N — Nouvel entraînement (écrase l'ancien après confirmation finale)")
+        print("  Q — Quitter")
+        choix = input("\n  Votre choix : ").strip().upper()
+        if choix == 'N':
+            print("\n⚠️  Nouvel entraînement demandé : l'ancien dossier sera supprimé seulement après confirmation finale du lancement.")
+            return "new"
+        sys.exit(0)
 
-    checkpoints = sorted(checkpoints_dir.glob("*/"))
-    if not checkpoints:
-        return False
+    checkpoints = sorted([cp for cp in checkpoints_dir.glob("*/") if cp.is_dir()])
+    checkpoints_valides = [
+        cp for cp in checkpoints
+        if (cp / "pretrained_model" / "train_config.json").exists()
+    ]
 
-    last = checkpoints[-1]
+    if not checkpoints_valides:
+        print(f"\n⚠️  Dossier checkpoints présent mais aucun checkpoint reprenable trouvé :")
+        print(f"   {checkpoints_dir}")
+        print("   Aucun fichier pretrained_model/train_config.json n'a été trouvé.")
+        print("\n  N — Nouvel entraînement (écrase l'ancien après confirmation finale)")
+        print("  V — Voir les dossiers checkpoints")
+        print("  Q — Quitter")
+        choix = input("\n  Votre choix : ").strip().upper()
+        if choix == 'N':
+            print("\n⚠️  Nouvel entraînement demandé : l'ancien dossier sera supprimé seulement après confirmation finale du lancement.")
+            return "new"
+        elif choix == 'V':
+            afficher_checkpoints()
+            input("\nAppuyez sur ENTRÉE...")
+            return reprendre_entrainement()
+        sys.exit(0)
+
+    checkpoint_resume = checkpoint_pour_reprise(checkpoints_valides)
+    if checkpoint_resume is None:
+        print("\n❌ Aucun checkpoint avec train_config.json n'est disponible pour la reprise.")
+        return "done"
+
+    config_path = checkpoint_resume / "pretrained_model" / "train_config.json"
+
     print(f"\n📂 Entraînement précédent détecté :")
-    print(f"   Dernier checkpoint : {last.name}")
+    print(f"   Checkpoint de reprise : {checkpoint_resume.name}")
+    print(f"   Config de reprise     : {config_path}")
 
-    # Charger les params précédents
-    params_file = Path(__file__).parent / "sem_training_params.json"
-    if params_file.exists():
-        with open(params_file) as f:
-            params = json.load(f)
-        print(f"   Configuration : {params.get('config', '?')}")
-        print(f"   Démarré le : {params.get('started_at', '?')}")
+    # Afficher les paramètres SEM précédents si le fichier existe et est lisible.
+    # Ce fichier est informatif : la reprise utilise le train_config.json du checkpoint.
+    params = charger_params_sem()
+    if params:
+        print(f"   Configuration SEM : {params.get('config', '?')}")
+        print(f"   Démarré le        : {params.get('started_at', '?')}")
 
     print(f"\n  R — Reprendre l'entraînement")
-    print(f"  N — Nouvel entraînement (écrase l'ancien)")
+    print(f"  N — Nouvel entraînement (écrase l'ancien après confirmation finale)")
     print(f"  V — Voir les checkpoints")
     print(f"  Q — Quitter")
 
     choix = input("\n  Votre choix : ").strip().upper()
 
     if choix == 'R':
-        # Reprendre avec le même config
-        if params_file.exists():
-            config_key = params.get('config', 'standard')
-        else:
-            config_key = 'standard'
-
-        config = TRAINING_CONFIGS[config_key]
         cmd = [
             sys.executable,
             str(TRAIN_SCRIPT),
-            "--dataset.repo_id=local/so101_pick_place_consolidated",
-            "--dataset.video_backend=pyav",
-            f"--policy.type=act",
-            f"--policy.device=cuda",
-            f"--policy.chunk_size={config['chunk_size']}",
-            f"--policy.n_action_steps={config['n_action_steps']}",
-            f"--output_dir={OUTPUT_DIR}",
-            f"--batch_size={config['batch_size']}",
-            f"--steps={config['steps']}",
-            f"--save_freq={config['save_freq']}",
-            f"--log_freq={config['log_freq']}",
-            f"--save_checkpoint=true",
-            f"--wandb.enable=false",
-            f"--eval_freq=0",
-            f"--resume=true",
+            f"--config_path={config_path}",
+            "--resume=true",
         ]
 
-        print(f"\n🔄 Reprise de l'entraînement ({config['nom']})...")
+        print(f"\n🔄 Reprise de l'entraînement depuis {checkpoint_resume.name}...")
         print(f"   Ctrl+C pour interrompre\n")
 
         try:
-            subprocess.run(cmd, cwd=str(LEROBOT_DIR))
+            cmd_exec = ajouter_inhibition_systeme(cmd)
+            result = subprocess.run(cmd_exec, cwd=str(LEROBOT_DIR))
+            if result.returncode != 0:
+                print(f"\n❌ La reprise s'est terminée avec une erreur (code {result.returncode})")
         except KeyboardInterrupt:
             print(f"\n\n⚠️  Entraînement interrompu")
             afficher_checkpoints()
 
-        return True
+        return "done"
 
     elif choix == 'N':
-        return False  # Continue vers le menu normal
+        print("\n⚠️  Nouvel entraînement demandé : l'ancien dossier sera supprimé seulement après confirmation finale du lancement.")
+        return "new"
 
     elif choix == 'V':
         afficher_checkpoints()
@@ -395,8 +490,11 @@ def main():
         return
 
     # 2. Vérifier si un entraînement précédent existe
-    if reprendre_entrainement():
+    decision = reprendre_entrainement()
+    if decision == "done":
         return
+
+    effacer_ancien = (decision == "new")
 
     # 3. Menu de configuration
     config_key = afficher_menu_config()
@@ -405,7 +503,7 @@ def main():
         return
 
     # 4. Lancer
-    lancer_entrainement(config_key)
+    lancer_entrainement(config_key, effacer_ancien=effacer_ancien)
 
 
 if __name__ == "__main__":
