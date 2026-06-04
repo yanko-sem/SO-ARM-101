@@ -107,7 +107,7 @@ Capture de démonstrations pour l'apprentissage par imitation.
 - Identification caméras par touches G (Globale) et P (Pince)
 - Format LeRobotDataset v2.1
 - 5 positions × 10 épisodes = 50 démonstrations
-- Tâche : prendre un cube et le déposer dans une boîte
+- Tâche : prendre un prisme hexagonal (désigné « cube » dans le dataset) et le déposer dans une boîte
 
 **Script utilisé :**
 - `SEM_so101_8_record_dataset.py`
@@ -135,7 +135,7 @@ Préparation du dataset pour l'entraînement.
 
 Formation du modèle d'intelligence artificielle sur les démonstrations.
 
-- Modèle ACT (Action Chunking with Transformers), ~52M paramètres
+- Modèle ACT (Action Chunking with Transformers), entre 50 et 80 millions de paramètres selon la configuration
 - 3 profils d'entraînement : Rapide (30min), Standard (4-6h), Intensif (8-12h)
 - Optimisé pour GPU NVIDIA (Quadro RTX 4000, batch size 4)
 - Sauvegarde de checkpoints régulière
@@ -148,9 +148,19 @@ Formation du modèle d'intelligence artificielle sur les démonstrations.
 - `~/lerobot/outputs/train/act_so101_pick_place/checkpoints/`
 
 
-## 🚀 Guides à Venir
+### 📙 Phase 10 — Déploiement Autonome
 
-- **📙 Phase 10 — Autonomie** : Déploiement du robot en mode autonome
+Inférence autonome : le modèle ACT pilote le robot sans opérateur.
+
+- Sélection d'un checkpoint entraîné
+- Inférence en boucle à ~30 images/seconde
+- Bras Follower seul (le Leader n'est pas nécessaire — le modèle remplace l'opérateur)
+- Masque et réglages caméra réappliqués (cohérence entraînement↔déploiement)
+- Contrôles : Pause (P), fin d'essai (R), nouvel essai (Entrée), quitter (Q)
+- Arrêt d'urgence (CTRL+C)
+
+**Script utilisé :**
+- `SEM_so101_12_deploy.py`
 
 
 ## 🔧 Matériel Requis
@@ -201,4 +211,4 @@ Phase 10 (Déploiement autonome)
 ---
 
 Service Écoles-Médias — DIP Genève
-Dernière mise à jour : 24.04.2026
+Dernière mise à jour : 04.06.2026
