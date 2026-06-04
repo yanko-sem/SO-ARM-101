@@ -28,14 +28,14 @@
 
 The project makes it possible to train a robotic arm to perform an object-manipulation task through **learning by demonstration** (*Imitation Learning*): a human guides a **Leader** arm, a **Follower** arm reproduces the motion, the demonstrations are recorded with two cameras, and an ACT (*Action Chunking Transformers*) model then learns to perform the task autonomously.
 
-Developed by the **Service Écoles-Médias (SEM)**, part of Geneva's **Department of Public Education (DIP)**, this project aims to make AI-driven robotics concrete, observable, and open to experimentation in an educational setting.
+Developed by the **Service Écoles-Médias (SEM)**, part of Geneva's **Department of Public Instruction (DIP)**, this project aims to make AI-driven robotics concrete, observable, and open to experimentation in an educational setting.
 
 ### Why Is This Project Interesting?
 
 - 🎓 **Designed for education**: a clear, phase-by-phase progression suited to teaching.
 - 🛠️ **DIY and turnkey**: from software setup to autonomous deployment.
 - 🤖 **Hands-on AI**: imitation learning, dataset, training, and inference on a real robot.
-- 📷 **Two cameras**: a global view plus an on-gripper embedded view.
+- 📷 **Two cameras**: a global view plus a gripper-mounted camera view.
 - 🔁 **Reproducible**: scripts, guides, calibration, masks, camera settings, and checkpoints.
 - 🚀 **Modern**: built on LeRobot, PyTorch, the Dynamixel SDK, and ACT.
 
@@ -339,7 +339,7 @@ The SEM scripts include several safeguards:
 | Camera settings won't apply | Check `v4l2-ctl --version` and `guvcview --version` |
 | Empty videos | Check `ffmpeg -version` and that both cameras are connected |
 | Inconsistent dataset | Check the mask, camera settings, 640×360 resolution, and synchronization of both cameras |
-| Frequent "instant ignoré" (skipped reading) messages | Check cables, power supply, and serial-bus stability |
+| Frequent "instant ignoré" (skipped timestep) messages | Check cables, power supply, and serial-bus stability |
 
 ---
 
@@ -432,7 +432,7 @@ This work is licensed under the Creative Commons Attribution-NonCommercial-Share
 </p>
 
 <p align="center">
-  Service Écoles-Médias (SEM) — Department of Public Education (DIP), Geneva
+  Service Écoles-Médias (SEM) — Department of Public Instruction (DIP), Geneva
 </p>
 
 **Last updated: 4 June 2026**
