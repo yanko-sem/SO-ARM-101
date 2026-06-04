@@ -27,11 +27,32 @@ def clear_screen():
     os.system('clear')
 
 def detect_ports():
-    """Détecte les ports USB disponibles"""
+    """Détecte les ports des robots.
+
+    Teste chaque port candidat en interrogeant le servo 1 : ne garde que les
+    ports qui répondent au protocole servo (= robots). Les autres périphériques
+    série (téléphone en charge, etc.) sont ignorés. Le robot doit être alimenté.
+    """
+    BAUDRATE = 1000000
     ports = []
     for port in ['/dev/ttyACM0', '/dev/ttyACM1', '/dev/ttyUSB0', '/dev/ttyUSB1']:
-        if os.path.exists(port):
-            ports.append(port)
+        if not os.path.exists(port):
+            continue
+        ph = PortHandler(port)
+        pk = PacketHandler(1.0)
+        try:
+            if ph.openPort() and ph.setBaudRate(BAUDRATE):
+                _, result, _ = pk.read2ByteTxRx(ph, 1, 56)
+                ph.closePort()
+                if result == COMM_SUCCESS:
+                    ports.append(port)
+            else:
+                ph.closePort()
+        except Exception:
+            try:
+                ph.closePort()
+            except Exception:
+                pass
     return ports
 
 def charger_calibration(robot_type):
@@ -41,6 +62,98 @@ def charger_calibration(robot_type):
         with open(calib_file, 'r') as f:
             return json.load(f)
     return None
+
+# Fichier externe centralisant la position repos (partagé entre tous les scripts)
+REPOS_FILE = os.path.expanduser("~/lerobot/calibration/repos_position.json")
+
+def charger_repos_pct():
+    """Charge la position repos (% par servo) depuis le fichier externe.
+    Fallback sur les valeurs par défaut si le fichier est absent ou invalide."""
+    defaut = {1: 50, 2: 10, 3: 88, 4: 76, 5: 50, 6: 11}
+    if os.path.exists(REPOS_FILE):
+        try:
+            with open(REPOS_FILE, 'r') as f:
+                data = json.load(f)
+                return {int(k): float(v) for k, v in data.items()}
+        except Exception:
+            return defaut
+    return defaut
+
+def _cible_ticks(calib, servo_id, pct):
+    """Convertit un pourcentage en ticks pour un servo (fallback 2048)."""
+    if calib and f'servo_{servo_id}' in calib:
+        min_val = calib[f'servo_{servo_id}']['min']
+        max_val = calib[f'servo_{servo_id}']['max']
+        return int(min_val + (max_val - min_val) * pct / 100)
+    return 2048
+
+def _est_en_repos_1robot(packet, port, calib, repos_pct, tolerance_pct=5):
+    """Vrai si le robot est actuellement proche de la position repos (tous les servos)."""
+    for i in range(1, 7):
+        pos, _, _ = packet.read2ByteTxRx(port, i, 56)
+        if calib and f'servo_{i}' in calib:
+            min_val = calib[f'servo_{i}']['min']
+            max_val = calib[f'servo_{i}']['max']
+            pct_actuel = (pos - min_val) / (max_val - min_val) * 100 if max_val > min_val else 50
+        else:
+            pct_actuel = 50
+        if abs(pct_actuel - repos_pct.get(i, 50)) > tolerance_pct:
+            return False
+    return True
+
+def mouvement_parallele_2robots(lk, lp, fk, fp, cl, cf, cibles_pct, servos, duree=2.0):
+    """Déplace les servos indiqués sur Leader ET Follower simultanément vers cibles_pct (%)."""
+    pos_l, pos_f = {}, {}
+    for s in servos:
+        pos_l[s], _, _ = lk.read2ByteTxRx(lp, s, 56)
+        pos_f[s], _, _ = fk.read2ByteTxRx(fp, s, 56)
+    cible_l, cible_f = {}, {}
+    for s in servos:
+        cible_l[s] = _cible_ticks(cl, s, cibles_pct[s])
+        cible_f[s] = _cible_ticks(cf, s, cibles_pct[s])
+    steps = 100
+    for step in range(steps + 1):
+        t = step / steps
+        smooth = (1 - math.cos(t * math.pi)) / 2
+        for s in servos:
+            lk.write2ByteTxRx(lp, s, 42, int(pos_l[s] + (cible_l[s] - pos_l[s]) * smooth))
+            fk.write2ByteTxRx(fp, s, 42, int(pos_f[s] + (cible_f[s] - pos_f[s]) * smooth))
+        time.sleep(duree / steps)
+
+def aller_a_position_2robots(lk, lp, fk, fp, cl, cf, cibles_pct, duree=2.0):
+    """Déplace Leader ET Follower vers cibles_pct (%) en respectant les contraintes
+    physiques (séquence sûre), appliquée IDENTIQUEMENT aux deux robots :
+      Phase 0 (par robot) : si servo 4 > 2700 et robot pas en repos, lever le bras
+                            (servo 2 -> min(actuel, 1027)) pour dégager la pince du sol
+      Phase 1 : servo 4 -> 20% (pince en l'air)
+      Phase 2 : servos 1,2,3,5,6 -> cibles, en parallèle
+      Phase 3 : servo 4 -> cible finale
+    """
+    # Activer tous les servos
+    for i in range(1, 7):
+        lk.write1ByteTxRx(lp, i, 40, 1)
+        fk.write1ByteTxRx(fp, i, 40, 1)
+
+    repos_pct = charger_repos_pct()
+
+    # --- Phase 0 (conditionnelle, par robot) ---
+    pos4_l, _, _ = lk.read2ByteTxRx(lp, 4, 56)
+    if pos4_l > 2700 and not _est_en_repos_1robot(lk, lp, cl, repos_pct):
+        pos2_l, _, _ = lk.read2ByteTxRx(lp, 2, 56)
+        mouvement_fluide(lk, lp, 2, pos2_l, min(pos2_l, 1027), duree)
+    pos4_f, _, _ = fk.read2ByteTxRx(fp, 4, 56)
+    if pos4_f > 2700 and not _est_en_repos_1robot(fk, fp, cf, repos_pct):
+        pos2_f, _, _ = fk.read2ByteTxRx(fp, 2, 56)
+        mouvement_fluide(fk, fp, 2, pos2_f, min(pos2_f, 1027), duree)
+
+    # --- Phase 1 : servo 4 -> 20% sur les deux robots ---
+    mouvement_parallele_2robots(lk, lp, fk, fp, cl, cf, {4: 20}, [4], duree)
+
+    # --- Phase 2 : servos 1,2,3,5,6 en parallèle ---
+    mouvement_parallele_2robots(lk, lp, fk, fp, cl, cf, cibles_pct, [1, 2, 3, 5, 6], duree)
+
+    # --- Phase 3 : servo 4 -> cible finale ---
+    mouvement_parallele_2robots(lk, lp, fk, fp, cl, cf, cibles_pct, [4], duree)
 
 def mouvement_fluide(packet, port, servo, debut, fin, duree=1.5):
     """Mouvement fluide entre deux positions"""
@@ -421,67 +534,10 @@ def main():
     # Position repos finale avant libération
     print("\n🏁 Position repos avant libération...")
 
-    # Position repos en pourcentage - IDENTIQUE au script 6
-    repos_pct = {
-        1: 50,  # BASE centrée
-        2: 10,  # ÉPAULE très basse (replié)
-        3: 88,  # COUDE très haut (replié)
-        4: 76,  # POIGNET bien fléchi
-        5: 50,  # ROTATION centrée
-        6: 11,  # PINCE presque fermée
-    }
-
-    # Calculer les positions absolues pour chaque robot
-    repos_l = {}
-    repos_f = {}
-
-    for i in range(1, 7):
-        pct = repos_pct[i] / 100.0
-
-        # Leader : position selon son calibrage
-        if cl and f'servo_{i}' in cl:
-            min_l = cl[f'servo_{i}']['min']
-            max_l = cl[f'servo_{i}']['max']
-            repos_l[i] = int(min_l + (max_l - min_l) * pct)
-        else:
-            repos_l[i] = 2048
-
-        # Follower : MÊME pourcentage avec SON calibrage
-        if cf and f'servo_{i}' in cf:
-            min_f = cf[f'servo_{i}']['min']
-            max_f = cf[f'servo_{i}']['max']
-            repos_f[i] = int(min_f + (max_f - min_f) * pct)
-        else:
-            repos_f[i] = 2048
-
-    # Activer tous les servos pour le mouvement
-    for i in range(1, 7):
-        lk.write1ByteTxRx(lp, i, 40, 1)
-        fk.write1ByteTxRx(fp, i, 40, 1)
-
-    # Lire positions actuelles
-    pos_l = {}
-    pos_f = {}
-    for i in range(1, 7):
-        pos_l[i], _, _ = lk.read2ByteTxRx(lp, i, 56)
-        pos_f[i], _, _ = fk.read2ByteTxRx(fp, i, 56)
-
-    # Mouvement fluide vers repos
-    steps = 100
-    for step in range(steps + 1):
-        t = step / steps
-        smooth = (1 - math.cos(t * math.pi)) / 2
-
-        for i in range(1, 7):
-            # Leader
-            new_l = int(pos_l[i] + (repos_l[i] - pos_l[i]) * smooth)
-            lk.write2ByteTxRx(lp, i, 42, new_l)
-
-            # Follower
-            new_f = int(pos_f[i] + (repos_f[i] - pos_f[i]) * smooth)
-            fk.write2ByteTxRx(fp, i, 42, new_f)
-
-        time.sleep(0.02)
+    # Position repos en pourcentage, lue depuis le fichier externe partagé,
+    # atteinte via la séquence sûre (servo 4 en l'air d'abord, etc.) sur les deux robots
+    repos_pct = charger_repos_pct()
+    aller_a_position_2robots(lk, lp, fk, fp, cl, cf, repos_pct, duree=2.0)
 
     print("\n⚠️  Assurez-vous de tenir les robots")
     time.sleep(2)
