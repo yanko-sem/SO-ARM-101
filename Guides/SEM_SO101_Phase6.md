@@ -6,14 +6,9 @@ Service Écoles-Médias (SEM) — DIP Genève
 
 ### ✅ Prérequis
 
-- Phase 1 complétée (LeRobot installé)
-- Phase 2 complétée (Servos configurés avec IDs 1-6)
-- Phase 3 complétée (Calibration effectuée)
-- Phase 4 complétée (Tests de contrôle validés)
-- Phase 5 complétée (Téléopération fonctionnelle)
-- Scripts SEM installés depuis GitHub
-- Au moins 1 caméra USB disponible
-- Support de fixation pour la caméra (imprimé 3D ou bricolage)
+- Phases 1 à 5 complétées
+- Support de la caméra Globale installé
+- Caméra Globale branchée
 
 
 ### 🎯 Objectif de cette phase
@@ -27,6 +22,8 @@ L'ajout de la caméra permet de :
 - Valider le positionnement optimal de la caméra
 - Tester la qualité d'image et la latence
 
+**Pourquoi définir un masque ?** Cette phase introduit aussi une étape déterminante : la définition d'un **masque de zone utile**. La caméra Globale voit plus que le plateau (bords, arrière-plan, environnement) ; en traçant la zone utile, on ne conserve que le plateau et on noircit le reste. Ce masque n'est pas un simple confort d'affichage : le fichier produit ici est **réutilisé lors de l'enregistrement (Phase 7)** et appliqué à la caméra Globale. Autrement dit, la zone délimitée maintenant est exactement celle que le modèle apprendra à voir — un cadrage soigné conditionne la qualité de l'apprentissage.
+
 
 ### 📋 Étape 1 : Installation physique de la caméra
 
@@ -37,25 +34,12 @@ L'ajout de la caméra permet de :
 | Caméra USB | Webcam standard (720p minimum) | Webcam intégrée PC portable |
 | Support | Pièce imprimée 3D | Trépied, pince, bricolage |
 | Fixation | Vis M3 ou M4 | Colle forte, ruban adhésif double face |
-| Position | Au-dessus ou sur le côté du robot | Sur la pince (caméra embarquée) |
+| Position | Globale : coin opposé du plateau ; Pince : vissée sur la pince | — |
 
-**Montage de la caméra**
+**Les deux caméras du projet :**
 
-> **💡 Problème fréquent :** Les trous du support imprimé 3D ne correspondent souvent pas aux pas de vis des caméras USB standard.
-
-Solutions de montage testées :
-
-1. **Agrandissement des trous :** Percer avec une mèche de 3-3.5mm
-2. **Collage :** Colle époxy ou cyanoacrylate (prévoir temps de séchage 30min-2h)
-3. **Ruban double face épais :** Solution temporaire mais efficace
-4. **Serre-câbles :** Fixation rapide pour tests
-5. **Pâte à fixe :** Repositionnable, idéal pour trouver le bon angle
-
-**Positions recommandées :**
-
-- **Vue du dessus (TOP) :** 40-60cm au-dessus de l'espace de travail, angle 45-60°
-- **Vue latérale (SIDE) :** À hauteur du robot, 30-40cm de distance
-- **Vue poignet (WRIST) :** Montée sur le servo 5, orientée vers la pince
+- **Caméra Globale :** posée dans le coin opposé du plateau, orientée vers l'espace de travail — elle donne la vue d'ensemble de la scène.
+- **Caméra Pince :** vissée sur la pince via le support imprimé en 3D fourni (fichier STL), orientée vers les doigts — elle donne la vue rapprochée de la préhension.
 
 
 ### 🔧 Étape 2 : Résolution du problème OpenCV
@@ -89,6 +73,8 @@ python -c "import cv2; print('OpenCV version:', cv2.__version__)"
 
 
 ### 📷 Étape 3 : Détection et test de la caméra
+
+> **💡 Note :** Le script 7 détecte automatiquement la caméra et en affiche un aperçu au lancement (résolution réelle + image figée). Cette étape est donc une **vérification optionnelle** : confirmer que la caméra est branchée et, si vous en avez plusieurs, repérer son index.
 
 **Vérification de la connexion USB**
 
@@ -158,7 +144,7 @@ Vérifications à effectuer :
 
 ### 🎮 Étape 4 : Lancement du script de téléopération avec caméra
 
-Le script `SEM_so101_7_teleoperation_camera.py` est basé exactement sur le script 6 de la Phase 5, avec uniquement l'ajout de la visualisation caméra.
+Le script `SEM_so101_7_teleoperation_camera.py` reprend la téléopération du script 6 (Phase 5) et y ajoute la **caméra** : détection et aperçu automatiques, **masque de zone utile obligatoire**, affichage temps réel pendant la téléopération, et une commande `M` pour refaire le masque sans tout relancer.
 
 **Lancement du script**
 
@@ -173,19 +159,46 @@ python SEM_so101_7_teleoperation_camera.py
 
 **Déroulement de l'exécution**
 
-Le script suit exactement le même flux que le script 6 (Phase 5) :
+Le script suit ce déroulement :
 
-1. **Identification des robots** — débrancher tout, brancher Leader, valider, brancher Follower, valider (test de la pince pour chaque)
+1. **Détection et aperçu de la caméra** — le script sonde les caméras disponibles, prend la première détectée et affiche un bref aperçu (résolution réelle + image figée). Appuyez sur ENTRÉE pour continuer.
 
-2. **Choix de la disposition**
+2. **Définition du masque de zone utile (obligatoire)** — étape déterminante, détaillée juste après.
+
+3. **Identification des robots** — débrancher tout, brancher Leader, valider, brancher Follower, valider (test de la pince pour chaque)
+
+4. **Choix de la disposition**
    ```
    [C]ôte à côte ou [F]ace à face?
    Choix [C]: _
    ```
 
-3. **Positionnement automatique** — centrage parallèle puis position repos
+5. **Positionnement automatique** — centrage parallèle puis position repos
 
-4. **Téléopération avec caméra** — une fenêtre `Camera SO-ARM 101` s'ouvre en plus de l'interface terminal :
+6. **Téléopération avec caméra** — la fenêtre `Camera SO-ARM 101` s'ouvre en plus de l'interface terminal (voir « Interface de téléopération » plus bas).
+
+**Définition du masque de zone utile (obligatoire)**
+
+> **⚠️ Rappel — étape déterminante.** Le masque tracé ici est réutilisé tel quel lors de l'enregistrement (Phase 7), appliqué à la caméra Globale : c'est la zone exacte qui entrera dans le jeu de données d'apprentissage. Soignez le cadrage du plateau — un masque mal placé fausse tout l'apprentissage.
+
+Le script applique un **masque** sur l'image : seule la zone utile (le plateau) reste visible, tout le reste est noirci. L'image conserve sa taille (640×360) ; ce sont les pixels hors du plateau qui sont mis à zéro, il ne s'agit pas d'un recadrage.
+
+Au lancement, après l'aperçu caméra :
+
+- Si un masque existe déjà : `[Entrée]` pour le garder, `[M]` pour en refaire un.
+- Sinon, la création est lancée automatiquement (elle est obligatoire).
+
+Création interactive : une image figée de la caméra s'ouvre. Cliquez **5 points** délimitant le plateau, **dans le sens horaire en partant du haut-gauche**. Un aperçu masqué s'affiche, puis le terminal demande `[V]` valider / `[R]` recommencer / `[A]` abandonner. Le masque est enregistré dans :
+
+```
+~/lerobot/calibration/camera_mask.json
+```
+
+Pour forcer la recréation au lancement : `python SEM_so101_7_teleoperation_camera.py --refaire-masque`. Pendant la téléopération, la touche `M` permet aussi de le refaire (les robots reviennent au repos, puis la téléopération reprend).
+
+**Interface de téléopération**
+
+Une fois le masque défini et les robots positionnés, la fenêtre vidéo s'ouvre et le terminal affiche :
 
 ```
 ╔══════════════════════════════════════════════════════════╗
@@ -196,6 +209,7 @@ Le script suit exactement le même flux que le script 6 (Phase 5) :
 🎮 Commandes:
   [Q] + Enter : Quitter
   [F] + Enter : Flip mode (côté ↔ face)
+  [M] + Enter : Refaire le masque caméra (téléop en pause)
 ----------------------------------------
 
 📷 Caméra activée
@@ -209,38 +223,46 @@ Le script suit exactement le même flux que le script 6 (Phase 5) :
 | :--- | :--- |
 | Q + Entrée | Quitter la téléopération (dans le terminal) |
 | F + Entrée | Basculer côté à côte ↔ face à face (dans le terminal) |
+| M + Entrée | Refaire le masque caméra (téléop en pause → retour repos → reprise) |
 | q | Quitter (dans la fenêtre vidéo OpenCV) |
 
 **Fenêtre vidéo :**
-- Résolution : 640×360 pixels (16:9)
-- La fenêtre affiche le flux en temps réel de la caméra
-- La caméra est ouverte sur l'index 0 par défaut
+- Résolution : 640×360 pixels (fenêtre affichée à 1280×720)
+- La fenêtre affiche le flux en temps réel de la caméra, masqué selon la zone définie
+- Le script utilise la **première caméra détectée** ; l'aperçu au lancement permet de confirmer que c'est la bonne
 
-> **💡 Note :** Si votre caméra USB n'est pas sur l'index 0 (ex: webcam intégrée sur 0, caméra USB sur 2), il faudra modifier la ligne `cap = cv2.VideoCapture(0)` dans le script en remplaçant `0` par le bon index.
+> **💡 Note :** Le script prend automatiquement la première caméra trouvée (`cameras[0]`). Si ce n'est pas la bonne (par exemple votre webcam intégrée), l'aperçu vous le montrera. Pour en forcer une autre, débranchez la caméra non désirée ou modifiez la ligne `camera_index = cameras[0]` dans le script.
 
 
 ### 📊 Étape 5 : Tests de validation
 
-**Test 1 : Qualité d'image**
+**Test 1 : Masque de zone utile**
+
+1. Vérifiez que le plateau est entièrement visible dans la fenêtre
+2. Vérifiez que tout ce qui est hors plateau est bien noirci
+3. Assurez-vous qu'aucune zone utile (objets, espace de manipulation) n'est coupée par le masque
+4. Si le cadrage n'est pas bon, refaites le masque avec la touche `M`
+
+**Test 2 : Qualité d'image**
 
 1. Vérifiez que l'image dans la fenêtre est nette
 2. Ajustez la mise au point si nécessaire (molette sur la caméra)
 3. Assurez-vous que toute la zone de travail est visible
 4. Évitez les contre-jours et reflets
 
-**Test 2 : Synchronisation téléopération + vidéo**
+**Test 3 : Synchronisation téléopération + vidéo**
 
 1. Bougez le Leader pour déplacer le Follower
 2. Vérifiez que le mouvement est visible dans la fenêtre vidéo
 3. La vidéo ne doit pas ralentir la téléopération
 
-**Test 3 : Changement de mode avec vidéo active**
+**Test 4 : Changement de mode avec vidéo active**
 
 1. Appuyez sur F + Entrée pour changer de mode
 2. La vidéo doit continuer sans interruption
 3. Les mouvements miroir/copie restent synchronisés
 
-**Test 4 : Stabilité sur 5 minutes**
+**Test 5 : Stabilité sur 5 minutes**
 
 1. Laissez le système tourner avec vidéo active
 2. Effectuez des mouvements réguliers
@@ -248,6 +270,7 @@ Le script suit exactement le même flux que le script 6 (Phase 5) :
 4. La fenêtre vidéo ne doit pas se fermer seule
 
 > **✅ Tests réussis si :**
+> - Le masque cadre correctement le plateau
 > - La fenêtre vidéo s'affiche correctement
 > - Image nette et stable
 > - Pas de ralentissement de la téléopération
@@ -261,7 +284,7 @@ Le script suit exactement le même flux que le script 6 (Phase 5) :
 | :--- | :--- | :--- |
 | Erreur "function not implemented" | `opencv-python-headless` installé | Voir Étape 2 : remplacer par `opencv-python` |
 | Fenêtre vidéo ne s'ouvre pas | Caméra non détectée | Vérifier `ls /dev/video*` |
-| Image noire | Mauvais index caméra | Modifier `cv2.VideoCapture(0)` → `(2)` dans le script |
+| Image noire / mauvaise caméra | Mauvaise caméra auto-sélectionnée | L'aperçu au lancement montre la caméra retenue ; débrancher la caméra non désirée ou ajuster `camera_index = cameras[0]` |
 | Téléopération ralentie | Charge CPU trop élevée | Fermer autres applications |
 | Permission denied /dev/video* | Droits insuffisants | Vérifier le groupe `video` (voir Phase 1, Étape 6) |
 | Caméra se déconnecte | Câble USB instable | Changer de port USB, éviter les hubs |
@@ -273,40 +296,25 @@ Le script suit exactement le même flux que le script 6 (Phase 5) :
 
 ### 💡 Conseils pour l'enregistrement futur
 
-Cette phase prépare l'enregistrement de trajectoires (Phase 7). Voici les points importants à valider maintenant :
+Cette phase prépare l'enregistrement de trajectoires (Phase 7). Quelques points à valider maintenant :
 
-**Position de la caméra**
+- **Caméra Globale figée après le masque :** une fois le masque défini, ne déplacez plus la caméra Globale. Le masque est lié à sa position — si la caméra bouge, la zone masquée ne correspond plus au plateau et il faut tout refaire.
+- **Position :** toute la zone de manipulation visible, caméra stable (aucune vibration), distance et angle fixes après validation.
+- **Éclairage :** constant et diffus, sans reflets sur les surfaces brillantes, sans variation (fenêtres, néons).
+- **Arrière-plan :** fixe, contrasté et simple, pour bien distinguer les objets.
+- **Reproductibilité :** les conditions validées ici (position caméra, éclairage, arrière-plan) devront être **identiques** lors de l'enregistrement (Phase 7) et de l'utilisation du modèle.
 
-- **Vue complète :** Toute la zone de manipulation doit être visible
-- **Angle optimal :** 45-60° pour voir la profondeur
-- **Distance fixe :** Ne pas changer après validation
-- **Stabilité :** Aucune vibration pendant les mouvements
-
-**Éclairage**
-
-- **Constant :** Éviter les variations (fenêtres, néons)
-- **Diffus :** Pas d'ombres dures
-- **Pas de reflets :** Sur les surfaces brillantes
-- **Reproductible :** Même éclairage pour entraînement et utilisation
-
-**Arrière-plan**
-
-- **Fixe :** Pas d'éléments mobiles
-- **Contrasté :** Distinguer clairement les objets
-- **Simple :** Éviter les motifs complexes
-- **Marqueurs :** Repères visuels pour l'IA
-
-> **💡 Astuce :** Prenez une photo de votre configuration finale. Vous devrez la reproduire exactement pour que l'IA fonctionne correctement après l'entraînement.
+> **💡 Astuce :** Prenez une photo de votre configuration finale (caméra, éclairage, plateau). Vous devrez la reproduire à l'identique pour que le modèle fonctionne après l'entraînement.
 
 
 ### ✅ Notes finales
 
 **✅ Phase 6 terminée quand :**
 
-- La caméra est montée solidement (même avec du bricolage)
+- La caméra Globale est montée et branchée
 - OpenCV avec support GUI est installé
 - La caméra est détectée sur `/dev/video0` (ou `video2`)
-- Les images test sont capturées avec succès
+- Le masque de zone utile est défini (5 points du plateau)
 - La fenêtre vidéo s'affiche pendant la téléopération
 - Pas de ralentissement de la téléopération
 - Le système reste stable pendant 5 minutes
@@ -319,8 +327,8 @@ Cette phase prépare l'enregistrement de trajectoires (Phase 7). Voici les point
 | Fichier | Description | Créé par |
 | :--- | :--- | :--- |
 | `~/lerobot/Scripts_SEM/scripts/SEM_so101_7_teleoperation_camera.py` | Script de téléopération avec visualisation caméra | Phase 6 |
-| `~/lerobot/outputs/images_from_opencv_cameras/` | Dossier contenant les images test de la caméra | Test caméra |
-| Fichiers Phase 5 inchangés | Tous les fichiers de calibration et configuration | Phases 3-5 |
+| `~/lerobot/calibration/camera_mask.json` | Masque de zone utile (polygone 5 points du plateau) | Phase 6 / script 7 |
+| `~/lerobot/outputs/images_from_opencv_cameras/` | Dossier contenant les images test de la caméra | Test caméra (optionnel) |
 
 Service Écoles-Médias — DIP Genève
 Guide Phase 6 — Version 2.0
