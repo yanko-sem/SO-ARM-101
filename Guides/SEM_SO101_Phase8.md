@@ -7,7 +7,7 @@ Service Écoles-Médias (SEM) — DIP Genève
 ### ✅ Prérequis
 
 - Phases 1 à 7 complétées
-- 50 épisodes enregistrés (10 par position × 5 positions)
+- ≥ 50 épisodes enregistrés (10 par position × 5 positions)
 - Scripts SEM installés depuis GitHub
 - Environnement lerobot activé
 
@@ -57,7 +57,6 @@ Cette phase permet de :
     ├── info.json                  (métadonnées du dataset)
     ├── tasks.jsonl                (5 tâches, une par position)
     ├── episodes.jsonl             (index des épisodes)
-    ├── episodes_stats.jsonl       (statistiques par épisode)
     └── consolidation_trace.json   (traçabilité)
 ```
 
@@ -119,6 +118,8 @@ Le script crée automatiquement 5 tâches distinctes :
 | 3 | Prendre le cube à la position Gauche et le déposer dans la boîte |
 | 4 | Prendre le cube à la position Droite et le déposer dans la boîte |
 
+> **💡 Note :** L'objet manipulé est un prisme hexagonal ; il est désigné « cube » dans ces libellés de tâches (hérités du script 8).
+
 
 ### 🔍 Étape 2 : Vérification et visualisation (Script 10)
 
@@ -138,7 +139,7 @@ Le script procède en plusieurs étapes automatiques :
    ```
    📊 Épisodes : 51
    🎬 Frames   : 26579
-   📹 Vidéos   : 51 (cam_top) + 51 (cam_follower)
+   📄 Parquet  : 51 fichiers
    💾 Taille   : ~523 MB
    🎯 Tâches   : 5
    ⚡ FPS      : 30
@@ -152,14 +153,16 @@ Le script procède en plusieurs étapes automatiques :
 
 5. **Conversion vidéo** — convertit les vidéos du format mp4v vers H.264 pour la compatibilité navigateur (une seule fois, marqueur de conversion)
 
-6. **Menu** — propose de lancer la visualisation ou quitter
+6. **Vérification frames/parquet** — confirme que le nombre de frames vidéo correspond aux lignes parquet pour chaque épisode
+
+7. **Menu** — propose de lancer la visualisation ou quitter
 
 **Visualisation dans le navigateur**
 
 En choisissant **V**, le script lance l'outil officiel LeRobot `visualize_dataset_html.py` :
 
-- Un serveur web local démarre
-- Ouvrez Firefox à l'adresse `http://127.0.0.1:9090`
+- Un serveur web local démarre et le navigateur s'ouvre automatiquement
+- Sinon, ouvrez votre navigateur à l'adresse `http://127.0.0.1:9090`
 - L'interface affiche pour chaque épisode :
   - Les flux vidéo des deux caméras (cam_top et cam_follower)
   - Les courbes des 6 positions moteurs (observation.state)
@@ -186,7 +189,7 @@ Avant de passer à l'entraînement, vérifiez les points suivants :
 | Les 5 positions couvertes | Vérifier des épisodes de chaque position |
 | Fichiers meta complets | 4 ✅ dans la section métadonnées |
 
-> **⚠️ Important :** Si vous constatez des épisodes de mauvaise qualité (geste raté, cube tombé, mouvement parasite), vous pouvez les supprimer manuellement dans les dossiers source (`position_X_*/`) puis relancer le script 9 pour reconsolider.
+> **⚠️ Important :** Si vous constatez des épisodes de mauvaise qualité (geste raté, prisme tombé, mouvement parasite), vous pouvez les supprimer manuellement dans les dossiers source (`position_X_*/`) puis relancer le script 9 pour reconsolider.
 
 
 ### 🔧 Dépannage
@@ -199,7 +202,7 @@ Avant de passer à l'entraînement, vérifiez les points suivants :
 | Erreur timestamps | Données non normalisées | Relancer le script 9 (il normalise automatiquement) |
 | Visualisation ne s'ouvre pas | Serveur non démarré | Vérifier le terminal, ouvrir `http://127.0.0.1:9090` manuellement |
 | Vidéos noires dans le navigateur | Codec incompatible | Le script 10 convertit automatiquement en H.264 |
-| "episodes_stats.jsonl" manquant | Stats non générées | Relancer le script 10, choisir R |
+| "episodes_stats.jsonl" manquant | Stats non générées | Relancer le script 10 (il le génère automatiquement s'il manque) |
 
 
 ### 📝 Récapitulatif des fichiers
