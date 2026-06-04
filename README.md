@@ -26,7 +26,7 @@
   <img alt="License" src="https://img.shields.io/badge/Licence-CC%20BY--NC--SA%204.0-lightgrey">
 </p>
 
-> 🇫🇷 **Français** | 🇬🇧 English version planned: `README_EN.md`
+> 🇫🇷 **Français** | 🇬🇧 [English](README_EN.md)
 
 ---
 
