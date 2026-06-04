@@ -89,7 +89,9 @@ which python
 ```
 
 
-### 📁 Étape 3 : Clonage du dépôt LeRobot
+### 📁 Étape 3 : Clonage des dépôts (LeRobot + scripts SEM)
+
+**Dépôt officiel LeRobot**
 
 ```bash
 # Cloner la version stable recommandée par Seeed Studio
@@ -101,6 +103,16 @@ git branch
 ```
 
 > **Note :** Cette version est maintenue stable et vérifiée compatible avec le matériel SO-ARM 101
+
+**Dépôt SEM (scripts + guides)**
+
+```bash
+# Cloner le dépôt SEM dans un dossier nommé Scripts_SEM, à l'intérieur de ~/lerobot
+cd ~/lerobot
+git clone https://github.com/yanko-sem/SO-ARM-101.git Scripts_SEM
+```
+
+> **Note :** Le dépôt s'appelle `SO-ARM-101` mais on le clone dans un dossier `Scripts_SEM` (la cible explicite à la fin de la commande). Les scripts se trouvent alors dans `~/lerobot/Scripts_SEM/scripts`.
 
 
 ### 🎬 Étape 4 : Installation de ffmpeg
@@ -315,7 +327,7 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 
 ### 📝 Notes importantes
 
-1. **Version du dépôt :** Utiliser https://github.com/ZhuYaoHui1998/lerobot.git
+1. **Dépôts :** LeRobot → https://github.com/ZhuYaoHui1998/lerobot.git (dans `~/lerobot`) ; scripts SEM → https://github.com/yanko-sem/SO-ARM-101.git (cloné dans `~/lerobot/Scripts_SEM`)
 2. **Ordre d'installation :** Toujours installer ffmpeg AVANT pip install
 3. **GPU :** Non obligatoire sauf pour l'entraînement
 4. **Environnement :** Toujours activer avec `conda activate lerobot`
