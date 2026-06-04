@@ -4,7 +4,7 @@
 
 ### 📋 Prérequis
 
-- Ubuntu 22.04 ou 24.04
+- Testé avec-> Ubuntu 22.04 ou 24.04
 - Connexion Internet stable
 - Droits sudo
 - Au moins 20 GB d'espace disque libre
