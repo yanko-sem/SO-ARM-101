@@ -34,7 +34,7 @@ La téléopération permet de :
 # Activer l'environnement conda
 conda activate lerobot
 # Se placer dans le dossier des scripts
-cd ~/lerobot/Docs_SEM/scripts
+cd ~/lerobot/Scripts_SEM/scripts
 # Vérifier les scripts disponibles
 ls SEM_so101_5_config_teleoperation.py SEM_so101_6_teleoperation.py
 ```
@@ -204,6 +204,8 @@ Le script exécute dans l'ordre :
 2. Position repos parallèle (bras repliés)
 3. Compte à rebours de 3 secondes pour prendre le Leader en main
 
+> **Note :** La position repos utilisée ici (et lors de la séquence de fin) est celle définie en Phase 3 (`repos_position.json`), avec repli sur une valeur par défaut si le fichier manque.
+
 **Interface de téléopération**
 
 ```
@@ -332,7 +334,7 @@ Quand vous tapez Q :
 ```bash
 # Configuration initiale (Script 5)
 conda activate lerobot
-cd ~/lerobot/Docs_SEM/scripts
+cd ~/lerobot/Scripts_SEM/scripts
 python SEM_so101_5_config_teleoperation.py
 
 # Lancement téléopération (Script 6)
