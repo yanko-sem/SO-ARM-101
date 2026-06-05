@@ -161,10 +161,26 @@ L'entraînement peut être interrompu à tout moment avec **Ctrl+C**. Les checkp
 Si vous relancez le script 11 après une interruption :
 
 1. Le script détecte l'entraînement précédent
-2. Il propose : **R** (Reprendre), **N** (Nouveau), **V** (Voir checkpoints), **Q** (Quitter)
+2. Il propose : **R** (Reprendre), **P** (Prolonger), **N** (Nouveau), **V** (Voir checkpoints), **Q** (Quitter)
 3. En choisissant **R**, l'entraînement reprend depuis le dernier checkpoint
 
 > **💡 Note :** La reprise s'appuie sur deux paramètres : `--config_path` (vers le `train_config.json` du dernier checkpoint) et `--resume=true`. LeRobot recharge ainsi le modèle, l'optimiseur et le compteur de steps à partir du dernier checkpoint sauvegardé.
+
+**Prolonger un entraînement (option P)**
+
+L'option **P** reprend un entraînement existant **et augmente le nombre de steps cible**. Elle permet de réutiliser un entraînement court — par exemple un profil **Rapide** (10k) validé — pour le pousser en **Standard** (100k) ou **Intensif** (200k) sans repartir de zéro.
+
+Le script ne propose que les profils **supérieurs** au nombre de steps déjà atteint :
+
+| Steps déjà atteints | Cibles proposées |
+| :--- | :--- |
+| 10 000 (Rapide) | 100 000 (Standard) ou 200 000 (Intensif) |
+| 100 000 (Standard) | 200 000 (Intensif) |
+| 200 000 (Intensif) | Aucune (maximum atteint) |
+
+> **💡 Équivalence :** Un entraînement de 100k prolongé depuis 10k est **équivalent** à un entraînement de 100k lancé depuis zéro. ACT n'utilise aucun planificateur de learning-rate (LR constant à 1.0e-05) et LeRobot recharge l'état de l'optimiseur : la prolongation continue exactement la même trajectoire d'optimisation. On ne perd pas en qualité — on économise les steps déjà calculés.
+
+Concrètement, la prolongation reprend la commande de reprise en y ajoutant la nouvelle cible (`--steps`) et la fréquence de sauvegarde du profil cible (`--save_freq`).
 
 **Sauvegarde des checkpoints**
 
@@ -258,4 +274,4 @@ ls ~/lerobot/outputs/train/act_so101_pick_place/checkpoints/
 > **🚀 Objectif atteint :** Votre modèle ACT est entraîné ! Il a appris à associer les images des caméras aux mouvements des moteurs. Passez à la Phase 10 pour déployer le modèle et voir votre robot agir de manière autonome.
 
 Service Écoles-Médias — DIP Genève
-Guide Phase 9 — Version 1.0
+Guide Phase 9 — Version 1.1
