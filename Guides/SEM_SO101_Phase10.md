@@ -41,7 +41,7 @@ Le modèle gère en interne l'*action chunking* (il prédit une séquence d'acti
 Deux points sont **critiques pour la cohérence entraînement ↔ déploiement** :
 
 - **Le masque de la Globale est réappliqué** : si le dataset a été enregistré masqué (Phases 6-7), le modèle doit voir la même image masquée au déploiement.
-- **Les réglages caméra sont verrouillés** (exposition, balance des blancs) via `SEM_8_camera_config.py`, comme à l'enregistrement. Sans ce verrouillage, l'auto-exposition ferait dériver l'image et tromperait le modèle. Si le module est absent, le script **refuse de démarrer** (sécurité).
+- **Les réglages caméra sont verrouillés** (exposition, balance des blancs) via `SEM_8_camera_config.py`, comme à l'enregistrement. Au lancement, le script propose de les garder ou de les **refaire** (balance des blancs au papier blanc, utile si la lumière a changé — voir Étape 1). Sans ce verrouillage, l'auto-exposition ferait dériver l'image et tromperait le modèle. Si le module est absent, le script **refuse de démarrer** (sécurité).
 
 
 ### 🚀 Étape 1 : Lancement et préparation
@@ -54,12 +54,13 @@ cd ~/lerobot/Scripts_SEM/scripts
 python SEM_so101_12_deploy.py
 ```
 
-Le script enchaîne ensuite quatre préparations :
+Le script enchaîne ensuite cinq préparations :
 
 1. **Sélection du checkpoint** — la liste des checkpoints disponibles s'affiche ; `[Entrée]` utilise le dernier (`last`, recommandé), ou tapez un numéro pour en choisir un autre.
 2. **Identification des caméras** — pour chaque caméra affichée, tapez **G** (Globale) ou **P** (Pince) (**Q** pour annuler). Les deux sont requises.
-3. **Vérifications automatiques** — résolution exacte (**640×360**, identique à l'entraînement) puis verrouillage des réglages caméra. En cas d'échec, le script s'arrête (ou demande confirmation).
-4. **Connexion du bras Follower** — « Branchez le bras FOLLOWER », puis `[Entrée]`. (Le Leader reste débranché.)
+3. **Réglages caméra (balance des blancs)** — pour chaque caméra, les réglages enregistrés s'affichent : `[Entrée]` les garde (réglages du dataset), ou `[R]` les refait. Pour `[R]`, placez une feuille blanche devant les caméras et réglez le blanc dans guvcview sous la lumière du moment (pour que le blanc soit neutre), puis fermez guvcview. À faire si la lumière de la salle diffère de celle de l'enregistrement. *(guvcview requis seulement pour `[R]`.)*
+4. **Vérifications automatiques** — résolution exacte (**640×360**, identique à l'entraînement) puis verrouillage des réglages caméra (gardés ou refaits). En cas d'échec, le script s'arrête (ou demande confirmation).
+5. **Connexion du bras Follower** — « Branchez le bras FOLLOWER », puis `[Entrée]`. (Le Leader reste débranché.)
 
 > **💡 Note :** Si le masque (`camera_mask.json`) est absent, le script prévient et continue avec l'image brute — mais la cohérence avec l'entraînement est rompue et le comportement risque d'être dégradé.
 
@@ -167,4 +168,4 @@ python SEM_so101_12_deploy.py
 > **🎉 Pipeline complet :** De la configuration matérielle (Phase 1) au robot autonome (Phase 10), votre chaîne d'apprentissage par imitation est opérationnelle. Le robot reproduit vos démonstrations sans opérateur.
 
 Service Écoles-Médias — DIP Genève
-Guide Phase 10 — Version 1.0
+Guide Phase 10 — Version 1.1
