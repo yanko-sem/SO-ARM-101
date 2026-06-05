@@ -73,16 +73,17 @@ except ImportError:
     sys.exit(1)
 
 # Module de configuration caméra — partagé avec le script 8 (même camera_settings.json).
-# Le script 12 ne fait qu'APPLIQUER les réglages enregistrés (verrouiller_camera) ;
-# la capture/réglage interactif (guvcview) reste l'affaire du script 8.
+# Le script 12 propose au lancement de revérifier/refaire les réglages (capturer_reglages_camera,
+# papier blanc) puis les APPLIQUE (verrouiller_camera) — cohérence colorimétrie entraînement↔déploiement.
 # Import protégé : si le module est absent, mal placé ou cassé, on le signalera plus bas
 # par un message clair + arrêt propre, au lieu d'un traceback illisible au démarrage.
 try:
-    from SEM_8_camera_config import verrouiller_camera
+    from SEM_8_camera_config import verrouiller_camera, capturer_reglages_camera
     CAMERA_LOCK_AVAILABLE = True
     CAMERA_LOCK_IMPORT_ERROR = None
 except Exception as e:
     verrouiller_camera = None
+    capturer_reglages_camera = None
     CAMERA_LOCK_AVAILABLE = False
     CAMERA_LOCK_IMPORT_ERROR = e
 
@@ -1018,6 +1019,21 @@ def main():
     if idx_top is None or idx_follower is None:
         print("\n❌ Déploiement annulé : les deux caméras (globale + pince) sont requises.")
         sys.exit(1)
+
+    # Réglages caméra (exposition / balance des blancs) — un réglage par caméra, comme le script 8.
+    # capturer_reglages_camera affiche les réglages enregistrés et propose [Entrée] garder / [R] refaire
+    # (guvcview + papier blanc, à recaler sous la lumière du moment). À faire AVANT d'ouvrir les caméras
+    # avec cv2, car guvcview a besoin du périphérique libre.
+    if not CAMERA_LOCK_AVAILABLE:
+        print("\n❌ Module de configuration caméra (SEM_8_camera_config.py) indisponible.")
+        print(f"   Erreur : {CAMERA_LOCK_IMPORT_ERROR}")
+        print("   → Impossible de régler puis verrouiller les caméras.")
+        print("   → Déploiement annulé pour éviter des images en mode auto (incohérence avec l'entraînement).")
+        print("   → Vérifiez que SEM_8_camera_config.py est dans le même dossier que ce script.")
+        sys.exit(1)
+
+    capturer_reglages_camera(f"/dev/video{idx_top}", CAM_TOP, titre="GLOBALE (cam_top)   [1/2]")
+    capturer_reglages_camera(f"/dev/video{idx_follower}", CAM_FOLLOWER, titre="PINCE (cam_follower)   [2/2]")
 
     # 3bis. Chargement du masque globale (créé par le script 7, partagé avec le 8).
     # Si absent → message + inférence avec image brute (pas de crash, mais cohérence rompue avec l'entraînement).
