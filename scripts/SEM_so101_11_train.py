@@ -360,6 +360,34 @@ def afficher_checkpoints():
 
 
 
+def steps_du_checkpoint(checkpoint):
+    """Retourne le nombre de steps atteint par un checkpoint.
+    Résout 'last' (lien symbolique) vers le dossier réel (ex. 200000)."""
+    nom = checkpoint.name
+    if nom.isdigit():
+        return int(nom)
+    try:
+        cible = checkpoint.resolve().name
+        if cible.isdigit():
+            return int(cible)
+    except Exception:
+        pass
+    return None
+
+
+def profils_superieurs(step_actuel):
+    """Retourne les profils dont le nombre de steps dépasse strictement step_actuel,
+    triés par steps croissants. Liste de tuples (steps, save_freq, nom)."""
+    return sorted(
+        (
+            (cfg["steps"], cfg["save_freq"], cfg["nom"])
+            for cfg in TRAINING_CONFIGS.values()
+            if cfg["steps"] > step_actuel
+        ),
+        key=lambda t: t[0],
+    )
+
+
 def reprendre_entrainement():
     """Vérifie si un entraînement précédent existe et peut être repris.
 
@@ -427,6 +455,7 @@ def reprendre_entrainement():
         print(f"   Démarré le        : {params.get('started_at', '?')}")
 
     print(f"\n  R — Reprendre l'entraînement")
+    print(f"  P — Prolonger l'entraînement (reprendre et augmenter le nombre de steps)")
     print(f"  N — Nouvel entraînement (écrase l'ancien après confirmation finale)")
     print(f"  V — Voir les checkpoints")
     print(f"  Q — Quitter")
@@ -449,6 +478,62 @@ def reprendre_entrainement():
             result = subprocess.run(cmd_exec, cwd=str(LEROBOT_DIR))
             if result.returncode != 0:
                 print(f"\n❌ La reprise s'est terminée avec une erreur (code {result.returncode})")
+        except KeyboardInterrupt:
+            print(f"\n\n⚠️  Entraînement interrompu")
+            afficher_checkpoints()
+
+        return "done"
+
+    elif choix == 'P':
+        step_actuel = steps_du_checkpoint(checkpoint_resume)
+        if step_actuel is None:
+            print("\n❌ Impossible de déterminer le nombre de steps déjà atteint pour ce checkpoint.")
+            input("\nAppuyez sur ENTRÉE...")
+            return reprendre_entrainement()
+
+        cibles = profils_superieurs(step_actuel)
+        if not cibles:
+            print(f"\n⚠️  Le checkpoint est déjà à {step_actuel} steps : aucun profil supérieur disponible (maximum 200000).")
+            input("\nAppuyez sur ENTRÉE...")
+            return reprendre_entrainement()
+
+        print(f"\n📈 Prolongation depuis {step_actuel} steps. Cibles disponibles :")
+        for i, (steps_cible, _sf, nom_cible) in enumerate(cibles, start=1):
+            print(f"  {i} — {nom_cible} : {steps_cible} steps")
+        print("  Q — Annuler")
+
+        sel = input("\n  Votre choix : ").strip().upper()
+        if sel == 'Q' or not sel.isdigit() or not (1 <= int(sel) <= len(cibles)):
+            print("\n  Annulé.")
+            return reprendre_entrainement()
+
+        steps_cible, save_freq_cible, nom_cible = cibles[int(sel) - 1]
+
+        print(f"\n  Reprise depuis {checkpoint_resume.name} (step {step_actuel})")
+        print(f"  → Prolongation jusqu'à {steps_cible} steps ({nom_cible})")
+        print(f"  → Checkpoints tous les {save_freq_cible} steps")
+        confirm = input("\n  Lancer la prolongation ? [O/N] : ").strip().upper()
+        if confirm != 'O':
+            print("\n  Annulé.")
+            return reprendre_entrainement()
+
+        cmd = [
+            sys.executable,
+            str(TRAIN_SCRIPT),
+            f"--config_path={config_path}",
+            "--resume=true",
+            f"--steps={steps_cible}",
+            f"--save_freq={save_freq_cible}",
+        ]
+
+        print(f"\n🔄 Prolongation depuis {checkpoint_resume.name} jusqu'à {steps_cible} steps...")
+        print(f"   Ctrl+C pour interrompre\n")
+
+        try:
+            cmd_exec = ajouter_inhibition_systeme(cmd)
+            result = subprocess.run(cmd_exec, cwd=str(LEROBOT_DIR))
+            if result.returncode != 0:
+                print(f"\n❌ La prolongation s'est terminée avec une erreur (code {result.returncode})")
         except KeyboardInterrupt:
             print(f"\n\n⚠️  Entraînement interrompu")
             afficher_checkpoints()
