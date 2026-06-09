@@ -319,7 +319,7 @@ The SEM scripts include several safeguards:
 - a shared mask for the global camera;
 - exposure / white-balance / gain locking;
 - verification of both camera streams;
-- monitoring of serial reads during recording;
+- monitoring of serial reads and writes during recording;
 - safe return to the rest position;
 - emergency stop with no automatic return movement.
 
