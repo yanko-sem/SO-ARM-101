@@ -20,6 +20,8 @@ import sys
 import json
 import subprocess
 import math
+import webbrowser
+import threading
 from pathlib import Path
 
 # Auto-activation de l'environnement lerobot si nécessaire
@@ -437,10 +439,16 @@ def lancer_visualisation():
         print(f"   {script_path}")
         return
 
+    url = "http://127.0.0.1:9090"
+
     print("\n🌐 Lancement de la visualisation LeRobot...")
-    print("   Le navigateur devrait s'ouvrir automatiquement.")
-    print("   Sinon, ouvrez : http://127.0.0.1:9090")
+    print(f"   Le navigateur par défaut s'ouvrira automatiquement (sinon : {url}).")
     print("   Appuyez sur Ctrl+C dans le terminal pour arrêter.\n")
+
+    # Le serveur Flask de LeRobot n'ouvre pas le navigateur lui-même.
+    # On programme l'ouverture du navigateur par défaut ~2 s après le lancement,
+    # le temps que le serveur démarre (l'appel subprocess.run ci-dessous est bloquant).
+    threading.Timer(2.0, lambda: webbrowser.open(url)).start()
 
     try:
         subprocess.run(
