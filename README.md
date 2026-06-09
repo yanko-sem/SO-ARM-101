@@ -319,7 +319,7 @@ Les scripts SEM intègrent plusieurs garde-fous :
 - masque partagé pour la caméra globale ;
 - verrouillage exposition / balance des blancs / gain ;
 - vérification des deux flux caméra ;
-- contrôle des lectures série pendant l’enregistrement ;
+- contrôle des lectures et écritures série pendant l’enregistrement ;
 - retour repos sécurisé ;
 - arrêt d’urgence sans mouvement de retour automatique.
 
