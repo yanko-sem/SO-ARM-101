@@ -22,6 +22,8 @@ import subprocess
 import math
 import webbrowser
 import threading
+import urllib.request
+import time
 from pathlib import Path
 
 # Auto-activation de l'environnement lerobot si nécessaire
@@ -430,6 +432,22 @@ def verifier_frames_video():
     return incoherences
 
 
+def ouvrir_navigateur_quand_pret(url, timeout=30.0, interval=0.5):
+    """Attend que le serveur local réponde avant d'ouvrir le navigateur."""
+    debut = time.time()
+
+    while time.time() - debut < timeout:
+        try:
+            with urllib.request.urlopen(url, timeout=1):
+                webbrowser.open(url)
+                return
+        except Exception:
+            time.sleep(interval)
+
+    print(f"⚠️  Le navigateur n'a pas été ouvert automatiquement : serveur non joignable après {timeout:.0f} s.")
+    print(f"   Ouvrez manuellement : {url}")
+
+
 def lancer_visualisation():
     """Lance l'outil de visualisation officiel LeRobot"""
     script_path = LEROBOT_DIR / "lerobot" / "scripts" / "visualize_dataset_html.py"
@@ -445,10 +463,14 @@ def lancer_visualisation():
     print(f"   Le navigateur par défaut s'ouvrira automatiquement (sinon : {url}).")
     print("   Appuyez sur Ctrl+C dans le terminal pour arrêter.\n")
 
-    # Le serveur Flask de LeRobot n'ouvre pas le navigateur lui-même.
-    # On programme l'ouverture du navigateur par défaut ~2 s après le lancement,
-    # le temps que le serveur démarre (l'appel subprocess.run ci-dessous est bloquant).
-    threading.Timer(2.0, lambda: webbrowser.open(url)).start()
+    # Le serveur Flask de LeRobot n'ouvre pas le navigateur lui-même, et il peut mettre
+    # plusieurs secondes à démarrer. On lance un thread qui attend que le serveur réponde
+    # réellement avant d'ouvrir le navigateur par défaut (l'appel subprocess.run est bloquant).
+    threading.Thread(
+        target=ouvrir_navigateur_quand_pret,
+        args=(url,),
+        daemon=True
+    ).start()
 
     try:
         subprocess.run(
