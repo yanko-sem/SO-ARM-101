@@ -10,7 +10,7 @@ Ce script lance l'entraînement d'une politique ACT
 (Action Chunking with Transformers) sur le dataset consolidé.
 
 Matériel cible : Quadro RTX 4000 (8 Go VRAM)
-Dataset : so101_pick_place_consolidated (51 épisodes, 2 caméras)
+Dataset : so101_pick_place_consolidated (50 épisodes, 2 caméras)
 
 Auteur: Service Écoles-Médias (SEM)
 Version: 1.0
@@ -74,9 +74,19 @@ TRAINING_CONFIGS = {
         "chunk_size": 50,
         "n_action_steps": 15,
     },
+    "intermediaire": {
+        "nom": "Intermédiaire",
+        "description": "50k steps, batch 4 — ~2-3h, souvent suffisant",
+        "batch_size": 4,
+        "steps": 50000,
+        "save_freq": 5000,
+        "log_freq": 100,
+        "chunk_size": 50,
+        "n_action_steps": 15,
+    },
     "intensif": {
-        "nom": "Intensif (qualité max)",
-        "description": "200k steps, batch 4 — ~8-12h, meilleure qualité",
+        "nom": "Intensif",
+        "description": "200k steps, batch 4 — ~8-12h, si 100k insuffisant",
         "batch_size": 4,
         "steps": 200000,
         "save_freq": 20000,
@@ -115,6 +125,26 @@ def verifier_prerequis():
         episodes = info.get('total_episodes', 0)
         frames = info.get('total_frames', 0)
         print(f"  ✅ Dataset : {episodes} épisodes, {frames} frames")
+
+        # Afficher les features réellement détectées (caméras, état, action)
+        # pour confirmer d'un coup d'œil la cohérence du dataset.
+        features = info.get('features', {})
+        cameras = sorted(k for k in features if k.startswith("observation.images."))
+        print(f"  ✅ Caméras détectées : {len(cameras)}")
+        for cle_cam in cameras:
+            print(f"       • {cle_cam}  (shape {features[cle_cam].get('shape', '?')})")
+
+        # Vérification bloquante : les deux caméras attendues doivent être présentes
+        # (noms définis dans le script 8 : cam_top + cam_follower).
+        for cle_attendue in ("observation.images.cam_top", "observation.images.cam_follower"):
+            if cle_attendue not in features:
+                erreurs.append(f"Caméra attendue manquante : {cle_attendue}")
+
+        for cle in ("observation.state", "action"):
+            if cle in features:
+                print(f"  ✅ {cle}  (shape {features[cle].get('shape', '?')})")
+            else:
+                erreurs.append(f"Feature manquante dans le dataset : {cle}")
     else:
         erreurs.append(f"Dataset introuvable : {DATASET_PATH}")
 
@@ -156,10 +186,13 @@ def afficher_menu_config():
 ║  1. {TRAINING_CONFIGS['rapide']['nom']:40}     ║
 ║     {TRAINING_CONFIGS['rapide']['description']:51} ║
 ║                                                          ║
-║  2. {TRAINING_CONFIGS['standard']['nom']:40}     ║
+║  2. {TRAINING_CONFIGS['intermediaire']['nom']:40}     ║
+║     {TRAINING_CONFIGS['intermediaire']['description']:51} ║
+║                                                          ║
+║  3. {TRAINING_CONFIGS['standard']['nom']:40}     ║
 ║     {TRAINING_CONFIGS['standard']['description']:51} ║
 ║                                                          ║
-║  3. {TRAINING_CONFIGS['intensif']['nom']:40}     ║
+║  4. {TRAINING_CONFIGS['intensif']['nom']:40}     ║
 ║     {TRAINING_CONFIGS['intensif']['description']:51} ║
 ║                                                          ║
 ║  Q. Quitter                                              ║
@@ -167,13 +200,15 @@ def afficher_menu_config():
 ╚══════════════════════════════════════════════════════════╝
 """)
 
-    choix = input("  Votre choix [1/2/3/Q] : ").strip().upper()
+    choix = input("  Votre choix [1/2/3/4/Q] : ").strip().upper()
 
     if choix == '1':
         return "rapide"
     elif choix == '2':
-        return "standard"
+        return "intermediaire"
     elif choix == '3':
+        return "standard"
+    elif choix == '4':
         return "intensif"
     else:
         return None
@@ -255,6 +290,7 @@ def lancer_entrainement(config_key, effacer_ancien=False):
         "--dataset.video_backend=pyav",
         f"--policy.type=act",
         f"--policy.device=cuda",
+        f"--policy.use_amp=true",
         f"--policy.chunk_size={config['chunk_size']}",
         f"--policy.n_action_steps={config['n_action_steps']}",
         f"--output_dir={OUTPUT_DIR}",
