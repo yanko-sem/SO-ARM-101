@@ -1101,16 +1101,8 @@ def main():
         # CRITIQUE pour la cohérence entraînement↔déploiement : le modèle a été entraîné sur
         # des images à réglages verrouillés. Sans ce verrouillage, l'auto-exposition / auto-WB
         # ferait dériver la luminosité et la colorimétrie au déploiement.
-        # Garde-fou : si le module n'a pas pu être importé, on ne peut PAS appliquer ces
-        # réglages → arrêt propre (fail closed) plutôt que déployer avec des caméras en mode auto.
-        if not CAMERA_LOCK_AVAILABLE:
-            print("\n❌ Module de configuration caméra (SEM_8_camera_config.py) indisponible.")
-            print(f"   Erreur : {CAMERA_LOCK_IMPORT_ERROR}")
-            print("   → Impossible d'appliquer les réglages caméra enregistrés par le script 8.")
-            print("   → Déploiement annulé pour éviter une incohérence entraînement↔déploiement.")
-            print("   → Vérifiez que SEM_8_camera_config.py est dans le même dossier que ce script.")
-            _abort_cameras(1)
-
+        # (La disponibilité du module SEM_8_camera_config.py a déjà été vérifiée plus haut,
+        # avant la capture des réglages — fail closed. Pas besoin de revérifier ici.)
         ok_lock = True
         ok_lock &= verrouiller_camera(f"/dev/video{idx_top}", CAM_TOP)
         ok_lock &= verrouiller_camera(f"/dev/video{idx_follower}", CAM_FOLLOWER)
