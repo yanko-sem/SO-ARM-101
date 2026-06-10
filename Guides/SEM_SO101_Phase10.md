@@ -56,7 +56,7 @@ python SEM_so101_12_deploy.py
 
 Le script enchaîne ensuite cinq préparations :
 
-1. **Sélection du checkpoint** — la liste des checkpoints disponibles s'affiche ; `[Entrée]` utilise le dernier (`last`, recommandé), ou tapez un numéro pour en choisir un autre.
+1. **Sélection du checkpoint** — la liste des checkpoints disponibles s'affiche, avec le **nombre de steps** de chacun (un « step » = une itération d'entraînement) ; `[Entrée]` utilise le dernier (recommandé), ou tapez un numéro pour en choisir un autre. Comparer plusieurs checkpoints (par ex. 10k, 50k, 100k) permet d'observer la progression de l'apprentissage (voir Étape 4).
 2. **Identification des caméras** — pour chaque caméra affichée, tapez **G** (Globale) ou **P** (Pince) (**Q** pour annuler). Les deux sont requises.
 3. **Réglages caméra (balance des blancs)** — pour chaque caméra, les réglages enregistrés s'affichent : `[Entrée]` les garde (réglages du dataset), ou `[R]` les refait. Pour `[R]`, placez une feuille blanche devant les caméras et réglez le blanc dans guvcview sous la lumière du moment (pour que le blanc soit neutre), puis fermez guvcview. À faire si la lumière de la salle diffère de celle de l'enregistrement. *(guvcview requis seulement pour `[R]`.)*
 4. **Vérifications automatiques** — résolution exacte (**640×360**, identique à l'entraînement) puis verrouillage des réglages caméra (gardés ou refaits). En cas d'échec, le script s'arrête (ou demande confirmation).
@@ -105,6 +105,8 @@ Deux façons d'arrêter, au comportement **volontairement différent** :
 Observez si le robot exécute correctement la tâche (prendre la pièce, la déposer).
 
 > **⚠️ Rappel :** Une loss d'entraînement basse ne garantit pas un bon comportement réel — c'est ici, au déploiement, que se fait la vraie évaluation.
+
+> **💡 Astuce pédagogique :** Déployez successivement plusieurs checkpoints (par exemple 10k, 50k, 100k) pour observer comment le comportement s'améliore avec la durée d'entraînement — un modèle peu entraîné est souvent saccadé ou incomplet, un modèle plus entraîné est plus fluide. C'est une bonne façon de montrer concrètement l'effet de l'entraînement.
 
 Si le comportement est mauvais :
 
@@ -168,4 +170,4 @@ python SEM_so101_12_deploy.py
 > **🎉 Pipeline complet :** De la configuration matérielle (Phase 1) au robot autonome (Phase 10), votre chaîne d'apprentissage par imitation est opérationnelle. Le robot reproduit vos démonstrations sans opérateur.
 
 Service Écoles-Médias — DIP Genève
-Guide Phase 10 — Version 1.1
+Guide Phase 10 — Version 1.2
