@@ -80,7 +80,7 @@ Le script vérifie automatiquement :
 ```
 🔍 Vérification des prérequis...
   ✅ GPU : Quadro RTX 4000 (7.6 Go VRAM)
-  ✅ Dataset : 51 épisodes, 26579 frames
+  ✅ Dataset : 50 épisodes, 26579 frames
   ✅ Statistiques : episodes_stats.jsonl présent
   ✅ Script LeRobot : train.py trouvé
   ✅ PyTorch : 2.5.1+cu121
@@ -90,13 +90,14 @@ Le script vérifie automatiquement :
 
 **Choix du profil d'entraînement**
 
-Trois profils sont proposés, adaptés au GPU Quadro RTX 4000 :
+Quatre profils sont proposés, adaptés au GPU Quadro RTX 4000 :
 
 | Profil | Steps | Batch size | Durée estimée | Usage |
 | :--- | :--- | :--- | :--- | :--- |
 | 1. Rapide | 10 000 | 4 | ~30 minutes | Vérifier que tout fonctionne |
-| 2. Standard | 100 000 | 4 | ~4-6 heures | Entraînement recommandé |
-| 3. Intensif | 200 000 | 4 | ~8-12 heures | Qualité maximale |
+| 2. Intermédiaire | 50 000 | 4 | ~2-3 heures | Souvent suffisant pour un petit dataset |
+| 3. Standard | 100 000 | 4 | ~4-6 heures | Entraînement recommandé |
+| 4. Intensif | 200 000 | 4 | ~8-12 heures | Seulement si 100k est insuffisant |
 
 > **💡 Recommandation :** Commencez toujours par le profil **Rapide** pour valider la chaîne. Si tout se passe bien, relancez en **Standard** pour un vrai entraînement.
 
@@ -174,7 +175,8 @@ Le script ne propose que les profils **supérieurs** au nombre de steps déjà a
 
 | Steps déjà atteints | Cibles proposées |
 | :--- | :--- |
-| 10 000 (Rapide) | 100 000 (Standard) ou 200 000 (Intensif) |
+| 10 000 (Rapide) | 50 000 (Intermédiaire), 100 000 (Standard) ou 200 000 (Intensif) |
+| 50 000 (Intermédiaire) | 100 000 (Standard) ou 200 000 (Intensif) |
 | 100 000 (Standard) | 200 000 (Intensif) |
 | 200 000 (Intensif) | Aucune (maximum atteint) |
 
@@ -189,6 +191,7 @@ Les checkpoints sont sauvegardés automatiquement selon le profil :
 | Profil | Sauvegarde tous les | Checkpoints attendus |
 | :--- | :--- | :--- |
 | Rapide | 2 000 steps | 5 checkpoints |
+| Intermédiaire | 5 000 steps | 10 checkpoints |
 | Standard | 10 000 steps | 10 checkpoints |
 | Intensif | 20 000 steps | 10 checkpoints |
 
@@ -204,6 +207,9 @@ Les checkpoints sont stockés dans :
 └── last/
     └── pretrained_model/
 ```
+
+
+> **💡 Tirer parti des checkpoints intermédiaires :** Tous les checkpoints sont conservés (par exemple 10k, 50k, 100k pour un profil Standard). Vous pouvez en déployer plusieurs en Phase 10 — par exemple 10k, 50k et 100k — pour observer concrètement la progression de l'apprentissage : un modèle peu entraîné (10k) est souvent saccadé ou incomplet, alors qu'un modèle plus entraîné (100k) est plus fluide. Le choix du checkpoint à déployer se fait dans le script 12.
 
 
 ### 📈 Étape 4 : Évaluation de la qualité
@@ -274,4 +280,4 @@ ls ~/lerobot/outputs/train/act_so101_pick_place/checkpoints/
 > **🚀 Objectif atteint :** Votre modèle ACT est entraîné ! Il a appris à associer les images des caméras aux mouvements des moteurs. Passez à la Phase 10 pour déployer le modèle et voir votre robot agir de manière autonome.
 
 Service Écoles-Médias — DIP Genève
-Guide Phase 9 — Version 1.1
+Guide Phase 9 — Version 1.2
