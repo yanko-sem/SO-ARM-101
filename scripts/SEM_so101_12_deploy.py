@@ -460,16 +460,25 @@ def selectionner_checkpoint():
         print(f"   {checkpoints_dir}")
         return None
 
-    print(f"\n📋 Checkpoints disponibles ({len(checkpoints)}) :\n")
+    # Checkpoint utilisé par défaut : "last" s'il existe, sinon le plus avancé.
+    last_cp = next((cp for cp in checkpoints if cp.name == "last"), checkpoints[-1])
+
+    print(f"\n📋 Checkpoints disponibles ({len(checkpoints)}) :")
+    print("   (un « step » = une itération d'entraînement : le modèle ajuste ses")
+    print("    poids sur un petit lot d'exemples. Plus il y a de steps, plus le")
+    print("    modèle a été entraîné longtemps sur vos démonstrations.)\n")
     for i, cp in enumerate(checkpoints):
-        marker = "  ← recommandé" if cp.name == "last" else ""
-        print(f"   [{i + 1}] {cp.name}{marker}")
+        if cp.name.isdigit():
+            etiquette = f"{int(cp.name):,} steps".replace(",", " ")
+        elif cp.name == "last":
+            etiquette = "dernier checkpoint"
+        else:
+            etiquette = cp.name
+        marker = "  ← recommandé" if cp == last_cp else ""
+        print(f"   [{i + 1:>2}]  {cp.name:>8}  →  {etiquette}{marker}")
 
     print(f"\n   [Entrée] Utiliser le dernier checkpoint (recommandé)")
     choix = input("\n→ Votre choix (numéro ou Entrée) : ").strip()
-
-    # Préférer "last", sinon prendre le dernier de la liste triée
-    last_cp = next((cp for cp in checkpoints if cp.name == "last"), checkpoints[-1])
 
     if choix == "":
         print(f"\n✅ Checkpoint sélectionné : {last_cp.name}")
