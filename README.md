@@ -36,7 +36,7 @@ Développé par le **Service Écoles-Médias (SEM)** du **Département de l’In
 - 🛠️ **DIY et clé en main** : du montage logiciel au déploiement autonome.
 - 🤖 **IA concrète** : imitation learning, dataset, entraînement et inférence sur un vrai robot.
 - 📷 **Deux caméras** : vision globale + vision embarquée sur la pince.
-- 🔁 **Reproductible** : scripts, guides, calibration, masques, réglages caméra et checkpoints.
+- 🔁 **Reproductible** : scripts, guides, calibration, masques, **référence visuelle des caméras** et checkpoints.
 - 🚀 **Moderne** : basé sur LeRobot, PyTorch, Dynamixel SDK et ACT.
 
 ---
@@ -228,7 +228,9 @@ python SEM_so101_8_record_dataset.py
 # Tâche : Prendre un prisme hexagonal (désigné « cube » dans le dataset) et le déposer dans une boîte
 # 5 positions × 10 épisodes = 50 démonstrations
 # Format de sortie : LeRobotDataset v2.1
-# Les réglages caméra sont capturés et verrouillés pour garantir la cohérence entraînement/déploiement
+# Référence visuelle des deux caméras : menus de référence au démarrage (globale
+# puis pince) et contrôle de conformité avant chaque bloc, pour garantir la
+# cohérence visuelle du dataset (et avec le déploiement)
 ```
 
 ### Phase 8 : Consolidation et Visualisation
@@ -262,7 +264,8 @@ python SEM_so101_11_train.py
 python SEM_so101_12_deploy.py
 
 # Le Follower agit de manière autonome à partir des deux caméras
-# Le masque et les réglages caméra sont réappliqués pour rester cohérents avec le dataset
+# Masque réappliqué + contrôle des deux caméras vs les références du dataset
+# d'entraînement (recalibrage guidé si l'éclairage a dérivé)
 # Contrôles : P = pause, R = retour repos + arrêt modèle, Entrée = relance, Q = quitter
 ```
 
@@ -289,7 +292,8 @@ python SEM_so101_12_deploy.py
 ├── README.md
 └── scripts
     ├── __pycache__
-    ├── SEM_8_camera_config.py
+    ├── SEM_so101_8_camera_config.py
+    ├── SEM_so101_camera_reference.py
     ├── SEM_so101_10_visualize_dataset.py
     ├── SEM_so101_11_train.py
     ├── SEM_so101_12_deploy.py
@@ -305,7 +309,7 @@ python SEM_so101_12_deploy.py
     └── Version_26_05_26
 ```
 
-**Note :** Le dossier `~/lerobot/calibration/` est créé automatiquement par les scripts. Il contient notamment `leader_calibration.json`, `follower_calibration.json`, `repos_position.json`, `camera_mask.json` et `camera_settings.json`.
+**Note :** Le dossier `~/lerobot/calibration/` est créé automatiquement par les scripts. Il contient notamment `leader_calibration.json`, `follower_calibration.json`, `repos_position.json`, `camera_mask.json`, `camera_settings.json` et les **références visuelles des caméras** (`camera_reference_cam_top.json`, `camera_reference_cam_follower.json` et leurs fichiers associés).
 
 ---
 
@@ -317,6 +321,7 @@ Les scripts SEM intègrent plusieurs garde-fous :
 
 - cohérence stricte entre enregistrement et déploiement ;
 - masque partagé pour la caméra globale ;
+- **référence visuelle chiffrée par caméra** : contrôle de conformité avant chaque bloc d'enregistrement et au déploiement (image cohérente avec le dataset, recalibrage guidé si besoin) ;
 - verrouillage exposition / balance des blancs / gain ;
 - vérification des deux flux caméra ;
 - contrôle des lectures et écritures série pendant l’enregistrement ;
@@ -369,6 +374,7 @@ Les scripts SEM intègrent plusieurs garde-fous :
 - Caméra pince : `cam_follower`
 - Réglages verrouillés : exposition, balance des blancs, gain
 - Masque de zone utile appliqué à la caméra globale
+- Référence visuelle chiffrée par caméra (contrôle de conformité enregistrement ↔ déploiement, module `SEM_so101_camera_reference.py`)
 
 ---
 
@@ -436,4 +442,4 @@ Cette œuvre est mise à disposition selon les termes de la Licence Creative Com
   Service Écoles-Médias (SEM) — Département de l’Instruction Publique (DIP), Genève
 </p>
 
-**Dernière mise à jour : 04.06.2026**
+**Dernière mise à jour : 15.06.2026**
