@@ -10,8 +10,11 @@ Service Écoles-Médias (SEM) — DIP Genève
 - Un modèle ACT entraîné (checkpoint dans `~/lerobot/outputs/train/act_so101_pick_place/checkpoints/`)
 - Bras **Follower** branché (le **Leader n'est pas nécessaire** — le modèle remplace l'opérateur)
 - Les **deux caméras** (Globale + Pince) branchées, **aux mêmes positions** qu'à l'enregistrement
-- Fichiers de calibration présents : `camera_mask.json`, `camera_settings.json`, `repos_position.json`
-- Module `SEM_8_camera_config.py` dans le même dossier que le script (obligatoire)
+- Fichiers de calibration présents : `camera_mask.json` (**obligatoire** —
+  le déploiement s'arrête sans lui), `camera_settings.json`, `repos_position.json`
+- Modules dans le même dossier que le script (obligatoires) :
+  `SEM_so101_8_camera_config.py` (repli `SEM_8_camera_config.py`) et
+  `SEM_so101_camera_reference.py` (contrôle des deux caméras)
 - Environnement lerobot activé, GPU NVIDIA
 
 
@@ -40,8 +43,8 @@ Le modèle gère en interne l'*action chunking* (il prédit une séquence d'acti
 
 Deux points sont **critiques pour la cohérence entraînement ↔ déploiement** :
 
-- **Le masque de la Globale est réappliqué** : si le dataset a été enregistré masqué (Phases 6-7), le modèle doit voir la même image masquée au déploiement.
-- **Les réglages caméra sont verrouillés** (exposition, balance des blancs) via `SEM_8_camera_config.py`, comme à l'enregistrement. Au lancement, le script propose de les garder ou de les **refaire** (balance des blancs au papier blanc, utile si la lumière a changé — voir Étape 1). Sans ce verrouillage, l'auto-exposition ferait dériver l'image et tromperait le modèle. Si le module est absent, le script **refuse de démarrer** (sécurité).
+- **Le masque de la Globale est réappliqué** : le dataset ayant été enregistré masqué (Phases 6-7), le modèle voit la même image masquée au déploiement. Le masque est **obligatoire** ; sans lui, le script s'arrête.
+- **Les deux caméras sont contrôlées vs les références du DATASET d'entraînement.** Au lieu d'un réglage « à l'œil », le script compare au démarrage ce que voient la Globale et la Pince aux **références copiées dans le dataset** qui a servi à entraîner le modèle (retrouvées automatiquement via le checkpoint). Si l'éclairage a dérivé, un **recalibrage guidé** ramène l'image vers la référence. Les réglages caméra sont ensuite **verrouillés** ; si le verrouillage échoue, le script s'arrête (fail-closed). Si un module caméra est absent, le script **refuse de démarrer**.
 
 
 ### 🚀 Étape 1 : Lancement et préparation
@@ -54,20 +57,77 @@ cd ~/lerobot/Scripts_SEM/scripts
 python SEM_so101_12_deploy.py
 ```
 
-Le script enchaîne ensuite cinq préparations :
+> **🔑 Ordre du démarrage (important).** Comme à l'enregistrement, la vue de
+> la caméra **pince** dépend de la position du bras. Le bras Follower est
+> donc **mis au repos AVANT** la préparation des caméras, et y reste maintenu
+> pendant le contrôle. Déroulé : **checkpoint → références du dataset →
+> masque → Follower au repos → caméras → contrôle des deux caméras →
+> inférence.**
 
-1. **Sélection du checkpoint** — la liste des checkpoints disponibles s'affiche, avec le **nombre de steps** de chacun (un « step » = une itération d'entraînement) ; `[Entrée]` utilise le dernier (recommandé), ou tapez un numéro pour en choisir un autre. Comparer plusieurs checkpoints (par ex. 10k, 50k, 100k) permet d'observer la progression de l'apprentissage (voir Étape 4).
-2. **Identification des caméras** — pour chaque caméra affichée, tapez **G** (Globale) ou **P** (Pince) (**Q** pour annuler). Les deux sont requises.
-3. **Réglages caméra (balance des blancs)** — pour chaque caméra, les réglages enregistrés s'affichent : `[Entrée]` les garde (réglages du dataset), ou `[R]` les refait. Pour `[R]`, placez une feuille blanche devant les caméras et réglez le blanc dans guvcview sous la lumière du moment (pour que le blanc soit neutre), puis fermez guvcview. À faire si la lumière de la salle diffère de celle de l'enregistrement. *(guvcview requis seulement pour `[R]`.)*
-4. **Vérifications automatiques** — résolution exacte (**640×360**, identique à l'entraînement) puis verrouillage des réglages caméra (gardés ou refaits). En cas d'échec, le script s'arrête (ou demande confirmation).
-5. **Connexion du bras Follower** — « Branchez le bras FOLLOWER », puis `[Entrée]`. (Le Leader reste débranché.)
+Le script enchaîne :
 
-> **💡 Note :** Si le masque (`camera_mask.json`) est absent, le script prévient et continue avec l'image brute — mais la cohérence avec l'entraînement est rompue et le comportement risque d'être dégradé.
+1. **Sélection du checkpoint** — la liste s'affiche ; `[Entrée]` utilise le
+   dernier (`last`, recommandé), ou tapez un numéro.
+2. **Références du dataset** — le script remonte du checkpoint au dataset qui
+   a servi à l'entraînement et y cherche les références caméra (voir l'encadré
+   « mode LEGACY » ci-dessous).
+3. **Masque de la Globale** — chargé depuis `camera_mask.json`. **Absent →
+   le script s'arrête** (lancer le script 7 pour le créer).
+4. **Connexion du bras Follower** — « Branchez le bras FOLLOWER », puis
+   `[Entrée]` (le Leader reste débranché). Le bras est mis **au repos** et y
+   reste maintenu pendant tout le contrôle caméra.
+5. **Identification des caméras** — pour chaque caméra affichée, tapez **G**
+   (Globale) ou **P** (Pince) (**Q** pour annuler). Les deux sont requises.
+6. **Contrôle des deux caméras** (voir Étape 1 bis).
+
+> **📂 Mode LEGACY (datasets anciens).** Si le dataset du modèle ne contient
+> pas de références caméra (modèle entraîné avant le système de référence
+> visuelle), le script propose :
+>
+> ```
+> ⚠️  Le dataset de ce checkpoint ne contient pas de références caméra.
+>   [L] utiliser les références LOCALES actives — mode LEGACY, moins traçable
+>   [Q] quitter
+> ```
+>
+> En mode LEGACY, le contrôle se fait contre les références **locales** de la
+> machine (moins fiable, mais permet de déployer un ancien modèle). Si le
+> dataset contient **une seule** des deux références (état incohérent), le
+> script s'arrête : reconsolidez le dataset (Phase 8) ou choisissez un autre
+> modèle.
+
+### 📷 Étape 1 bis : Contrôle des deux caméras
+
+Le script contrôle **la Globale puis la Pince**, en comparant ce qu'elles
+voient aux références **du dataset d'entraînement**. Pour chaque caméra, un
+verdict s'affiche avec les chiffres :
+
+| Verdict | Signification | Choix proposés |
+| :--- | :--- | :--- |
+| 🟢 | Conforme au dataset | continue automatiquement |
+| 🟠 | Écart modéré | `[Entrée]` continuer (journalisé) / `[R]` recalibrer / `[Q]` |
+| 🔴 | Trop éloigné du dataset | `[R]` recalibrer / `[Q]` (pas de passage en force) |
+
+Le recalibrage `[R]` vous guide (guvcview) pour ramener l'image vers la
+référence du dataset, jusqu'au 🟢. **L'inférence ne démarre que si les deux
+caméras sont autorisées.**
+
+> **💡 Pourquoi contre le dataset et pas en local ?** Le modèle a appris dans
+> les conditions visuelles du dataset. La référence qui fait foi est donc
+> celle **du dataset d'entraînement**, copiée dans ses métadonnées (Phase 8),
+> pas une référence locale qui aurait pu changer.
+
+> **🔒 Création de référence impossible au déploiement.** Le script peut
+> **recalibrer** (revenir vers la référence) mais jamais **créer** une
+> nouvelle référence : cela masquerait une dérive vis-à-vis de
+> l'entraînement. La création de référence se fait uniquement à
+> l'enregistrement (Phase 7).
 
 
 ### ▶️ Étape 2 : L'inférence autonome
 
-Le bras se met d'abord en **position repos** (sécurité), puis le script affiche :
+Le bras (déjà au repos depuis le contrôle caméra) reste en sécurité, puis le
+script affiche :
 
 ```
 🚀 DÉMARRAGE DE L'INFÉRENCE AUTONOME
@@ -106,8 +166,6 @@ Observez si le robot exécute correctement la tâche (prendre la pièce, la dép
 
 > **⚠️ Rappel :** Une loss d'entraînement basse ne garantit pas un bon comportement réel — c'est ici, au déploiement, que se fait la vraie évaluation.
 
-> **💡 Astuce pédagogique :** Déployez successivement plusieurs checkpoints (par exemple 10k, 50k, 100k) pour observer comment le comportement s'améliore avec la durée d'entraînement — un modèle peu entraîné est souvent saccadé ou incomplet, un modèle plus entraîné est plus fluide. C'est une bonne façon de montrer concrètement l'effet de l'entraînement.
-
 Si le comportement est mauvais :
 
 - **Mouvements erratiques** → vérifiez la cohérence avec l'entraînement : masque appliqué, réglages caméra verrouillés, résolution 640×360, caméras aux **mêmes positions** qu'à l'enregistrement.
@@ -120,10 +178,12 @@ Si le comportement est mauvais :
 | :--- | :--- | :--- |
 | Dossier de checkpoints introuvable | Entraînement non fait | Lancer le script 11 (Phase 9) |
 | Résolution caméra incorrecte | Caméra ≠ 640×360 | La résolution doit être identique à l'entraînement (640×360) |
-| `SEM_8_camera_config.py` indisponible | Module absent | Le placer dans le même dossier que le script (obligatoire) |
-| Verrouillage caméra incomplet | v4l2 / caméra | Confirmer `[O]` pour continuer, ou vérifier les caméras |
+| Module caméra indisponible | `SEM_so101_8_camera_config.py` ou `SEM_so101_camera_reference.py` absent | Le placer dans le dossier des scripts (obligatoire) |
+| Verrouillage caméra incomplet | v4l2 / caméra | Le script s'arrête (fail-closed) ; vérifier les caméras puis relancer |
 | Aucun port USB détecté | Branchement / permissions | Vérifier le câble et le groupe `dialout` |
-| Masque absent | `camera_mask.json` manquant | Le définir (script 7) pour respecter la cohérence avec l'entraînement |
+| « Masque globale introuvable » → arrêt | `camera_mask.json` manquant | Le créer (script 7, Phase 6) ; il est obligatoire au déploiement |
+| Déploiement annulé : contrôle caméra non concluant | Éclairage ≠ dataset | Au verdict 🟠/🔴, utiliser `[R]` pour recalibrer jusqu'au 🟢 |
+| « références partielles » → arrêt | Une seule des 2 références dans le dataset | Reconsolider le dataset (Phase 8) ou choisir un autre modèle |
 | Le bras bouge de façon erratique | Incohérence entraînement↔déploiement | Vérifier masque, réglages caméra, résolution, positions des caméras |
 | Le bras ne fait pas la tâche | Modèle insuffisant | Plus d'épisodes + réentraînement (Phases 7-9) |
 
@@ -150,7 +210,9 @@ python SEM_so101_12_deploy.py
 | Action | Touche |
 | :--- | :--- |
 | Choisir le checkpoint | numéro ou Entrée (dernier) |
+| Mode LEGACY (dataset ancien) | L (références locales) / Q |
 | Identifier les caméras | G (Globale) / P (Pince) |
+| Recalibrer une caméra (🟠/🔴) | R (guidé jusqu'au 🟢) |
 | Pause / Reprendre | P |
 | Fin d'essai (retour repos) | R |
 | Nouvel essai | Entrée |
@@ -170,4 +232,4 @@ python SEM_so101_12_deploy.py
 > **🎉 Pipeline complet :** De la configuration matérielle (Phase 1) au robot autonome (Phase 10), votre chaîne d'apprentissage par imitation est opérationnelle. Le robot reproduit vos démonstrations sans opérateur.
 
 Service Écoles-Médias — DIP Genève
-Guide Phase 10 — Version 1.2
+Guide Phase 10 — Version 1.2 (déploiement bi-caméra + contrôle vs dataset)
