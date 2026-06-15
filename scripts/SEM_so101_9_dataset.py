@@ -24,6 +24,20 @@ import shutil
 from pathlib import Path
 from datetime import datetime
 
+# Module de référence visuelle caméra (étape 5, décision Q3) : à la
+# consolidation, la référence et le journal sont copiés dans le meta/ du
+# dataset, qui devient leur exemplaire de vérité. Import protégé et NON
+# bloquant : consolider un dataset existant doit rester possible sans le
+# module (avertissement de traçabilité incomplète à la place).
+try:
+    from SEM_so101_camera_reference import copier_reference_vers_meta
+    from SEM_so101_camera_reference import LOG_FILE as CAMERA_REF_LOG
+    CAMERA_REF_AVAILABLE = True
+except Exception:
+    copier_reference_vers_meta = None
+    CAMERA_REF_LOG = None
+    CAMERA_REF_AVAILABLE = False
+
 # Auto-activation de l'environnement lerobot si nécessaire
 try:
     import pandas as pd
@@ -340,6 +354,25 @@ def consolider(inventaire, total_episodes, total_frames):
     }
     with open(meta_out / "consolidation_trace.json", 'w') as f:
         json.dump(trace, f, indent=2)
+
+    # 8. Traçabilité « Référence visuelle caméra » (étape 5, décision Q3) :
+    #    copie de la référence active (JSON + image témoin masquée) et du
+    #    journal des passages 🟠 dans le meta/ du dataset consolidé — le
+    #    déploiement s'y rattachera via le train_config.json du checkpoint.
+    if CAMERA_REF_AVAILABLE:
+        print("\n📷 Traçabilité caméra → meta/ ...")
+        copier_reference_vers_meta(meta_out)
+        if CAMERA_REF_LOG is not None and Path(CAMERA_REF_LOG).exists():
+            try:
+                shutil.copy2(CAMERA_REF_LOG, meta_out / Path(CAMERA_REF_LOG).name)
+                print(f"   ✅ Journal copié : {Path(CAMERA_REF_LOG).name}")
+            except Exception as e:
+                print(f"   ⚠️  Copie du journal impossible ({e}).")
+        else:
+            print("   ℹ️  Aucun journal de passages 🟠 (normal si tout était 🟢).")
+    else:
+        print("\n⚠️  Module SEM_so101_camera_reference indisponible — référence")
+        print("   caméra NON copiée dans le meta/ (traçabilité incomplète).")
 
     return True
 
