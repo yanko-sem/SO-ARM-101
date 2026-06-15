@@ -1,4 +1,3 @@
-```markdown
 # Scripts SEM pour SO-ARM 101
 
 Collection de scripts Python pour la configuration, calibration et contrôle des robots SO-ARM 101.
@@ -129,9 +128,9 @@ python SEM_so101_7_teleoperation_camera.py
 
 ```
 
-### 📸 Module Utilitaires : SEM_8_camera_config.py
+### 📸 Module Utilitaire : SEM_so101_8_camera_config.py
 
-*Ce module n'est pas une étape numérotée, mais une dépendance critique des scripts 8 et 12.*
+*Ce module n'est pas une étape numérotée, mais une dépendance critique des scripts 8 et 12* (repli sur l'ancien nom `SEM_8_camera_config.py` s'il est présent).
 Fige les réglages matériels (Exposition, Balance des blancs, Gain) via `v4l2-ctl` et `guvcview`.
 
 * Garantit la cohérence visuelle stricte entre l'enregistrement (dataset) et le déploiement (inférence).
@@ -140,8 +139,23 @@ Fige les réglages matériels (Exposition, Balance des blancs, Gain) via `v4l2-c
 **Utilisation autonome (Optionnel) :**
 
 ```bash
-python SEM_8_camera_config.py --show
-python SEM_8_camera_config.py --capture cam_top /dev/video0
+python SEM_so101_8_camera_config.py --show
+python SEM_so101_8_camera_config.py --capture cam_top /dev/video0
+
+```
+
+### 📷 Module Utilitaire : SEM_so101_camera_reference.py
+
+*Dépendance critique des scripts 8, 9 et 12.* Remplace le réglage caméra « à l'œil » par une **référence visuelle chiffrée** par caméra (zones de mesure, score de conformité 🟢/🟠/🔴, recalibrage guidé), pour que l'image reste cohérente entre l'enregistrement et le déploiement.
+
+* **Multi-caméra** : un profil par caméra (globale et pince), fichiers de référence séparés.
+* Lançable **seul** pour préparer/vérifier une référence (menu : zones, mesure, création de référence, diagnostic, recalibrage) ; intégré aux scripts 8 et 12 pour le contrôle automatique.
+
+**Utilisation autonome (Optionnel) :**
+
+```bash
+python SEM_so101_camera_reference.py
+# Choisir G (globale) ou P (pince), puis suivre le menu
 
 ```
 
@@ -149,8 +163,9 @@ python SEM_8_camera_config.py --capture cam_top /dev/video0
 
 Enregistrement du dataset (2 caméras : *cam_top* et *cam_follower*) pour l'apprentissage par imitation.
 
-* Intègre automatiquement le verrouillage matériel des caméras (via `SEM_8_camera_config`).
-* Applique le masque vidéo généré au script 7.
+* **Référence visuelle des deux caméras** (via `SEM_so101_camera_reference`) : menus de référence au démarrage (globale puis pince) et contrôle de conformité avant chaque bloc — l'enregistrement n'est autorisé que si les deux caméras sont conformes.
+* Verrouillage matériel des caméras (via `SEM_so101_8_camera_config`) ; applique le masque vidéo généré au script 7.
+* Flux réordonné : robots identifiés et mis au repos **avant** la préparation des caméras (la vue de la pince dépend de la pose du bras).
 * Architecture robuste contre les micro-coupures USB (cache des positions) et la saturation CPU.
 * Sauvegarde au format LeRobotDataset v2.1.
 
@@ -167,6 +182,7 @@ Consolidation des données enregistrées.
 
 * Fusionne les dossiers des différentes positions (1 à 5) en un seul dataset unifié.
 * Vérifie l'intégrité globale et l'inventaire des frames/vidéos.
+* Copie les **références visuelles des deux caméras** et le journal dans le `meta/` du dataset (traçabilité : le déploiement s'y rattache).
 
 **Utilisation :**
 
@@ -209,7 +225,8 @@ python SEM_so101_11_train.py
 Déploiement du modèle (Inférence autonome).
 
 * Le robot agit seul basé sur le flux des 2 caméras à ~30 Hz.
-* Applique obligatoirement le verrouillage des caméras au démarrage pour éviter un "Distribution Shift".
+* **Contrôle des deux caméras vs les références du dataset d'entraînement** (retrouvées via le checkpoint) au démarrage : recalibrage guidé si l'éclairage a dérivé, fail-closed si le verrouillage échoue — évite le "Distribution Shift". Mode LEGACY si le dataset est antérieur au système.
+* Robot Follower mis au repos **avant** le contrôle caméra ; masque réappliqué.
 * Architecture défensive : tolérance aux pertes de paquets série (maintien de la dernière position connue).
 
 **Utilisation :**
@@ -229,15 +246,15 @@ python SEM_so101_12_deploy.py
 | P + Entrée | Identifier la caméra comme PINCE (*cam_follower*) |
 | Q + Entrée | Passer la caméra |
 
-**Pendant l'enregistrement (Script 8) :**
+**Menu d'enregistrement (Script 8) :** 1 = instructions, 2 = test rapide (2 épisodes), 3 = enregistrer 10 épisodes pour une position, 4 = visualiser, 5 = effacer, 6 = repositionner au repos, Q = quitter. Un **contrôle des deux caméras** précède chaque bloc (test rapide inclus).
+
+**Pendant un épisode (Script 8) :**
 
 | Touche | Action |
 | --- | --- |
-| D | Démarrer l'enregistrement d'un épisode (libère le robot) |
-| T | Terminer l'épisode avec succès (fige le robot, sauvegarde) |
+| T | Terminer l'épisode avec succès (fige le robot, sauvegarde, retour repos) |
 | A | Annuler l'épisode en cours |
-| S | Stopper la session |
-| Q | Quitter le programme |
+| S | Stopper la session (retour au menu) |
 
 ## 📁 Fichiers de Calibration & Configuration
 
@@ -247,7 +264,8 @@ Les paramètres globaux sont automatiquement sauvegardés dans `~/lerobot/calibr
 * `teleoperation_config_cote.json` / `teleoperation_config_face.json` : Profils de mappage.
 * `repos_position.json` : Position de repos universelle (partagée par tous les scripts).
 * `camera_mask.json` : Polygone de la zone utile (généré par le script 7, utilisé par les scripts 8 et 12).
-* `camera_settings.json` : Valeurs d'exposition et WB verrouillées (générées et utilisées par `SEM_8_camera_config.py`).
+* `camera_settings.json` : Valeurs d'exposition et WB verrouillées (générées et utilisées par `SEM_so101_8_camera_config.py`).
+* `camera_reference_cam_top.json` / `camera_reference_cam_follower.json` (+ images témoins, zones, `camera_reference_log.jsonl`) : Références visuelles des deux caméras (générées par `SEM_so101_camera_reference.py`, copiées dans le `meta/` du dataset par le script 9).
 
 ## 📁 Datasets & Modèles
 
@@ -265,7 +283,3 @@ Les paramètres globaux sont automatiquement sauvegardés dans `~/lerobot/calibr
 1. **Un seul robot connecté à la fois** (sauf scripts 5, 6, 7, 8 et 12).
 2. **Alimentation :** Toujours vérifier que l'alimentation (5V ou 12V) est active pour détecter les ports série.
 3. **Sauvegardes des modèles :** Pensez à renommer le dossier d'export `act_so101_pick_place` pour archiver vos modèles avant de lancer un nouvel entraînement avec le script 11.
-
-```
-
-```
