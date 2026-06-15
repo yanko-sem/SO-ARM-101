@@ -54,11 +54,29 @@ Cette phase permet de :
 │       ├── episode_000000.mp4
 │       └── ...
 └── meta/
-    ├── info.json                  (métadonnées du dataset)
-    ├── tasks.jsonl                (5 tâches, une par position)
-    ├── episodes.jsonl             (index des épisodes)
-    └── consolidation_trace.json   (traçabilité)
+    ├── info.json                          (métadonnées du dataset)
+    ├── tasks.jsonl                        (5 tâches, une par position)
+    ├── episodes.jsonl                     (index des épisodes)
+    ├── consolidation_trace.json           (traçabilité de la consolidation)
+    ├── camera_reference_cam_top.json      (référence visuelle caméra globale)
+    ├── camera_reference_cam_top_raw.png   (image témoin globale)
+    ├── camera_reference_cam_top_masked.png
+    ├── camera_reference_cam_follower.json (référence visuelle caméra pince)
+    ├── camera_reference_cam_follower_raw.png
+    └── camera_reference_log.jsonl         (journal des écarts 🟠, s'il y en a)
 ```
+
+> **📷 Traçabilité « Référence visuelle caméra ».** Depuis l'intégration du
+> système de référence visuelle (Phases 7 et 10), la consolidation copie
+> dans le `meta/` les **références des deux caméras** (globale + pince)
+> telles qu'elles étaient au moment de l'enregistrement, ainsi que le
+> journal des écarts éventuels. Le `meta/` devient ainsi l'**exemplaire de
+> vérité** des conditions visuelles du dataset : au déploiement (Phase 10),
+> le script 12 s'y rattache automatiquement via le `train_config.json` du
+> checkpoint pour vérifier que les caméras voient la même chose qu'à
+> l'entraînement. La caméra globale a une image masquée (`_masked.png`) car
+> elle utilise un masque ; la caméra pince mesure sur l'image entière, donc
+> n'en a pas.
 
 
 ### 🔧 Étape 1 : Consolidation du dataset (Script 9)
@@ -85,7 +103,11 @@ Le script procède automatiquement :
    - Copie des vidéos avec renommage
    - Attribution d'une tâche par position
 5. **Métadonnées** — génère `info.json`, `tasks.jsonl`, `episodes.jsonl`
-6. **Résumé** — affiche les statistiques du dataset consolidé
+6. **Traçabilité caméra** — copie les références visuelles des deux caméras
+   et le journal des écarts dans le `meta/` (voir l'encadré ci-dessus). Si
+   le module de référence est absent, un avertissement signale que la
+   traçabilité est incomplète, mais la consolidation se poursuit.
+7. **Résumé** — affiche les statistiques du dataset consolidé
 
 **Sortie attendue**
 
@@ -193,6 +215,7 @@ Avant de passer à l'entraînement, vérifiez les points suivants :
 | Mouvements cohérents | Courbes moteurs lisses, pas de sauts |
 | Les 5 positions couvertes | Vérifier des épisodes de chaque position |
 | Fichiers meta complets | 4 ✅ dans la section métadonnées |
+| Références caméra copiées | `meta/` contient les `camera_reference_cam_*.json` |
 
 > **⚠️ Important :** Si vous constatez des épisodes de mauvaise qualité (geste raté, prisme tombé, mouvement parasite), vous pouvez les supprimer manuellement dans les dossiers source (`position_X_*/`) puis relancer le script 9 pour reconsolider.
 
@@ -219,6 +242,8 @@ Avant de passer à l'entraînement, vérifiez les points suivants :
 | `so101_pick_place_consolidated/` | Dataset unifié prêt pour l'entraînement | Script 9 |
 | `meta/episodes_stats.jsonl` | Statistiques par épisode | Script 10 |
 | `meta/consolidation_trace.json` | Traçabilité de la consolidation | Script 9 |
+| `meta/camera_reference_cam_*.json` | Références visuelles des deux caméras (conditions du dataset) | Script 9 (copie) |
+| `meta/camera_reference_log.jsonl` | Journal des écarts caméra 🟠 (s'il y en a) | Script 9 (copie) |
 
 
 ### 🚀 Commandes de référence rapide
@@ -248,4 +273,4 @@ python SEM_so101_10_visualize_dataset.py
 > **🚀 Objectif atteint :** Votre dataset est consolidé, vérifié et prêt pour l'entraînement du modèle ACT ! Passez à la Phase 9 pour former votre robot à reproduire vos gestes de manière autonome.
 
 Service Écoles-Médias — DIP Genève
-Guide Phase 8 — Version 1.0
+Guide Phase 8 — Version 1.1 (traçabilité Référence visuelle caméra)
