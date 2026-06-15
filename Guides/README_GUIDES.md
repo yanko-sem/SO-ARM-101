@@ -105,12 +105,14 @@ Capture de démonstrations pour l'apprentissage par imitation.
 
 - 2 caméras simultanées (cam_top + cam_follower)
 - Identification caméras par touches G (Globale) et P (Pince)
+- **Référence visuelle des deux caméras** : menus de référence (globale puis pince) au démarrage, contrôle de conformité avant chaque bloc (image cohérente avec le dataset)
 - Format LeRobotDataset v2.1
 - 5 positions × 10 épisodes = 50 démonstrations
 - Tâche : prendre un prisme hexagonal (désigné « cube » dans le dataset) et le déposer dans une boîte
 
-**Script utilisé :**
-- `SEM_so101_8_record_dataset.py`
+**Scripts utilisés :**
+- `SEM_so101_8_record_dataset.py` — Enregistrement
+- `SEM_so101_camera_reference.py` — Référence visuelle (contrôle des 2 caméras)
 
 
 ### 📕 Phase 8 — Consolidation et Visualisation
@@ -121,6 +123,7 @@ Préparation du dataset pour l'entraînement.
 - Normalisation des timestamps (fréquence régulière à 30 FPS)
 - Génération des statistiques par épisode
 - Conversion des vidéos en H.264 (compatibilité navigateur)
+- Copie des **références visuelles des deux caméras** dans le `meta/` du dataset (traçabilité pour le déploiement)
 - Visualisation interactive dans le navigateur via l'outil LeRobot
 
 **Scripts utilisés :**
@@ -155,12 +158,13 @@ Inférence autonome : le modèle ACT pilote le robot sans opérateur.
 - Sélection d'un checkpoint entraîné
 - Inférence en boucle à ~30 images/seconde
 - Bras Follower seul (le Leader n'est pas nécessaire — le modèle remplace l'opérateur)
-- Masque et réglages caméra réappliqués (cohérence entraînement↔déploiement)
+- Masque réappliqué + **contrôle des deux caméras vs les références du dataset** d'entraînement (cohérence entraînement↔déploiement ; recalibrage guidé si l'éclairage a dérivé)
 - Contrôles : Pause (P), fin d'essai (R), nouvel essai (Entrée), quitter (Q)
 - Arrêt d'urgence (CTRL+C)
 
-**Script utilisé :**
-- `SEM_so101_12_deploy.py`
+**Scripts utilisés :**
+- `SEM_so101_12_deploy.py` — Déploiement
+- `SEM_so101_camera_reference.py` — Contrôle des 2 caméras
 
 
 ## 🔧 Matériel Requis
@@ -211,4 +215,4 @@ Phase 10 (Déploiement autonome)
 ---
 
 Service Écoles-Médias — DIP Genève
-Dernière mise à jour : 04.06.2026
+Dernière mise à jour : 15.06.2026
