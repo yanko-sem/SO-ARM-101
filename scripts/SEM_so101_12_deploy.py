@@ -73,19 +73,42 @@ except ImportError:
     sys.exit(1)
 
 # Module de configuration caméra — partagé avec le script 8 (même camera_settings.json).
-# Le script 12 propose au lancement de revérifier/refaire les réglages (capturer_reglages_camera,
-# papier blanc) puis les APPLIQUE (verrouiller_camera) — cohérence colorimétrie entraînement↔déploiement.
+# Au lancement (étape 6), le script 12 CONTRÔLE les deux caméras vs les références copiées dans le
+# meta/ du dataset d'entraînement (resoudre_meta_dataset → controle_camera_deploiement), puis verrouille
+# les réglages — cohérence colorimétrie entraînement↔déploiement. Le réglage « à l'œil » est supprimé.
+# Flux : checkpoint → modèle → références du dataset (ou LEGACY local) → masque globale obligatoire →
+# Follower au REPOS → identification caméras → contrôle GLOBALE puis PINCE (autorisation = les deux) →
+# connexion ThreadedCamera + verrouillage (échec = arrêt) → inférence. La création de référence est
+# INTERDITE en déploiement (lecture seule du dataset) ; seul le recalibrage [R] est offert.
 # Import protégé : si le module est absent, mal placé ou cassé, on le signalera plus bas
 # par un message clair + arrêt propre, au lieu d'un traceback illisible au démarrage.
 try:
-    from SEM_8_camera_config import verrouiller_camera, capturer_reglages_camera
+    from SEM_so101_8_camera_config import verrouiller_camera
     CAMERA_LOCK_AVAILABLE = True
     CAMERA_LOCK_IMPORT_ERROR = None
+except Exception:
+    try:
+        from SEM_8_camera_config import verrouiller_camera
+        CAMERA_LOCK_AVAILABLE = True
+        CAMERA_LOCK_IMPORT_ERROR = None
+    except Exception as e:
+        verrouiller_camera = None
+        CAMERA_LOCK_AVAILABLE = False
+        CAMERA_LOCK_IMPORT_ERROR = e
+
+# Module de référence visuelle (étape 6) : contrôle des deux caméras au
+# démarrage du déploiement, CONTRE les références copiées dans le meta/ du
+# dataset d'entraînement. Remplace le réglage « à l'œil » par un contrôle
+# mesuré. Import protégé : sans lui, le déploiement est bloqué (le contrôle
+# garantit la cohérence colorimétrie entraînement↔déploiement).
+try:
+    from SEM_so101_camera_reference import controle_camera_deploiement
+    CAMERA_REF_AVAILABLE = True
+    CAMERA_REF_IMPORT_ERROR = None
 except Exception as e:
-    verrouiller_camera = None
-    capturer_reglages_camera = None
-    CAMERA_LOCK_AVAILABLE = False
-    CAMERA_LOCK_IMPORT_ERROR = e
+    controle_camera_deploiement = None
+    CAMERA_REF_AVAILABLE = False
+    CAMERA_REF_IMPORT_ERROR = e
 
 # ============================================
 # CONFIGURATION
@@ -500,6 +523,38 @@ def selectionner_checkpoint():
 # ============================================
 # CHARGEMENT DU MODÈLE
 # ============================================
+
+def resoudre_meta_dataset(checkpoint_path):
+    """Étape 6 : remonte du checkpoint au meta/ du dataset d'entraînement.
+       checkpoint/pretrained_model/train_config.json → repo_id → meta/
+    Retourne (Path meta | None, message, mode_ref) avec
+    mode_ref ∈ {"dataset", "legacy_possible", "bloquant"} (décision D1)."""
+    cfg = checkpoint_path / "train_config.json"
+    if not cfg.exists():
+        return None, f"train_config.json absent ({cfg})", "legacy_possible"
+    try:
+        with open(cfg, 'r') as f:
+            data = json.load(f)
+    except Exception as e:
+        return None, f"train_config.json illisible ({e})", "legacy_possible"
+    repo_id = (data.get("dataset", {}) or {}).get("repo_id")
+    if not repo_id:
+        return None, "repo_id absent de train_config.json", "legacy_possible"
+    meta = Path.home() / ".cache" / "huggingface" / "lerobot" / repo_id / "meta"
+    if not meta.exists():
+        return None, f"meta/ du dataset introuvable ({meta})", "legacy_possible"
+    # Présence RÉELLE des deux références (pas seulement du dossier meta/) :
+    #   les deux → mode dataset ; aucune → LEGACY possible (ancien dataset) ;
+    #   une seule → état incohérent → blocage (décision D1).
+    ref_top = (meta / "camera_reference_cam_top.json").exists()
+    ref_fol = (meta / "camera_reference_cam_follower.json").exists()
+    if ref_top and ref_fol:
+        return meta, f"références du dataset : {repo_id}", "dataset"
+    if not ref_top and not ref_fol:
+        return None, f"dataset ancien sans références caméra : {repo_id}", "legacy_possible"
+    return None, (f"références caméra PARTIELLES dans le dataset "
+                  f"(cam_top={ref_top}, cam_follower={ref_fol})"), "bloquant"
+
 
 def charger_modele(checkpoint_path):
     """
@@ -1018,59 +1073,133 @@ def main():
     if checkpoint_path is None:
         sys.exit(1)
 
+    # Garde-fous modules caméra : sans eux, pas de contrôle ni de
+    # verrouillage → déploiement bloqué (cohérence entraînement↔déploiement).
+    if not CAMERA_LOCK_AVAILABLE:
+        print("\n❌ Module de configuration caméra indisponible.")
+        print(f"   Erreur : {CAMERA_LOCK_IMPORT_ERROR}")
+        print("   → Impossible de verrouiller les caméras. Déploiement annulé.")
+        sys.exit(1)
+    if not CAMERA_REF_AVAILABLE:
+        print("\n❌ Module de référence visuelle (SEM_so101_camera_reference) indisponible.")
+        print(f"   Erreur : {CAMERA_REF_IMPORT_ERROR}")
+        print("   → Impossible de contrôler les caméras vs le dataset. Déploiement annulé.")
+        sys.exit(1)
+
     # 2. Chargement du modèle ACT
     policy = charger_modele(checkpoint_path)
     if policy is None:
         sys.exit(1)
 
-    # 3. Identification des caméras
-    idx_top, idx_follower = identification_cameras()
-    if idx_top is None or idx_follower is None:
-        print("\n❌ Déploiement annulé : les deux caméras (globale + pince) sont requises.")
+    # 3. Résolution des références du dataset d'entraînement (étape 6).
+    #    La « vérité » de comparaison est le meta/ du dataset, pas le local.
+    meta_dataset, msg_ref, mode_ref = resoudre_meta_dataset(checkpoint_path)
+    print(f"\n📂 {msg_ref}")
+    if mode_ref == "bloquant":
+        print("\n❌ Dataset incohérent : une seule des deux références caméra")
+        print("   est présente. Impossible de contrôler de façon fiable.")
+        print("   → Reconsolide le dataset (script 9) ou choisis un autre modèle.")
         sys.exit(1)
+    dossier_reference = meta_dataset       # None → LEGACY
+    if mode_ref == "legacy_possible":
+        print("\n⚠️  Le dataset de ce checkpoint ne contient pas de références caméra.")
+        print("   Ce modèle semble antérieur au système de référence visuelle.")
+        print("\n  [L] utiliser les références LOCALES actives — mode LEGACY, moins traçable")
+        print("  [Q] quitter")
+        while True:
+            rep_leg = input("Choix : ").strip().upper()
+            if rep_leg in ("L", "Q"):
+                break
+            print(f"   ⚠️  Saisie '{rep_leg}' non reconnue — L ou Q.")
+        if rep_leg == "Q":
+            print("\n❌ Déploiement annulé.")
+            sys.exit(0)
+        print("   ℹ️  Mode LEGACY : comparaison contre les références locales.")
+    # Contexte journalisé (D1) : distingue LEGACY du mode dataset normal.
+    contexte_deploiement = ("déploiement LEGACY — références locales"
+                            if mode_ref == "legacy_possible" else "déploiement")
 
-    # Réglages caméra (exposition / balance des blancs) — un réglage par caméra, comme le script 8.
-    # capturer_reglages_camera affiche les réglages enregistrés et propose [Entrée] garder / [R] refaire
-    # (guvcview + papier blanc, à recaler sous la lumière du moment). À faire AVANT d'ouvrir les caméras
-    # avec cv2, car guvcview a besoin du périphérique libre.
-    if not CAMERA_LOCK_AVAILABLE:
-        print("\n❌ Module de configuration caméra (SEM_8_camera_config.py) indisponible.")
-        print(f"   Erreur : {CAMERA_LOCK_IMPORT_ERROR}")
-        print("   → Impossible de régler puis verrouiller les caméras.")
-        print("   → Déploiement annulé pour éviter des images en mode auto (incohérence avec l'entraînement).")
-        print("   → Vérifiez que SEM_8_camera_config.py est dans le même dossier que ce script.")
-        sys.exit(1)
-
-    capturer_reglages_camera(f"/dev/video{idx_top}", CAM_TOP, titre="GLOBALE (cam_top)   [1/2]")
-    capturer_reglages_camera(f"/dev/video{idx_follower}", CAM_FOLLOWER, titre="PINCE (cam_follower)   [2/2]")
-
-    # 3bis. Chargement du masque globale (créé par le script 7, partagé avec le 8).
-    # Si absent → message + inférence avec image brute (pas de crash, mais cohérence rompue avec l'entraînement).
+    # 3bis. Masque globale OBLIGATOIRE (le contrôle cam_top en dépend).
     global _MASK_GLOBALE_IMG
     mask_pts = charger_masque_globale()
-    if mask_pts:
-        _MASK_GLOBALE_IMG = construire_mask_image(
-            mask_pts, CONFIG['camera_width'], CONFIG['camera_height']
-        )
-        print(f"\n✅ Masque globale actif ({len(mask_pts)} points)")
-    else:
-        print("\n⚠️  Aucun masque trouvé — l'inférence utilisera l'image brute.")
-        print("   Si le modèle a été entraîné avec un masque, la cohérence sera rompue.")
+    if not mask_pts:
+        print("\n❌ Masque globale introuvable (camera_mask.json).")
+        print("   Le contrôle de la caméra GLOBALE exige ce masque.")
+        print("   → Lance d'abord le script 7, puis relance le déploiement.")
+        sys.exit(1)
+    _MASK_GLOBALE_IMG = construire_mask_image(
+        mask_pts, CONFIG['camera_width'], CONFIG['camera_height'])
+    print(f"\n✅ Masque globale actif ({len(mask_pts)} points)")
 
-    # 4. Connexion des caméras (ThreadedCamera)
+    # 4. Robot Follower AU REPOS AVANT les caméras (étape 6) : la vue de la
+    #    PINCE dépend de la pose du bras → la scène doit être celle du repos,
+    #    garantie par le script. Le bras reste connecté pour l'inférence.
+    port_handler, packet_handler, calib = connexion_follower()
+    if port_handler is None:
+        sys.exit(1)
+
+    # Le Follower est désormais connecté et ses servos sous couple. Toute
+    # sortie AVANT l'ouverture des caméras doit relâcher le couple proprement
+    # (sinon le bras reste rigide). _abort_cameras (défini plus bas) réutilise
+    # cette fonction après avoir fermé les caméras.
+    def _abort_follower(code=1):
+        try:
+            for sid in range(1, 7):
+                packet_handler.write1ByteTxRx(port_handler, sid, 40, 0)
+        except Exception:
+            pass
+        try:
+            port_handler.closePort()
+        except Exception:
+            pass
+        if CV2_AVAILABLE:
+            cv2.destroyAllWindows()
+        sys.exit(code)
+
+    # Phase de préparation (repos → identification caméras → contrôle) sous
+    # protection : un Ctrl+C ou une exception imprévue ici doit relâcher le
+    # couple du Follower (déjà sous tension), jamais laisser le bras rigide.
+    try:
+        print("\n🎯 Position repos (avant contrôle caméra)...")
+        aller_position_repos(packet_handler, port_handler, calib)
+
+        # 5. Identification des deux caméras (robot déjà au repos)
+        idx_top, idx_follower = identification_cameras()
+        if idx_top is None or idx_follower is None:
+            print("\n❌ Déploiement annulé : les deux caméras (globale + pince) sont requises.")
+            _abort_follower(1)
+
+        # 6. CONTRÔLE des deux caméras vs la référence du dataset (étape 6).
+        #    Séquentiel (jamais en parallèle) ; autorisation = les deux OK.
+        #    Remplace l'ancien réglage « à l'œil » par un contrôle mesuré.
+        for nom_cam, idx_cam, lib in ((CAM_TOP, idx_top, "GLOBALE"),
+                                      (CAM_FOLLOWER, idx_follower, "PINCE")):
+            res = controle_camera_deploiement(idx_cam, nom_cam,
+                                              dossier_reference,
+                                              contexte=contexte_deploiement)
+            if not (isinstance(res, dict) and res.get("autorise")):
+                print(f"\n❌ Déploiement annulé (contrôle {lib} non concluant).")
+                _abort_follower(0)
+    except KeyboardInterrupt:
+        print("\n\n🛑 ARRÊT pendant la préparation — couple du Follower coupé.")
+        _abort_follower(130)
+    except Exception as e:
+        print(f"\n❌ Erreur pendant la préparation du déploiement : {e}")
+        _abort_follower(1)
+
+    # 7. Connexion des caméras (ThreadedCamera)
     cam_top          = None
     cam_follower_cam = None
 
     def _abort_cameras(code=1):
-        """Sortie propre pendant la phase caméra : libère les caméras déjà ouvertes.
-        À ce stade le bras Follower n'est pas encore connecté → aucun moteur sous tension."""
+        """Sortie propre pendant la phase caméra : libère les caméras déjà
+        ouvertes PUIS le bras Follower (couple relâché + port fermé) via
+        _abort_follower, qui termine le processus."""
         if cam_top:
             cam_top.disconnect()
         if cam_follower_cam:
             cam_follower_cam.disconnect()
-        if CV2_AVAILABLE:
-            cv2.destroyAllWindows()
-        sys.exit(code)
+        _abort_follower(code)
 
     if CV2_AVAILABLE:
         if idx_top is not None:
@@ -1105,35 +1234,26 @@ def main():
                 print(f"   Attendu : {(CONFIG['camera_height'], CONFIG['camera_width'])}")
                 _abort_cameras(1)
 
-        # 4bis. Verrouillage matériel des caméras (exposition / balance des blancs / gain).
+        # 7bis. Verrouillage matériel des caméras (exposition / balance des blancs / gain).
         # Applique les réglages enregistrés par le script 8 dans camera_settings.json.
         # CRITIQUE pour la cohérence entraînement↔déploiement : le modèle a été entraîné sur
         # des images à réglages verrouillés. Sans ce verrouillage, l'auto-exposition / auto-WB
         # ferait dériver la luminosité et la colorimétrie au déploiement.
-        # (La disponibilité du module SEM_8_camera_config.py a déjà été vérifiée plus haut,
-        # avant la capture des réglages — fail closed. Pas besoin de revérifier ici.)
+        # (La disponibilité du module de configuration caméra a déjà été
+        # vérifiée au démarrage — fail closed. Pas besoin de revérifier ici.)
+        # Verrouillage matériel : doit réussir (D2). Échec = arrêt — pas de
+        # passage en force (auto-exposition/auto-WB feraient dériver l'image).
         ok_lock = True
         ok_lock &= verrouiller_camera(f"/dev/video{idx_top}", CAM_TOP)
         ok_lock &= verrouiller_camera(f"/dev/video{idx_follower}", CAM_FOLLOWER)
         if not ok_lock:
-            reponse = input("\n⚠️  Verrouillage caméra incomplet. Continuer quand même ? [O/N] : ").strip().upper()
-            if reponse != 'O':
-                _abort_cameras(1)
+            print("\n❌ Verrouillage caméra incomplet — déploiement annulé")
+            print("   (les réglages doivent être garantis comme à l'entraînement).")
+            _abort_cameras(1)
 
-    # 5. Connexion du bras Follower
-    port_handler, packet_handler, calib = connexion_follower()
-    if port_handler is None:
-        if cam_top:
-            cam_top.disconnect()
-        if cam_follower_cam:
-            cam_follower_cam.disconnect()
-        sys.exit(1)
-
-    # 6. Position repos initiale + boucle d'inférence, sous protection CTRL+C
+    # 8. Boucle d'inférence, sous protection CTRL+C (le robot est déjà
+    #    connecté et au repos depuis l'étape 4).
     try:
-        # Position repos initiale (sécurité avant inférence)
-        aller_position_repos(packet_handler, port_handler, calib)
-
         # Boucle d'inférence
         boucle_inference(
             policy,
@@ -1150,7 +1270,7 @@ def main():
         urgence = True
 
     finally:
-        # 8. Nettoyage
+        # 9. Nettoyage
         print("\n🧹 Nettoyage...")
 
         if urgence:
