@@ -165,9 +165,13 @@ ffprobe -version
 cd ~/lerobot
 # Installer LeRobot avec support pour les servos Feetech
 pip install -e ".[feetech]"
+# Installer le SDK Dynamixel, utilisé par les scripts SEM pour piloter les servos
+pip install dynamixel-sdk
 ```
 
 > **Note :** L'installation peut prendre 5-10 minutes selon votre connexion
+
+> **Pourquoi `dynamixel-sdk` ?** Les servos sont des Feetech STS3215, mais les scripts SEM (1 à 8 et 12) communiquent avec eux via le SDK Dynamixel (`from dynamixel_sdk import *`). L'extra `[feetech]` n'installe que le SDK Feetech ; le SDK Dynamixel doit donc être ajouté séparément, sinon les scripts échouent à l'import.
 
 
 ### 🔌 Étape 6 : Permissions USB et caméras
@@ -319,6 +323,7 @@ python -c "from lerobot.common.policies.act.modeling_act import ACTPolicy; print
 | Pilote NVIDIA (si GPU) | ≥ supportant CUDA 12.1 | `nvidia-smi` |
 | ffmpeg | 6.x ou 7.x | `ffmpeg -version` |
 | LeRobot (fork) | — | `python -c "from lerobot.common.policies.act.modeling_act import ACTPolicy"` |
+| dynamixel-sdk | — | `python -c "from dynamixel_sdk import *; print('OK')"` |
 | Groupe dialout | — | `groups \| grep dialout` |
 | Groupe video | — | `groups \| grep video` |
 | v4l-utils | — | `v4l2-ctl --version` |
