@@ -5,7 +5,7 @@ Service Ecoles Médias - SO-ARM 101
 Description: Monitoring temps réel des positions des servos
 Version: 3.0 - Ultra simplifié
 """
-import sys, os, time, json, math
+import sys, os, time, json
 
 # Imports pour la détection clavier non-bloquante (capture position repos)
 try:
@@ -38,15 +38,28 @@ def clear_screen():
     """Efface l'écran"""
     os.system('clear')
 
-def detect_port():
-    """Détection du port du robot.
+# Noms des servos (sans accents, source unique pour l'alignement des tableaux)
+SERVO_NAMES = {
+    1: "BASE", 2: "EPAULE", 3: "COUDE",
+    4: "POIGN-F", 5: "POIGN-R", 6: "PINCE",
+}
 
-    Au lieu de prendre le premier port qui existe (qui peut être un téléphone
-    ou un autre périphérique série), on TESTE chaque port candidat en interrogeant
-    le servo 1. Le port qui répond au protocole servo est le robot ; les autres
-    périphériques (téléphone en charge, etc.) sont ignorés.
+# Amplitude minimale exigee d'une calibration pour etre consideree exploitable
+# (meme seuil que le script 2). Protege repos_position.json contre une vieille
+# calibration imparfaite presente sur disque.
+MIN_AMPLITUDE = 500
+
+def detect_port():
+    """Détection du port du robot (fail-closed).
+
+    On TESTE chaque port candidat en interrogeant le servo 1 : seul un vrai robot
+    répond. On collecte TOUS les ports qui répondent. S'il y en a exactement un, on
+    le retourne. S'il y en a plusieurs (Leader ET Follower branchés, par ex.), on
+    REFUSE et on demande de n'en garder qu'un — sinon on risquerait de monitorer le
+    mauvais bras avant même le choix L/F.
     """
     BAUDRATE = 1000000
+    ports_robot = []
     for port in ['/dev/ttyACM0', '/dev/ttyACM1', '/dev/ttyUSB0', '/dev/ttyUSB1']:
         if not os.path.exists(port):
             continue
@@ -56,28 +69,22 @@ def detect_port():
             if ph.openPort() and ph.setBaudRate(BAUDRATE):
                 # Interroger le servo 1 : seul un vrai robot répond
                 _, result, _ = pk.read2ByteTxRx(ph, 1, 56)
-                ph.closePort()
                 if result == COMM_SUCCESS:
-                    return port
-            else:
-                ph.closePort()
-        except Exception:
+                    ports_robot.append(port)
+        finally:
             try:
                 ph.closePort()
             except Exception:
                 pass
-    return None
 
-def arret_urgence(packetHandler, portHandler):
-    """Arrêt d'urgence - libère tous les servos"""
-    print("\n⚠️  ARRÊT D'URGENCE ACTIVÉ!")
-    for i in range(1, 7):
-        try:
-            packetHandler.write1ByteTxRx(portHandler, i, 40, 0)
-        except:
-            pass
-    print("✅ Tous les servos libérés")
-    return True
+    if len(ports_robot) == 1:
+        return ports_robot[0]
+    if len(ports_robot) > 1:
+        print("❌ Plusieurs robots/adaptateurs détectés :")
+        for port in ports_robot:
+            print(f"  - {port}")
+        print("   Débranchez tous les adaptateurs sauf celui du bras à utiliser.")
+    return None
 
 def charger_calibration(robot_type='leader'):
     """Charge la calibration d'un robot"""
@@ -87,27 +94,61 @@ def charger_calibration(robot_type='leader'):
             return json.load(f)
     return None
 
+def calibration_complete(calibration):
+    """Vrai uniquement si les 6 servos sont calibres avec une plage exploitable.
+
+    Verifie : presence des 6 servos, valeurs min/max numeriques, et amplitude
+    >= MIN_AMPLITUDE (meme exigence que le script 2). Sert de verrou : on n'autorise
+    la creation/modification de repos_position.json que si la calibration est
+    complete et exploitable (protege aussi contre une ancienne calibration imparfaite
+    deja presente sur disque).
+    """
+    if not calibration:
+        return False
+    for i in range(1, 7):
+        key = f"servo_{i}"
+        if key not in calibration:
+            return False
+        cal = calibration[key]
+        min_v = cal.get("min")
+        max_v = cal.get("max")
+        if not isinstance(min_v, (int, float)) or not isinstance(max_v, (int, float)):
+            return False
+        if max_v - min_v < MIN_AMPLITUDE:
+            return False
+    return True
+
 # ============================================
 # GESTION DE LA POSITION REPOS (fichier externe)
 # ============================================
 
 def charger_repos():
-    """Charge la position repos existante (% par servo). Retourne dict {1:%,...} ou None."""
-    if os.path.exists(REPOS_FILE):
-        try:
-            with open(REPOS_FILE, 'r') as f:
-                data = json.load(f)
-                return {int(k): v for k, v in data.items()}
-        except Exception:
-            return None
-    return None
+    """Charge la position repos existante (% par servo). Retourne dict {1:%,...} ou None.
+
+    Valide le contenu : 6 servos presents, valeurs numeriques dans [0, 100].
+    Un fichier ancien ou edite a la main qui ne respecte pas ce format est ignore.
+    """
+    if not os.path.exists(REPOS_FILE):
+        return None
+    try:
+        with open(REPOS_FILE, 'r') as f:
+            data = json.load(f)
+        repos = {int(k): float(v) for k, v in data.items()}
+        for i in range(1, 7):
+            if i not in repos or not (0.0 <= repos[i] <= 100.0):
+                return None
+        return repos
+    except Exception:
+        return None
 
 def sauvegarder_repos(repos_pct):
-    """Sauvegarde la position repos (% par servo) dans le fichier JSON externe."""
+    """Sauvegarde la position repos (% par servo) dans le fichier JSON externe (ecriture atomique)."""
     os.makedirs(os.path.dirname(REPOS_FILE), exist_ok=True)
     data = {str(i): repos_pct[i] for i in range(1, 7)}
-    with open(REPOS_FILE, 'w') as f:
+    tmp_file = REPOS_FILE + ".tmp"
+    with open(tmp_file, 'w') as f:
         json.dump(data, f, indent=2)
+    os.replace(tmp_file, REPOS_FILE)
 
 def ticks_vers_pct(positions, calibration):
     """Convertit des positions (ticks bruts) en pourcentages via la calibration.
@@ -140,13 +181,11 @@ def verifier_limites(positions, calibration):
 
 def afficher_recap_repos(positions, repos_pct, limites):
     """Affiche un récapitulatif de la position repos (ticks + % + vérif limites)."""
-    servo_names = {1: "BASE", 2: "EPAULE", 3: "COUDE",
-                   4: "POIGN-F", 5: "POIGN-R", 6: "PINCE"}
     print("\n┌─────────┬────────┬──────────┬────────────┐")
     print("│ SERVO   │ TICKS  │    %     │  LIMITES   │")
     print("├─────────┼────────┼──────────┼────────────┤")
     for i in range(1, 7):
-        nom = f"{i}:{servo_names[i]}"
+        nom = f"{i}:{SERVO_NAMES[i]}"
         etat = "OK" if limites[i] else "HORS !"
         print(f"│ {nom:<7} │ {positions[i]:6} │ {repos_pct[i]:7.2f}% │ {etat:<10} │")
     print("└─────────┴────────┴──────────┴────────────┘")
@@ -158,22 +197,48 @@ def capturer_repos_mode_A(packetHandler, portHandler, calibration, robot_type):
     print("📍 CAPTURE POSITION REPOS - Mode A (position physique actuelle)")
     print("="*60)
     print(f"\nRobot monitoré : {robot_type.upper()}")
+
+    # Verrou 1 : pas d'enregistrement de repos sans calibration complete et valide
+    if not calibration_complete(calibration):
+        print("\n❌ Calibration absente ou incomplète — impossible d'enregistrer un repos.")
+        print("   Calibrez d'abord les 6 servos (Phase 3, script 2), puis recommencez.")
+        input("\nAppuyez sur Entrée pour revenir au monitoring...")
+        return
+
     if robot_type != 'follower':
         print("⚠️  Recommandation : capturer depuis le FOLLOWER (référence du déploiement).")
 
-    # Lecture fraîche des positions au moment de la capture
+    # Verrou 2 : toute lecture echouee annule la capture (ne JAMAIS remplacer par 0,
+    # cela corromprait le repos central).
     positions = {}
     for i in range(1, 7):
-        pos, result, _ = packetHandler.read2ByteTxRx(portHandler, i, 56)
-        positions[i] = pos if result == COMM_SUCCESS else 0
+        pos, result, error = packetHandler.read2ByteTxRx(portHandler, i, 56)
+        if result != COMM_SUCCESS or error != 0:
+            print(f"\n❌ Lecture impossible du servo {i} — position de repos NON enregistrée.")
+            input("\nAppuyez sur Entrée pour revenir au monitoring...")
+            return
+        positions[i] = pos
 
     repos_pct = ticks_vers_pct(positions, calibration)
     limites = verifier_limites(positions, calibration)
     afficher_recap_repos(positions, repos_pct, limites)
 
+    # Verrou 3 : un repos doit rester DANS les limites de calibration
     if not all(limites.values()):
-        print("\n⚠️  Une ou plusieurs valeurs sont HORS des limites de calibration.")
-        print("    Elles seront bornées à [0%, 100%]. Repositionnez si nécessaire.")
+        print("\n❌ Une ou plusieurs positions sont HORS des limites de calibration.")
+        print("   Un repos doit rester dans la plage calibrée. Repositionnez le bras, puis recommencez.")
+        input("\nAppuyez sur Entrée pour revenir au monitoring...")
+        return
+
+    # Verrou 4 : confirmation renforcee si on n'est pas sur le Follower
+    if robot_type != 'follower':
+        print("\n⚠️  Vous n'êtes PAS sur le FOLLOWER.")
+        print("    La position de repos de référence devrait être capturée depuis le FOLLOWER.")
+        print("→ Tapez OUI (en toutes lettres) pour enregistrer malgré tout : ", end="", flush=True)
+        if input().strip().upper() != 'OUI':
+            print("\n❌ Annulé, aucune modification.")
+            input("\nAppuyez sur Entrée pour revenir au monitoring...")
+            return
 
     print("\n→ Enregistrer cette position comme repos ? [O/N] : ", end="", flush=True)
     confirm = input().strip().upper()
@@ -191,18 +256,20 @@ def saisir_repos_mode_B(calibration, robot_type):
     print("⌨️  CAPTURE POSITION REPOS - Mode B (saisie manuelle des ticks)")
     print("="*60)
     print(f"\nCalibration utilisée : {robot_type.upper()}")
-    servo_names = {1: "BASE", 2: "EPAULE", 3: "COUDE",
-                   4: "POIGN-F", 5: "POIGN-R", 6: "PINCE"}
+
+    # Verrou : pas d'enregistrement de repos sans calibration complete et valide
+    if not calibration_complete(calibration):
+        print("\n❌ Calibration absente ou incomplète — impossible d'enregistrer un repos.")
+        print("   Calibrez d'abord les 6 servos (Phase 3, script 2), puis recommencez.")
+        input("\nAppuyez sur Entrée pour revenir au monitoring...")
+        return
 
     positions = {}
     for i in range(1, 7):
-        if calibration and f"servo_{i}" in calibration:
-            min_v = calibration[f"servo_{i}"]['min']
-            max_v = calibration[f"servo_{i}"]['max']
-        else:
-            min_v, max_v = 0, 4095
+        min_v = calibration[f"servo_{i}"]['min']
+        max_v = calibration[f"servo_{i}"]['max']
         while True:
-            saisie = input(f"Servo {i} ({servo_names[i]}) [min {min_v}, max {max_v}] : ").strip()
+            saisie = input(f"Servo {i} ({SERVO_NAMES[i]}) [min {min_v}, max {max_v}] : ").strip()
             try:
                 tick = int(saisie)
                 if min_v <= tick <= max_v:
@@ -216,6 +283,16 @@ def saisir_repos_mode_B(calibration, robot_type):
     repos_pct = ticks_vers_pct(positions, calibration)
     limites = verifier_limites(positions, calibration)
     afficher_recap_repos(positions, repos_pct, limites)
+
+    # Confirmation renforcee si on n'est pas sur le Follower
+    if robot_type != 'follower':
+        print("\n⚠️  Vous n'êtes PAS sur le FOLLOWER.")
+        print("    La position de repos de référence devrait être capturée depuis le FOLLOWER.")
+        print("→ Tapez OUI (en toutes lettres) pour enregistrer malgré tout : ", end="", flush=True)
+        if input().strip().upper() != 'OUI':
+            print("\n❌ Annulé, aucune modification.")
+            input("\nAppuyez sur Entrée pour revenir au monitoring...")
+            return
 
     print("\n→ Enregistrer cette position comme repos ? [O/N] : ", end="", flush=True)
     confirm = input().strip().upper()
@@ -240,12 +317,6 @@ def calculer_barre_progression(valeur, min_val, max_val, largeur=20):
 def afficher_tableau_temps_reel(positions, calibration, stats=None):
     """Affiche un tableau formaté avec les positions en temps réel"""
 
-    # Noms des servos (sans accents pour l'alignement)
-    servo_names = {
-        1: "BASE", 2: "EPAULE", 3: "COUDE",
-        4: "POIGN-F", 5: "POIGN-R", 6: "PINCE"
-    }
-
     # Clear complet à chaque fois
     clear_screen()
 
@@ -261,7 +332,7 @@ def afficher_tableau_temps_reel(positions, calibration, stats=None):
     print("╠═══════════╬═══════╬═══════╬═══════╬═══════╬═══════╬══════════════════════╣")
 
     for i in range(1, 7):
-        nom = f"{i}:{servo_names[i]}"
+        nom = f"{i}:{SERVO_NAMES[i]}"
         pos = positions.get(i, 0)
 
         if calibration and f"servo_{i}" in calibration:
@@ -340,26 +411,29 @@ def main():
     # Détection du port
     PORT = detect_port()
     if not PORT:
-        print("❌ Aucun adaptateur USB détecté")
+        print("❌ Connexion au robot impossible.")
         print("\nVérifiez :")
-        print("  1. Câble USB branché")
-        print("  2. Alimentation 12V connectée")
+        print("  1. Câble USB branché (un seul adaptateur à la fois)")
+        print("  2. Alimentation connectée (5V ou 12V selon le bras)")
         print("  3. Interrupteur ON")
         return
 
     print(f"✅ Port détecté : {PORT}")
 
-    # Choix du robot
+    # Choix du robot (explicite : pas de defaut silencieux vers Leader)
     print("\n🤖 Quel robot monitorer ?")
     print("  [L] LEADER")
     print("  [F] FOLLOWER")
 
-    choix = input("\nVotre choix : ").strip().upper()
-
-    if choix == 'F':
-        robot_type = 'follower'
-    else:
-        robot_type = 'leader'  # Par défaut si entrée vide ou L
+    robot_type = None
+    while robot_type is None:
+        choix = input("\nVotre choix [L/F] : ").strip().upper()
+        if choix == 'L':
+            robot_type = 'leader'
+        elif choix == 'F':
+            robot_type = 'follower'
+        else:
+            print("❌ Choix invalide : tapez L ou F")
 
     print(f"\n📡 Monitoring du {robot_type.upper()}")
 
@@ -375,8 +449,12 @@ def main():
     portHandler = PortHandler(PORT)
     packetHandler = PacketHandler(1.0)
 
-    if not portHandler.openPort() or not portHandler.setBaudRate(BAUDRATE):
-        print("❌ Erreur de connexion")
+    if not portHandler.openPort():
+        print("❌ Erreur de connexion (ouverture du port)")
+        return
+    if not portHandler.setBaudRate(BAUDRATE):
+        print("❌ Erreur de connexion (baudrate)")
+        portHandler.closePort()
         return
 
     print("\n🚀 Démarrage du monitoring...")
@@ -388,7 +466,6 @@ def main():
     fps_counter = 0
     fps_time = time.time()
     current_fps = 0
-    servos_actifs = 0
 
     # Désactiver tous les servos au début
     for i in range(1, 7):
@@ -415,8 +492,6 @@ def main():
                 pos, result, _ = packetHandler.read2ByteTxRx(portHandler, servo_id, 56)
                 if result == COMM_SUCCESS:
                     positions[servo_id] = pos
-                    if servo_id == 1:  # Compter une fois
-                        servos_actifs = len(positions)
                 else:
                     positions[servo_id] = 0
 
@@ -474,7 +549,10 @@ def main():
             except:
                 pass
 
-        portHandler.closePort()
+        try:
+            portHandler.closePort()
+        except Exception:
+            pass
         print("✅ Port fermé")
         print("\n👋 Monitoring terminé")
 
