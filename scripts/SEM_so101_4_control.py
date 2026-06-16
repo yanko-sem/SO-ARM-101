@@ -27,16 +27,45 @@ except ImportError:
 def clear_screen():
     os.system('clear')
 
-def detect_ports():
-    """Détecte les ports des robots.
+# Noms des servos (source unique, partagee par l'affichage et le tableau)
+SERVO_NAMES = {1: "BASE", 2: "ÉPAULE", 3: "COUDE",
+               4: "POIGNET-F", 5: "POIGNET-R", 6: "PINCE"}
+
+# Amplitude minimale exigee d'une calibration pour etre exploitable (meme seuil que scripts 2/3)
+MIN_AMPLITUDE = 500
+
+def lire_position(packetHandler, portHandler, servo_id):
+    """Lecture verifiee de la position (registre 56). Retourne (position, ok)."""
+    pos, result, error = packetHandler.read2ByteTxRx(portHandler, servo_id, 56)
+    if result != COMM_SUCCESS or error != 0:
+        return None, False
+    return pos, True
+
+def lire_positions_toutes(packetHandler, portHandler):
+    """Relit les 6 positions reelles (verifiees). Retourne le dict {1:pos,...}
+    ou None si une lecture echoue (etat du bras incertain). Sert a resynchroniser
+    l'etat logiciel sur le bras reel apres l'echec d'une sequence (mouvement partiel
+    possible) : sans ca, une fleche calculerait un mouvement depuis une position perimee."""
+    positions = {}
+    for i in range(1, 7):
+        pos, ok = lire_position(packetHandler, portHandler, i)
+        if not ok:
+            print(f"❌ Lecture impossible du servo {i} — état du bras incertain")
+            return None
+        positions[i] = pos
+    return positions
+
+def detect_port():
+    """Détecte LE port du robot (fail-closed).
 
     Teste chaque port candidat en interrogeant le servo 1 : ne garde que les
-    ports qui répondent au protocole servo (= robots). Les autres périphériques
-    série (téléphone en charge, etc.) sont ignorés. Le robot doit être alimenté
-    pour être détecté.
+    ports qui répondent (= robots). S'il y en a exactement un, on le retourne.
+    S'il y en a plusieurs (Leader ET Follower branchés), on REFUSE : l'ordre
+    d'énumération ne dit rien sur le rôle, donc on ne peut pas deviner le bon
+    bras. Les autres périphériques série sont ignorés. Le robot doit être alimenté.
     """
     BAUDRATE = 1000000
-    ports = []
+    ports_robot = []
     for port in ['/dev/ttyACM0', '/dev/ttyACM1', '/dev/ttyUSB0', '/dev/ttyUSB1']:
         if not os.path.exists(port):
             continue
@@ -46,17 +75,22 @@ def detect_ports():
             if ph.openPort() and ph.setBaudRate(BAUDRATE):
                 # Interroger le servo 1 : seul un vrai robot répond
                 _, result, _ = pk.read2ByteTxRx(ph, 1, 56)
-                ph.closePort()
                 if result == COMM_SUCCESS:
-                    ports.append(port)
-            else:
-                ph.closePort()
-        except Exception:
+                    ports_robot.append(port)
+        finally:
             try:
                 ph.closePort()
             except Exception:
                 pass
-    return ports
+
+    if len(ports_robot) == 1:
+        return ports_robot[0]
+    if len(ports_robot) > 1:
+        print("❌ Plusieurs robots/adaptateurs détectés :")
+        for port in ports_robot:
+            print(f"  - {port}")
+        print("   Débranchez tous les adaptateurs sauf celui du bras à contrôler.")
+    return None
 
 def getch():
     """Capture d'une touche clavier avec gestion des flèches"""
@@ -89,10 +123,13 @@ def mouvement_parallele(packetHandler, portHandler, calibration, cibles_pct, ser
     cibles_pct : dict {servo_id: pourcentage}
     servos     : liste des servos à bouger en parallèle
     """
-    # Lire positions de départ
+    # Lire positions de départ (verifiees : un echec annule la sequence)
     pos_debut = {}
     for s in servos:
-        pos, _, _ = packetHandler.read2ByteTxRx(portHandler, s, 56)
+        pos, ok = lire_position(packetHandler, portHandler, s)
+        if not ok:
+            print(f"❌ Lecture impossible du servo {s} — mouvement annulé")
+            return None
         pos_debut[s] = pos
 
     # Calculer les cibles en ticks
@@ -129,9 +166,13 @@ def _est_en_repos(packetHandler, portHandler, calibration, tolerance_pct=5):
     """Vérifie si le robot est actuellement en position repos.
     Compare le % actuel de chaque servo à la valeur repos (du fichier externe),
     avec une tolérance. Retourne True si TOUS les servos sont proches du repos."""
-    repos_pct = charger_repos_pct()
+    repos_pct, _ = charger_repos_pct()
     for i in range(1, 7):
-        pos, _, _ = packetHandler.read2ByteTxRx(portHandler, i, 56)
+        pos, ok = lire_position(packetHandler, portHandler, i)
+        if not ok:
+            # Lecture impossible : etat repos INDETERMINE -> l'appelant doit annuler
+            print(f"❌ Lecture impossible du servo {i} — état repos indéterminé")
+            return None
         if calibration and f'servo_{i}' in calibration:
             min_val = calibration[f'servo_{i}']['min']
             max_val = calibration[f'servo_{i}']['max']
@@ -169,30 +210,51 @@ def aller_a_position(packetHandler, portHandler, calibration, cibles_pct, duree=
     # la ferait racler. On lève d'abord le bras en DIMINUANT le servo 2
     # (ce qui SOULÈVE la pince sur cette installation), via min() pour ne jamais
     # augmenter le servo 2 par erreur.
-    pos4_initial, _, _ = packetHandler.read2ByteTxRx(portHandler, 4, 56)
-    if pos4_initial > 2700 and not _est_en_repos(packetHandler, portHandler, calibration):
-        pos2_actuel, _, _ = packetHandler.read2ByteTxRx(portHandler, 2, 56)
-        cible_2_degagement = min(pos2_actuel, 1027)  # 1027 ticks, ajustable
-        mouvement_fluide(packetHandler, portHandler, 2, pos2_actuel, cible_2_degagement, duree)
+    pos4_initial, ok = lire_position(packetHandler, portHandler, 4)
+    if not ok:
+        print("❌ Lecture impossible du servo 4 — mouvement annulé")
+        return None
+    if pos4_initial > 2700:
+        etat_repos = _est_en_repos(packetHandler, portHandler, calibration)
+        if etat_repos is None:
+            print("❌ Impossible de vérifier l'état de repos — mouvement annulé")
+            return None
+        if not etat_repos:
+            pos2_actuel, ok = lire_position(packetHandler, portHandler, 2)
+            if not ok:
+                print("❌ Lecture impossible du servo 2 — mouvement annulé")
+                return None
+            cible_2_degagement = min(pos2_actuel, 1027)  # 1027 ticks, ajustable
+            mouvement_fluide(packetHandler, portHandler, 2, pos2_actuel, cible_2_degagement, duree)
 
     # --- Phase 1 : servo 4 vers 20% (pince en l'air) ---
-    pos4, _, _ = packetHandler.read2ByteTxRx(portHandler, 4, 56)
+    pos4, ok = lire_position(packetHandler, portHandler, 4)
+    if not ok:
+        print("❌ Lecture impossible du servo 4 — mouvement annulé")
+        return None
     cible_4_securite = _cible_ticks(calibration, 4, 20)
     mouvement_fluide(packetHandler, portHandler, 4, pos4, cible_4_securite, duree)
 
     # --- Phase 2 : servos 1, 2, 3, 5, 6 en parallèle ---
-    mouvement_parallele(packetHandler, portHandler, calibration,
-                        cibles_pct, [1, 2, 3, 5, 6], duree)
+    if mouvement_parallele(packetHandler, portHandler, calibration,
+                           cibles_pct, [1, 2, 3, 5, 6], duree) is None:
+        return None
 
     # --- Phase 3 : servo 4 vers sa cible finale ---
-    pos4_now, _, _ = packetHandler.read2ByteTxRx(portHandler, 4, 56)
+    pos4_now, ok = lire_position(packetHandler, portHandler, 4)
+    if not ok:
+        print("❌ Lecture impossible du servo 4 — mouvement annulé")
+        return None
     cible_4_finale = _cible_ticks(calibration, 4, cibles_pct[4])
     mouvement_fluide(packetHandler, portHandler, 4, pos4_now, cible_4_finale, duree)
 
-    # Lire et retourner les positions finales
+    # Lire et retourner les positions finales (verifiees)
     positions = {}
     for i in range(1, 7):
-        pos, _, _ = packetHandler.read2ByteTxRx(portHandler, i, 56)
+        pos, ok = lire_position(packetHandler, portHandler, i)
+        if not ok:
+            print(f"❌ Lecture impossible du servo {i} — position finale incertaine")
+            return None
         positions[i] = pos
     return positions
 
@@ -204,22 +266,53 @@ def charger_calibration(robot_type):
             return json.load(f)
     return None
 
+def calibration_complete(calibration):
+    """Vrai uniquement si les 6 servos sont calibres avec une plage exploitable
+    (presents, valeurs numeriques, amplitude >= MIN_AMPLITUDE). Meme exigence que
+    les scripts 2/3. Sert de verrou : le controle est refuse sans calibration valide,
+    sinon les fleches clampent a 0-4095 et peuvent forcer contre les butees."""
+    if not calibration:
+        return False
+    for i in range(1, 7):
+        key = f"servo_{i}"
+        if key not in calibration:
+            return False
+        cal = calibration[key]
+        min_v = cal.get("min")
+        max_v = cal.get("max")
+        if not isinstance(min_v, (int, float)) or not isinstance(max_v, (int, float)):
+            return False
+        if max_v - min_v < MIN_AMPLITUDE:
+            return False
+        # center est utilise directement par get_servo_center (ESPACE, C) : on l'exige
+        center_v = cal.get("center")
+        if not isinstance(center_v, (int, float)):
+            return False
+        if not (min_v <= center_v <= max_v):
+            return False
+    return True
+
 # Fichier externe centralisant la position repos (partagé entre tous les scripts)
 REPOS_FILE = os.path.expanduser("~/lerobot/calibration/repos_position.json")
 
 def charger_repos_pct():
     """Charge la position repos (% par servo) depuis le fichier externe.
-    Retourne un dict {1: %, 2: %, ...}.
-    Fallback sur les valeurs par défaut si le fichier est absent ou invalide."""
+    Retourne (dict {1:%,...}, origine) ou origine vaut 'custom' ou 'default'.
+    Valide le contenu (6 servos, numeriques, [0,100]) ; sinon fallback par defaut
+    ANNONCE par l'appelant (jamais silencieux)."""
     defaut = {1: 50, 2: 10, 3: 88, 4: 76, 5: 50, 6: 11}
-    if os.path.exists(REPOS_FILE):
-        try:
-            with open(REPOS_FILE, 'r') as f:
-                data = json.load(f)
-                return {int(k): float(v) for k, v in data.items()}
-        except Exception:
-            return defaut
-    return defaut
+    if not os.path.exists(REPOS_FILE):
+        return defaut, "default"
+    try:
+        with open(REPOS_FILE, 'r') as f:
+            data = json.load(f)
+        repos = {int(k): float(v) for k, v in data.items()}
+        for i in range(1, 7):
+            if i not in repos or not (0.0 <= repos[i] <= 100.0):
+                return defaut, "default"
+        return repos, "custom"
+    except Exception:
+        return defaut, "default"
 
 def get_servo_center(servo_id, calibration):
     """Obtient la position centrale d'un servo"""
@@ -245,6 +338,8 @@ def position_initiale(packetHandler, portHandler, calibration):
     }
 
     positions = aller_a_position(packetHandler, portHandler, calibration, positions_pct)
+    if positions is None:
+        return None
     print("✅ Position initiale atteinte")
     return positions
 
@@ -252,9 +347,12 @@ def centrer_tous(packetHandler, portHandler, calibration, positions):
     """Centre tous les servos avec séquence sécurisée"""
     print("🎯 Centrage de tous les servos...")
 
-    # Lire positions actuelles
+    # Lire positions actuelles (verifiees)
     for i in range(1, 7):
-        pos, _, _ = packetHandler.read2ByteTxRx(portHandler, i, 56)
+        pos, ok = lire_position(packetHandler, portHandler, i)
+        if not ok:
+            print(f"❌ Lecture impossible du servo {i} — centrage annulé")
+            return None
         positions[i] = pos
 
     # Déterminer la séquence selon la position du servo 2
@@ -291,9 +389,11 @@ def position_repos(packetHandler, portHandler, calibration):
     """Position repos (séquence sûre en 3 phases via aller_a_position)"""
     print("😴 Position repos...")
 
-    # Position repos en pourcentages, lue depuis le fichier externe partagé
-    # (fallback sur valeurs par défaut si le fichier est absent)
-    repos_pct = charger_repos_pct()
+    # Position repos en pourcentages, lue depuis le fichier externe partagé.
+    # Fallback ANNONCE sur valeurs par défaut si le fichier est absent ou invalide.
+    repos_pct, origine = charger_repos_pct()
+    if origine == "default":
+        print("⚠️  repos_position.json absent ou invalide — position de repos PAR DÉFAUT utilisée.")
 
     positions = aller_a_position(packetHandler, portHandler, calibration, repos_pct)
     return positions
@@ -321,9 +421,6 @@ def afficher_positions(packetHandler, portHandler, calibration):
     print("TABLEAU DES POSITIONS")
     print("="*60)
 
-    servo_names = {1: "BASE", 2: "ÉPAULE", 3: "COUDE",
-                  4: "POIGNET-F", 5: "POIGNET-R", 6: "PINCE"}
-
     for i in range(1, 7):
         pos, _, _ = packetHandler.read2ByteTxRx(portHandler, i, 56)
         torque, _, _ = packetHandler.read1ByteTxRx(portHandler, i, 40)
@@ -338,11 +435,11 @@ def afficher_positions(packetHandler, portHandler, calibration):
             # Calculer pourcentage
             pct = ((pos - min_val) / (max_val - min_val)) * 100 if max_val > min_val else 50
 
-            print(f"Servo {i} ({servo_names[i]:10}): Pos={pos:4} "
+            print(f"Servo {i} ({SERVO_NAMES[i]:10}): Pos={pos:4} "
                   f"[Min:{min_val:4} Ctr:{center:4} Max:{max_val:4}] "
                   f"{pct:5.1f}% [{status}]")
         else:
-            print(f"Servo {i} ({servo_names[i]:10}): Pos={pos:4} [{status}]")
+            print(f"Servo {i} ({SERVO_NAMES[i]:10}): Pos={pos:4} [{status}]")
 
     print("="*60)
 
@@ -359,53 +456,72 @@ def main():
 ╚══════════════════════════════════════════════════════════╝
     """)
 
-    # Choix du robot
+    # Choix du robot (explicite : pas de defaut silencieux)
     print("\nContrôler [L]eader ou [F]ollower?")
-    choix = input("Choix: ").upper()
+    robot_type = None
+    while robot_type is None:
+        choix = input("Choix [L/F]: ").strip().upper()
+        if choix == 'L':
+            robot_type = "leader"
+        elif choix == 'F':
+            robot_type = "follower"
+        else:
+            print("❌ Choix invalide : tapez L ou F")
 
-    robot_type = "leader" if choix == 'L' else "follower"
-
-    # Détection ports
-    ports = detect_ports()
-    if not ports:
-        print("❌ Aucun port détecté!")
+    # Détection du port (unique, fail-closed : refus si plusieurs robots)
+    port = detect_port()
+    if not port:
+        print("❌ Connexion au robot impossible.")
+        print("   Vérifiez le branchement (un seul adaptateur à la fois).")
         return
 
-    # Sélection du port
-    if robot_type == "leader":
-        port = ports[0]
-    else:
-        port = ports[1] if len(ports) > 1 else ports[0]
+    # Calibration OBLIGATOIRE : sans elle, les fleches clampent a 0-4095 et
+    # peuvent forcer contre les butees mecaniques.
+    calibration = charger_calibration(robot_type)
+    if not calibration_complete(calibration):
+        print(f"❌ Calibration du {robot_type} absente, incomplète ou invalide (amplitude < {MIN_AMPLITUDE}).")
+        print("   Effectuez d'abord la Phase 3 (SEM_so101_2_calibrate.py).")
+        return
 
-    print(f"\n🔡 Connexion au {robot_type} sur {port}...")
-
-    # Connexion
+    print(f"\n🔌 Connexion au {robot_type} sur {port}...")
     portHandler = PortHandler(port)
     packetHandler = PacketHandler(1.0)
 
-    if not portHandler.openPort() or not portHandler.setBaudRate(1000000):
-        print(f"❌ Erreur connexion {port}")
+    if not portHandler.openPort():
+        print(f"❌ Impossible d'ouvrir le port {port}")
+        return
+    if not portHandler.setBaudRate(1000000):
+        print("❌ Impossible de configurer le baudrate")
+        portHandler.closePort()
         return
 
-    print("✅ Connecté!")
+    print("✅ Connecté !")
+    print("✅ Calibration chargée")
 
-    # Charger calibration
-    calibration = charger_calibration(robot_type)
-    if calibration:
-        print("✅ Calibration chargée")
-    else:
-        print("⚠️  Pas de calibration")
-        calibration = None
-
-    # Position initiale
-    positions = position_initiale(packetHandler, portHandler, calibration)
-
+    # Etat
     servo_actif = 1
     pas_normal = 50
     pas_precis = 10
     mode_precis = False
+    urgence = False         # True si arret d'urgence (X) : pas de retour repos
+    sortie_normale = False  # True uniquement sur sortie normale (Q) : retour repos
 
-    print("""
+    # Le port est ouvert : tout ce qui suit est sous try/finally (pas de fuite de port,
+    # meme sur Ctrl+C pendant la confirmation).
+    try:
+        # Confirmation avant le mouvement automatique de demarrage
+        print("\n⚠️  Le bras va rejoindre la position initiale.")
+        print("    Dégagez l'espace de travail.")
+        if input("    Entrée pour continuer, ou Q pour quitter : ").strip().upper() == 'Q':
+            print("Annulé.")
+            return  # -> finally : pas de repos (sortie_normale False), liberation, fermeture
+        # Position initiale (sequence verifiee) — un echec arrete le script proprement
+        positions = position_initiale(packetHandler, portHandler, calibration)
+        if positions is None:
+            print("❌ Échec de la mise en position initiale — arrêt.")
+            return
+
+        print("""
 ╔════════════════════════════════════════════════════════╗
 ║                    CONTRÔLES                           ║
 ╠════════════════════════════════════════════════════════╣
@@ -424,17 +540,11 @@ def main():
 
 """)
 
-    servo_names = {1: "BASE", 2: "ÉPAULE", 3: "COUDE",
-                  4: "POIGNET-F", 5: "POIGNET-R", 6: "PINCE"}
+        # Affichage initial des 3 lignes d'état
+        print(f"Servo actif: {servo_actif} ({SERVO_NAMES[servo_actif]})")
+        print(f"Mode: {'PRÉCIS (pas=10)' if mode_precis else 'NORMAL (pas=50)'}")
+        print(f"Position: {positions[servo_actif]}")
 
-    # Affichage initial des 3 lignes d'état
-    print(f"Servo actif: {servo_actif} ({servo_names[servo_actif]})")
-    print(f"Mode: {'PRÉCIS (pas=10)' if mode_precis else 'NORMAL (pas=50)'}")
-    print(f"Position: {positions[servo_actif]}")
-
-    urgence = False  # Devient True si arrêt d'urgence (touche X) : pas de retour repos
-
-    try:
         while True:
             key = getch()
 
@@ -450,7 +560,7 @@ def main():
                 packetHandler.write2ByteTxRx(portHandler, servo_actif, 42, nouvelle_pos)
                 positions[servo_actif] = nouvelle_pos
                 clear_lines(3)
-                print(f"Servo actif: {servo_actif} ({servo_names[servo_actif]})")
+                print(f"Servo actif: {servo_actif} ({SERVO_NAMES[servo_actif]})")
                 print(f"Mode: {'PRÉCIS (pas=10)' if mode_precis else 'NORMAL (pas=50)'}")
                 print(f"Position: {positions[servo_actif]} ↑")
 
@@ -465,21 +575,21 @@ def main():
                 packetHandler.write2ByteTxRx(portHandler, servo_actif, 42, nouvelle_pos)
                 positions[servo_actif] = nouvelle_pos
                 clear_lines(3)
-                print(f"Servo actif: {servo_actif} ({servo_names[servo_actif]})")
+                print(f"Servo actif: {servo_actif} ({SERVO_NAMES[servo_actif]})")
                 print(f"Mode: {'PRÉCIS (pas=10)' if mode_precis else 'NORMAL (pas=50)'}")
                 print(f"Position: {positions[servo_actif]} ↓")
 
             elif key == '[D':  # Flèche GAUCHE
                 servo_actif = max(1, servo_actif - 1)
                 clear_lines(3)
-                print(f"Servo actif: {servo_actif} ({servo_names[servo_actif]}) ←")
+                print(f"Servo actif: {servo_actif} ({SERVO_NAMES[servo_actif]}) ←")
                 print(f"Mode: {'PRÉCIS (pas=10)' if mode_precis else 'NORMAL (pas=50)'}")
                 print(f"Position: {positions[servo_actif]}")
 
             elif key == '[C':  # Flèche DROITE
                 servo_actif = min(6, servo_actif + 1)
                 clear_lines(3)
-                print(f"Servo actif: {servo_actif} ({servo_names[servo_actif]}) →")
+                print(f"Servo actif: {servo_actif} ({SERVO_NAMES[servo_actif]}) →")
                 print(f"Mode: {'PRÉCIS (pas=10)' if mode_precis else 'NORMAL (pas=50)'}")
                 print(f"Position: {positions[servo_actif]}")
 
@@ -490,28 +600,47 @@ def main():
                                                          servo_actif, positions[servo_actif],
                                                          centre, 1.5)
                 clear_lines(3)
-                print(f"Servo actif: {servo_actif} ({servo_names[servo_actif]}) [CENTRÉ]")
+                print(f"Servo actif: {servo_actif} ({SERVO_NAMES[servo_actif]}) [CENTRÉ]")
                 print(f"Mode: {'PRÉCIS (pas=10)' if mode_precis else 'NORMAL (pas=50)'}")
                 print(f"Position: {positions[servo_actif]}")
 
             elif key.lower() == 'i':  # Position initiale
-                positions = position_initiale(packetHandler, portHandler, calibration)
+                result = position_initiale(packetHandler, portHandler, calibration)
+                if result is None:
+                    # Mouvement partiel possible : resynchroniser sur le bras reel
+                    positions_reelles = lire_positions_toutes(packetHandler, portHandler)
+                    if positions_reelles is None:
+                        print("\n❌ État du bras incertain — arrêt du contrôle.")
+                        break
+                    positions = positions_reelles
+                else:
+                    positions = result
                 clear_lines(3)
-                print("Position INITIALE activée!")
+                print("Position INITIALE activée!" if result is not None
+                      else "❌ INITIALE interrompue — positions réelles relues")
                 print(f"Mode: {'PRÉCIS (pas=10)' if mode_precis else 'NORMAL (pas=50)'}")
                 print(f"Position servo {servo_actif}: {positions[servo_actif]}")
 
             elif key.lower() == 'c':  # Centrer TOUS
-                positions = centrer_tous(packetHandler, portHandler, calibration, positions)
+                result = centrer_tous(packetHandler, portHandler, calibration, dict(positions))
+                if result is None:
+                    positions_reelles = lire_positions_toutes(packetHandler, portHandler)
+                    if positions_reelles is None:
+                        print("\n❌ État du bras incertain — arrêt du contrôle.")
+                        break
+                    positions = positions_reelles
+                else:
+                    positions = result
                 clear_lines(3)
-                print("Tous les servos centrés!")
+                print("Tous les servos centrés!" if result is not None
+                      else "❌ Centrage interrompu — positions réelles relues")
                 print(f"Mode: {'PRÉCIS (pas=10)' if mode_precis else 'NORMAL (pas=50)'}")
                 print(f"Position servo {servo_actif}: {positions[servo_actif]}")
 
             elif key.lower() == 'p':  # Mode précis
                 mode_precis = not mode_precis
                 clear_lines(3)
-                print(f"Servo actif: {servo_actif} ({servo_names[servo_actif]})")
+                print(f"Servo actif: {servo_actif} ({SERVO_NAMES[servo_actif]})")
                 print(f"Mode: {'PRÉCIS (pas=10)' if mode_precis else 'NORMAL (pas=50)'} [CHANGÉ]")
                 print(f"Position: {positions[servo_actif]}")
 
@@ -539,28 +668,49 @@ def main():
 ╚════════════════════════════════════════════════════════╝
 
 """)
-                print(f"Servo actif: {servo_actif} ({servo_names[servo_actif]})")
+                print(f"Servo actif: {servo_actif} ({SERVO_NAMES[servo_actif]})")
                 print(f"Mode: {'PRÉCIS (pas=10)' if mode_precis else 'NORMAL (pas=50)'}")
                 print(f"Position: {positions[servo_actif]}")
 
             elif key.lower() == 'a':  # Position attraper
-                positions = position_attraper(packetHandler, portHandler, calibration)
+                result = position_attraper(packetHandler, portHandler, calibration)
+                if result is None:
+                    positions_reelles = lire_positions_toutes(packetHandler, portHandler)
+                    if positions_reelles is None:
+                        print("\n❌ État du bras incertain — arrêt du contrôle.")
+                        break
+                    positions = positions_reelles
+                else:
+                    positions = result
                 clear_lines(3)
-                print("Position ATTRAPER activée!")
+                print("Position ATTRAPER activée!" if result is not None
+                      else "❌ ATTRAPER interrompue — positions réelles relues")
                 print(f"Mode: {'PRÉCIS (pas=10)' if mode_precis else 'NORMAL (pas=50)'}")
                 print(f"Position servo {servo_actif}: {positions[servo_actif]}")
 
             elif key.lower() == 'r':  # Position repos
-                positions = position_repos(packetHandler, portHandler, calibration)
+                result = position_repos(packetHandler, portHandler, calibration)
+                if result is None:
+                    positions_reelles = lire_positions_toutes(packetHandler, portHandler)
+                    if positions_reelles is None:
+                        print("\n❌ État du bras incertain — arrêt du contrôle.")
+                        break
+                    positions = positions_reelles
+                else:
+                    positions = result
                 clear_lines(3)
-                print("Position REPOS activée!")
+                print("Position REPOS activée!" if result is not None
+                      else "❌ REPOS interrompue — positions réelles relues")
                 print(f"Mode: {'PRÉCIS (pas=10)' if mode_precis else 'NORMAL (pas=50)'}")
                 print(f"Position servo {servo_actif}: {positions[servo_actif]}")
 
             elif key.lower() == 'x':  # ARRÊT D'URGENCE
                 print("\n⚠️  ARRÊT D'URGENCE!")
                 for i in range(1, 7):
-                    packetHandler.write1ByteTxRx(portHandler, i, 40, 0)
+                    try:
+                        packetHandler.write1ByteTxRx(portHandler, i, 40, 0)
+                    except Exception:
+                        pass
                 print("🛑 Tous les servos libérés immédiatement.")
                 print("⚠️  Tenez le robot, il est libre !")
                 urgence = True
@@ -568,29 +718,42 @@ def main():
 
             elif key.lower() == 'q':  # Quitter
                 print("\n👋 Arrêt en cours...")
+                sortie_normale = True
                 break
 
     except KeyboardInterrupt:
         print("\n⚠️  Interruption clavier")
+    except Exception as e:
+        print(f"\n❌ Erreur : {e}")
+    finally:
+        # Nettoyage GARANTI. Trois cas distincts :
+        #   Q (sortie normale) : retour repos -> liberation -> fermeture
+        #   X (urgence)        : pas de retour repos (deja libere)
+        #   Exception/Ctrl+C   : pas de retour repos (un mouvement de plus serait risque)
+        if sortie_normale and not urgence:
+            print("\n🏁 Position repos avant libération...")
+            try:
+                position_repos(packetHandler, portHandler, calibration)
+                print("⚠️  Tenez le robot avant libération")
+                time.sleep(2)
+            except Exception:
+                pass
 
-    if urgence:
-        # Arrêt d'urgence : servos déjà libérés, AUCUN retour repos
-        portHandler.closePort()
-        print("\n✅ Arrêt d'urgence terminé (aucun retour repos).")
-    else:
-        # Quitter normalement : retour repos puis libération
-        print("\n🏁 Position repos avant libération...")
-        position_repos(packetHandler, portHandler, calibration)
-
-        print("⚠️  Tenez le robot avant libération")
-        time.sleep(2)
-
-        # Libération
+        # Liberation best-effort puis fermeture du port (toujours atteinte)
         for i in range(1, 7):
-            packetHandler.write1ByteTxRx(portHandler, i, 40, 0)
+            try:
+                packetHandler.write1ByteTxRx(portHandler, i, 40, 0)
+            except Exception:
+                pass
+        try:
+            portHandler.closePort()
+        except Exception:
+            pass
 
-        portHandler.closePort()
-        print("\n✅ Terminé!")
+        if urgence:
+            print("\n✅ Arrêt d'urgence terminé (aucun retour repos).")
+        else:
+            print("\n✅ Terminé !")
 
 if __name__ == "__main__":
     main()
