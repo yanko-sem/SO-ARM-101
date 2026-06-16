@@ -6,7 +6,7 @@ Service Écoles-Médias (SEM)
 
 ### 📋 Prérequis
 
-- Phase 1 complétée (LeRobot installé)
+- Phase 1 complétée (LeRobot et `dynamixel-sdk` installés)
 - Phase 2 complétée (Servos configurés avec IDs 1-6)
 - Bras monté mécaniquement
 - Scripts SEM installés depuis GitHub
@@ -20,7 +20,7 @@ Service Écoles-Médias (SEM)
 La calibration permet de :
 
 - Définir les limites MIN et MAX de chaque servo
-- Calculer automatiquement le centre (position de repos)
+- Calculer automatiquement le centre mécanique (médiane MIN/MAX, distinct de la position de repos définie au script 3)
 - Protéger le matériel contre les mouvements hors limites
 - Optimiser l'amplitude de mouvement disponible
 
@@ -49,6 +49,8 @@ ls SEM_so101_2_calibrate.py
 
 > **⚠️ Attention :** Avant de calibrer, assurez-vous que le bras peut bouger librement sans obstruction. Éloignez tout objet qui pourrait gêner le mouvement.
 
+> **⚠️ Un seul adaptateur à la fois :** ne branchez que l'adaptateur USB du bras en cours de calibration. Si les deux adaptateurs (Leader et Follower) sont connectés en même temps, le script **refuse de démarrer** (il détecte plusieurs robots) pour éviter de calibrer le mauvais bras. Calibrez donc un bras, débranchez-le, puis l'autre. Le tableau ci-dessus liste les prérequis **par bras**, à vérifier l'un après l'autre.
+
 
 ### 🚀 Étape 2 : Lancement du script de calibration
 
@@ -72,10 +74,10 @@ python SEM_so101_2_calibrate.py
   [L] LEADER
   [F] FOLLOWER
 
-Votre choix : _
+Votre choix [L/F] : _
 ```
 
-Tapez `L` pour le Leader ou `F` pour le Follower (une entrée vide équivaut à Leader).
+Tapez `L` pour le Leader ou `F` pour le Follower. Le script attend un choix **explicite** : une entrée vide ou invalide est refusée et redemandée (il n'y a plus de bascule silencieuse vers Leader).
 
 **Menu principal**
 
@@ -141,7 +143,9 @@ Position actuelle: 1800
 💾 Calibration du servo 3 sauvegardée!
 ```
 
-> **✅ Important :** La sauvegarde est automatique après chaque servo. Vous ne perdrez jamais votre travail !
+> **✅ Important :** La sauvegarde est automatique après chaque servo **validé**. Si une calibration est annulée ou échoue (lecture invalide, amplitude trop faible), elle n'est **pas** sauvegardée, afin de ne pas corrompre le fichier de calibration.
+
+> **⚠️ Recentrage non confirmé :** si le script affiche « recentrage non confirmé » ou « couple non réactivé, recentrage ignoré », la calibration (MIN/MAX) reste **valide et sauvegardée** — mais le servo n'a pas rejoint son centre. Replacez alors le bras à la main dans une **position sûre** avant de continuer.
 
 
 ### 📊 Étape 4 : Calibration complète (option T)
@@ -165,14 +169,14 @@ L'option T permet de calibrer les 6 servos à la suite :
 ================================================================================
 TABLEAU RÉCAPITULATIF DE CALIBRATION
 ================================================================================
-ID   Nom             MIN      CENTRE   MAX      Amplitude
+ID   Nom               MIN      CENTRE   MAX      Amplitude
 --------------------------------------------------------------------------------
-1    BASE            1024     2048     3072     2048
-2    ÉPAULE          768      2304     3840     3072
-3    COUDE           512      2048     3584     3072
-4    POIGNET-F       1280     2176     3072     1792
-5    POIGNET-R       1024     2048     3072     2048
-6    PINCE/POIGNÉE   1536     2560     3584     2048
+1    BASE              1024     2048     3072     2048
+2    ÉPAULE            768      2304     3840     3072
+3    COUDE             512      2048     3584     3072
+4    POIGNET-FLEXION   1280     2176     3072     1792
+5    POIGNET-ROTATION  1024     2048     3072     2048
+6    PINCE/POIGNÉE     1536     2560     3584     2048
 ================================================================================
 ```
 
@@ -201,9 +205,9 @@ Si un servo nécessite un ajustement :
 
 > **💡 Centrage doux :** Le script utilise une courbe sinusoïdale pour recentrer les servos en douceur. Cela évite les mouvements brusques qui pourraient stresser les mécaniques.
 
-**Sauvegarde finale**
+**Quitter proprement**
 
-Utilisez Q pour quitter et confirmer la sauvegarde :
+Utilisez `Q` pour quitter le script. Les calibrations déjà validées ont été sauvegardées automatiquement après chaque servo ; en quittant, le script libère les servos et ferme le port :
 
 ```
 Votre choix: Q
@@ -221,7 +225,7 @@ Votre choix: Q
 
 Le script `SEM_so101_3_monitor.py` sert à cela. Il affiche aussi en temps réel les positions des servos, utile pour diagnostiquer le montage.
 
-> **⚠️ Prérequis :** la calibration du robot doit être faite (Étapes 1 à 5), car le script s'en sert pour convertir les positions en pourcentages.
+> **⚠️ Prérequis :** la calibration du robot doit être **complète et valide** (les 6 servos calibrés, amplitude ≥ 500), car le script s'en sert pour convertir les positions en pourcentages. Si la calibration est absente, incomplète ou invalide, les modes `C` et `M` **refusent** d'enregistrer un repos.
 
 **Lancement**
 
@@ -238,10 +242,10 @@ Le script détecte le port, puis demande le robot :
   [L] LEADER
   [F] FOLLOWER
 
-Votre choix : _
+Votre choix [L/F] : _
 ```
 
-Tapez `L` ou `F`. Les servos sont alors **libérés** (vous pouvez bouger le bras à la main) et le monitoring démarre :
+Tapez `L` ou `F` (choix explicite : une entrée vide ou invalide est redemandée). Les servos sont alors **libérés** (vous pouvez bouger le bras à la main) et le monitoring démarre :
 
 ```
 ╔═══════════╦═══════╦═══════╦═══════╦═══════╦═══════╦══════════════════════╗
@@ -259,7 +263,9 @@ Sous le tableau, deux touches permettent de créer ou modifier le repos :
 - **`C`** — **capture** la position physique actuelle du bras. Placez le bras à la main dans la pose de repos souhaitée, pressez `C`, vérifiez le récapitulatif (ticks, %, contrôle des limites), puis confirmez par `O`.
 - **`M`** — **saisie manuelle** des 6 valeurs en ticks (le script vérifie que chaque valeur est dans les limites de calibration).
 
-Dans les deux cas, un récapitulatif s'affiche avant la confirmation, puis la position est enregistrée dans `repos_position.json`.
+Dans les deux cas, un récapitulatif s'affiche avant la confirmation, puis la position est enregistrée dans `repos_position.json` (écriture atomique).
+
+> **🔒 Sécurités à l'enregistrement :** une position **hors des limites** de calibration est refusée (repositionnez le bras et recommencez) ; et si vous n'êtes **pas sur le FOLLOWER**, le script demande de taper `OUI` en toutes lettres pour confirmer. En mode `C`, si une lecture de servo échoue, la capture est annulée (aucune valeur erronée n'est enregistrée).
 
 > **💡 Recommandation :** capturez la position de repos depuis le **FOLLOWER** — c'est lui qui sert de référence au déploiement. Le script le rappelle si vous monitorez le Leader.
 
@@ -276,16 +282,12 @@ Pressez `Ctrl+C` : le script libère tous les servos et ferme proprement le port
 | :--- | :--- | :--- |
 | MIN | Position minimale sûre | Limite basse du mouvement |
 | MAX | Position maximale sûre | Limite haute du mouvement |
-| CENTRE | Position médiane calculée | Position de repos/départ |
+| CENTRE | Position médiane calculée entre MIN et MAX | Point de recentrage mécanique, distinct de la position de repos (définie au script 3) |
 | Amplitude | MAX - MIN | Plage totale de mouvement |
 
-**Différences Leader vs Follower**
+**Différences d'amplitude (Leader vs Follower)**
 
-**Leader :** Les servos ont des ratios de réduction différents, ce qui peut donner des amplitudes variées :
-- Servo 3 (Coude) : Amplitude souvent plus élevée (ratio 1:191)
-- Servos 4-6 : Amplitudes plus faibles (ratio 1:147)
-
-**Follower :** Tous les servos sont identiques (ratio 1:345), les amplitudes sont généralement plus uniformes.
+Les différences d'amplitude observées (en ticks) viennent surtout du **montage mécanique, des butées physiques et de la plage sûre choisie** pendant la calibration — l'encodeur lit 0-4096 sur la course de sortie de chaque joint, indépendamment du ratio de réduction. Les ratios des servos (Leader : servos 1 et 3 en 1:191, servo 2 en 1:345, servos 4-6 en 1:147 ; Follower : tous en 1:345) comptent pour le choix et le montage des servos, mais **ne doivent pas servir d'explication directe** aux valeurs MIN/MAX/amplitude.
 
 **Fichiers de calibration**
 
@@ -302,9 +304,10 @@ Les calibrations sont stockées dans :
 | Problème | Cause possible | Solution |
 | :--- | :--- | :--- |
 | Port USB non détecté | Adaptateur débranché ou permissions | Vérifier le groupe `dialout` (voir Phase 1, Étape 6) |
+| Plusieurs robots détectés (script refuse) | Leader ET Follower branchés en même temps | Ne garder branché que l'adaptateur du bras à calibrer |
 | Servo ne bouge pas manuellement | Couple moteur actif | Normal au début, le script libère les servos |
-| Amplitude très faible (< 500) | Butées mécaniques trop proches | Vérifier le montage mécanique |
-| Amplitude très élevée (> 4000) | Normal pour certains servos | Particulièrement le servo 3 du Leader |
+| Amplitude trop faible (< 500) | MIN/MAX trop proches (servo peu/pas bougé, butées trop proches) | Le script **refuse** la sauvegarde ; recommencez avec des limites MIN/MAX bien distinctes |
+| Amplitude très élevée (> 3800) | Plage presque complète de l'encodeur, ou limites trop larges | Vérifier que MIN/MAX ne forcent pas contre les butées mécaniques |
 | Le servo force après calibration | Limites mal définies | Recalibrer ce servo spécifiquement |
 | Calibration perdue | Fichier supprimé | Refaire la calibration (option T) |
 
@@ -315,7 +318,7 @@ Les calibrations sont stockées dans :
 2. **Testez les limites :** Utilisez le script de contrôle (Phase 4) pour vérifier que les limites sont bien respectées
 3. **Soyez doux :** Ne forcez jamais les servos contre les butées
 4. **Amplitude normale :** Entre 1500 et 3500 pour la plupart des servos
-5. **Sauvegarde automatique :** Pas besoin de sauvegarder manuellement, c'est fait après chaque servo
+5. **Sauvegarde automatique :** Pas besoin de sauvegarder manuellement, c'est fait après chaque servo validé
 
 
 ### 🚀 Commandes de référence
@@ -331,7 +334,7 @@ python SEM_so101_2_calibrate.py
 - `T` — Calibrer tous les servos
 - `V` — Voir la calibration actuelle
 - `1-6` — Calibrer un servo spécifique
-- `Q` — Quitter et sauvegarder
+- `Q` — Quitter (libère les servos et ferme le port)
 
 
 ### 📝 Notes finales
@@ -343,4 +346,4 @@ python SEM_so101_2_calibrate.py
 - Les amplitudes sont cohérentes (ni trop faibles, ni excessives)
 - Le centrage automatique fonctionne pour tous les servos
 
-> **🎯 Objectif atteint :** Votre robot est maintenant calibré et prêt pour la téléopération ! Les scripts de contrôle et d'entraînement utiliseront automatiquement ces valeurs de calibration pour protéger votre matériel.
+> **🎯 Objectif atteint :** Votre robot est maintenant calibré, sa position de repos peut être définie, et il est prêt pour les tests de contrôle (Phase 4) puis la téléopération. Les scripts de contrôle et d'entraînement utiliseront automatiquement ces valeurs de calibration pour protéger votre matériel.
