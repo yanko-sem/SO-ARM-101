@@ -27,10 +27,40 @@ except ImportError:
         sys.exit(1)
 
 def detect_port():
-    """Détection automatique du port USB"""
+    """Détection du port du robot (fail-closed).
+
+    On TESTE chaque port candidat en interrogeant le servo 1 : seul un vrai robot
+    répond. On collecte TOUS les ports qui répondent. S'il y en a exactement un, on
+    le retourne. S'il y en a plusieurs (Leader ET Follower branchés, par ex.), on
+    REFUSE et on demande de n'en garder qu'un — sinon on risquerait de piloter le
+    mauvais bras avant même le choix L/F.
+    """
+    BAUDRATE = 1000000
+    ports_robot = []
     for port in ['/dev/ttyACM0', '/dev/ttyACM1', '/dev/ttyUSB0', '/dev/ttyUSB1']:
-        if os.path.exists(port):
-            return port
+        if not os.path.exists(port):
+            continue
+        ph = PortHandler(port)
+        pk = PacketHandler(1.0)
+        try:
+            if ph.openPort() and ph.setBaudRate(BAUDRATE):
+                # Interroger le servo 1 : seul un vrai robot répond
+                _, result, _ = pk.read2ByteTxRx(ph, 1, 56)
+                if result == COMM_SUCCESS:
+                    ports_robot.append(port)
+        finally:
+            try:
+                ph.closePort()
+            except Exception:
+                pass
+
+    if len(ports_robot) == 1:
+        return ports_robot[0]
+    if len(ports_robot) > 1:
+        print("❌ Plusieurs robots/adaptateurs détectés :")
+        for port in ports_robot:
+            print(f"  - {port}")
+        print("   Débranchez tous les adaptateurs sauf celui du bras à utiliser.")
     return None
 
 # Noms des servos (source unique, partagee par la calibration et le tableau)
@@ -109,12 +139,14 @@ def calibrer_servo(packetHandler, portHandler, servo_id, servo_name):
     print(f"{'='*60}")
 
     # Activer le servo (couple)
-    ecrire_1byte(packetHandler, portHandler, servo_id, 40, 1, "activation couple")
+    activation_ok = ecrire_1byte(packetHandler, portHandler, servo_id, 40, 1, "activation couple")
 
     # Lire position actuelle (verifiee)
     pos_actuelle, ok = lire_position(packetHandler, portHandler, servo_id)
     if not ok:
         print("  ❌ Lecture de la position impossible — calibration annulée")
+        if activation_ok:
+            ecrire_1byte(packetHandler, portHandler, servo_id, 40, 0, "libération couple")
         return None
     print(f"Position actuelle: {pos_actuelle}")
 
@@ -251,9 +283,9 @@ IMPORTANT: La calibration est SAUVEGARDÉE après chaque servo!
     # Détection du port
     PORT = detect_port()
     if not PORT:
-        print("❌ Aucun adaptateur USB détecté!")
+        print("❌ Connexion au robot impossible.")
         print("\nVérifiez :")
-        print("  1. Câble USB branché")
+        print("  1. Câble USB branché (un seul adaptateur à la fois)")
         print("  2. Alimentation connectée (5V ou 12V selon le bras)")
         print("  3. Interrupteur ON")
         return
