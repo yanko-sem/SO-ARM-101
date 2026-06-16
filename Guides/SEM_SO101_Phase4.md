@@ -6,9 +6,9 @@ Service Écoles-Médias (SEM)
 
 ### 📋 Prérequis
 
-- Phase 1 complétée (LeRobot installé)
+- Phase 1 complétée (LeRobot et `dynamixel-sdk` installés)
 - Phase 2 complétée (Servos configurés avec IDs 1-6)
-- Phase 3 complétée (Calibration effectuée)
+- Phase 3 complétée (calibration **complète et valide** — obligatoire au démarrage)
 - Scripts SEM installés depuis GitHub
 - Environnement lerobot activé
 
@@ -45,9 +45,9 @@ ls SEM_so101_4_control.py
 | Adaptateur USB | Branché sur le port USB du robot à tester |
 | Alimentation | Active (LED allumée) |
 | Espace de travail | Dégagé pour permettre les mouvements |
-| Calibration | Fichier de calibration présent (Phase 3 complétée) |
+| Calibration | **Complète et valide** (Phase 3) — le script refuse de démarrer sinon |
 
-> **⚠️ Important :** Un seul robot à la fois ! Branchez uniquement l'adaptateur USB du robot que vous voulez tester.
+> **⚠️ Un seul adaptateur à la fois :** branchez uniquement l'adaptateur USB du robot à tester. Si le Leader **et** le Follower sont connectés en même temps, le script **refuse de démarrer** (il détecte plusieurs robots) pour éviter de piloter le mauvais bras (mode *fail-closed*).
 
 
 ### 🚀 Étape 2 : Lancement du contrôle
@@ -66,10 +66,20 @@ Le script vous demande d'abord quel robot tester :
 ╚══════════════════════════════════════════════════════════╝
 
 Contrôler [L]eader ou [F]ollower?
-Choix: _
+Choix [L/F]: _
 ```
 
-Tapez `L` ou `F` puis Entrée. Le script se connecte, charge la calibration et place le bras en position INITIALE sécurisée.
+Tapez `L` ou `F` puis Entrée. Le choix est **explicite** : une entrée vide ou invalide est refusée et redemandée. Le script **refuse de démarrer** si la calibration est absente, incomplète ou invalide, ou si plusieurs robots sont détectés.
+
+Avant tout mouvement, le script **avertit et demande confirmation** :
+
+```
+⚠️  Le bras va rejoindre la position initiale.
+    Dégagez l'espace de travail.
+    Entrée pour continuer, ou Q pour quitter : _
+```
+
+Appuyez sur **Entrée** pour lancer la mise en position INITIALE sécurisée, ou sur **Q** pour quitter sans bouger le bras.
 
 **Menu des contrôles**
 
@@ -91,7 +101,7 @@ Tapez `L` ou `F` puis Entrée. Le script se connecte, charge la calibration et p
 ╚════════════════════════════════════════════════════════╝
 ```
 
-> **Note :** Au démarrage, tous les servos sont automatiquement placés en position INITIALE.
+> **⚠️ Attention :** au démarrage, **après votre confirmation**, le bras **se met en mouvement** pour rejoindre la position INITIALE. Dégagez l'espace de travail avant de confirmer.
 
 
 ### 🎮 Étape 3 : Commandes de contrôle
@@ -111,13 +121,18 @@ Tapez `L` ou `F` puis Entrée. Le script se connecte, charge la calibration et p
 | :--- | :--- |
 | ESPACE | Centre le servo actif à sa position de calibration |
 | I | Position INITIALE (séquence sécurisée) |
-| C | Centre TOUS les servos simultanément |
+| C | Centre TOUS les servos (séquence sécurisée, **pas** simultanée) |
 | P | Active/désactive le mode précis (pas de 10 au lieu de 50) |
 | S | Affiche le tableau détaillé des positions et limites |
 | A | Position ATTRAPER (prêt pour la manipulation) |
 | R | Position REPOS (bras replié pour le rangement) |
-| Q | Quitte proprement et remet le bras en position repos |
-| X | ARRÊT D'URGENCE (libère tous les moteurs immédiatement) |
+| Q | Quitte proprement : retour en position REPOS **puis** libération des moteurs |
+| X | ARRÊT D'URGENCE : libère immédiatement les moteurs, **sans** retour repos (termine la session) |
+
+> **ℹ️ Quitter proprement (`Q`) vs interruption (`Ctrl+C`) vs urgence (`X`) :**
+> - `Q` — sortie normale recommandée : retour en position REPOS, **puis** libération des moteurs, **puis** fermeture du port.
+> - `Ctrl+C` — interruption : le script ferme proprement (libération + port), mais **ne tente pas** de retour REPOS.
+> - `X` — arrêt d'urgence : libération immédiate **sans** retour repos. La session **se termine** ; pour reprendre, replacez le bras dans une position sûre et relancez le script.
 
 **Mode précis**
 
@@ -140,7 +155,9 @@ Position: 2048
 | ATTRAPER | Bras prêt pour saisir un objet | Tests de manipulation |
 | REPOS | Bras replié compact | Rangement, fin de session |
 
-> **Note :** La position REPOS (touche `R`, ainsi que le retour automatique lors de `Q`) utilise la position de repos définie en Phase 3 (`repos_position.json`). Si ce fichier n'existe pas encore, le script applique une position par défaut.
+> **Note :** La position REPOS (touche `R`, ainsi que le retour automatique lors de `Q`) utilise la position de repos définie en Phase 3 (`repos_position.json`). Si ce fichier est **absent ou invalide**, le script **l'annonce** et applique une position de repos **par défaut**.
+
+> **ℹ️ Interruption d'une séquence :** si une lecture de servo échoue pendant une position prédéfinie (`I`, `A`, `R`, `C`), le script interrompt la séquence et relit les positions réelles du bras. Si la relecture réussit, le contrôle continue avec l'état réel du robot ; si l'état reste incertain, le script s'arrête proprement, libère les servos et ferme le port.
 
 
 ### 🧪 Étape 4 : Tests systématiques
@@ -158,7 +175,7 @@ Position: 2048
 
 1. Bougez plusieurs servos de leur position centrale
 2. Appuyez sur C
-3. Vérifiez que tous les servos reviennent au centre simultanément
+3. Vérifiez que tous les servos reviennent au centre (séquence sécurisée, mouvements successifs)
 
 **Test 3 : Mode précis**
 
@@ -184,7 +201,7 @@ Appuyez sur S pour voir le tableau détaillé des positions et limites de tous l
 2. Vérifiez que tous les servos se libèrent immédiatement
 3. Le bras doit devenir "mou" (plus de résistance moteur)
 
-> **⚠️ Note :** L'arrêt d'urgence libère les moteurs sans repositionnement. Tenez le bras pour éviter qu'il ne tombe.
+> **⚠️ Note :** L'arrêt d'urgence libère les moteurs sans repositionnement. Tenez le bras pour éviter qu'il ne tombe. Après `X`, le contrôle est **terminé** : pour reprendre les tests, replacez le bras dans une position sûre et relancez le script.
 
 
 ### 🤖 Étape 5 : Tests de coordination
@@ -223,7 +240,8 @@ Pour mettre le robot en position de repos sécurisée :
 | Problème | Cause possible | Solution |
 | :--- | :--- | :--- |
 | Script ne démarre pas | Port USB non détecté | Vérifier branchement et groupe `dialout` (voir Phase 1, Étape 6) |
-| "Pas de calibration" | Phase 3 non complétée | Lancer d'abord `SEM_so101_2_calibrate.py` |
+| Plusieurs robots détectés (le script refuse) | Leader ET Follower branchés en même temps | Ne garder branché que l'adaptateur du bras à tester |
+| Calibration absente, incomplète ou invalide | Phase 3 non faite ou fichier incomplet | Lancer `SEM_so101_2_calibrate.py` (Phase 3) |
 | Servo ne bouge pas | Alimentation coupée | Vérifier alimentation (LED) |
 | Mouvement saccadé | Pas trop grand | Activer mode précis avec P |
 | Servo force en butée | Calibration incorrecte | Refaire calibration Phase 3 |
@@ -234,7 +252,7 @@ Pour mettre le robot en position de repos sécurisée :
 ### 💡 Conseils d'utilisation
 
 1. **Commencez lentement :** Testez d'abord en mode normal avant le mode précis
-2. **Surveillez les limites :** Le script empêche de dépasser les valeurs calibrées
+2. **Surveillez les limites :** Le script refuse de démarrer sans calibration valide, et empêche de dépasser les valeurs calibrées
 3. **Libérez après usage :** Toujours quitter avec Q pour libérer les servos proprement
 4. **Un robot à la fois :** Ne branchez qu'un seul adaptateur USB
 5. **Position de sécurité :** Utilisez R (repos) ou X (urgence) en cas de doute
@@ -266,7 +284,7 @@ Position: 2048
 | 3 | COUDE | Plier l'avant-bras | Plié ↔ Tendu |
 | 4 | POIGNET-F | Flexion du poignet | Haut ↔ Bas |
 | 5 | POIGNET-R | Rotation du poignet | Gauche ↔ Droite |
-| 6 | PINCE/POIGNÉE | Préhension | Ouvert ↔ Fermé |
+| 6 | PINCE | Pince / poignée (préhension) | Ouvert ↔ Fermé |
 
 
 ### 🚀 Commandes de référence rapide
