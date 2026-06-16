@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
 """
-Script SEM_so101_config_servo.py
+Script SEM_so101_1_configure.py
 Service Ecoles Médias - Configuration des servos SO-ARM 101
 
-Ce script permet de configurer les servos un par un avec les bons IDs et ratios.
-Compatible avec Leader (différents ratios) et Follower (tous identiques).
+Ce script attribue à chaque servo son ID, teste son mouvement, puis le place
+au centre (2048) et le bloque pour le montage.
+
+Il rappelle les ratios mécaniques du Leader et du Follower (aide au montage),
+mais ne les modifie pas : le ratio dépend du modèle physique du servo.
 """
 
 import sys
 import os
 import time
-import subprocess
 
 # Ajout du chemin LeRobot pour les imports
 sys.path.append(os.path.expanduser('~/lerobot'))
 
-# SEULE MODIFICATION : Import déplacé ici au lieu de ligne 59
 from dynamixel_sdk import *
 
 def detect_port():
@@ -27,7 +28,7 @@ def detect_port():
     return None
 
 def configure_servo(servo_id):
-    """Configure un servo avec le script officiel LeRobot"""
+    """Configure directement un servo Feetech STS3215 via dynamixel_sdk."""
     port = detect_port()
     if not port:
         print("❌ Aucun port USB détecté!")
@@ -38,8 +39,9 @@ def configure_servo(servo_id):
     print(f"Port: {port}")
     print(f"{'='*50}")
 
-    # D'abord, on fait la configuration directement avec dynamixel_sdk
-    # car configure_motor.py pourrait ne pas exister ou être ailleurs
+    # Configuration directe via dynamixel_sdk
+    # (l'outil officiel équivalent est lerobot/scripts/configure_motor.py).
+    portHandler = None
     try:
         portHandler = PortHandler(port)
         packetHandler = PacketHandler(1.0)
@@ -50,6 +52,7 @@ def configure_servo(servo_id):
 
         if not portHandler.setBaudRate(1000000):
             print("❌ Impossible de configurer le baudrate")
+            portHandler.closePort()
             return False
 
         # 1. DÉTECTION du servo branché (peu importe son ID actuel)
@@ -66,7 +69,7 @@ def configure_servo(servo_id):
             print("❌ Aucun servo détecté!")
             print("Vérifiez que:")
             print("  - Le servo est bien branché")
-            print("  - L'alimentation 12V est connectée")
+            print("  - L'alimentation est connectée (5V ou 12V selon le bras)")
             portHandler.closePort()
             return False
 
@@ -76,23 +79,29 @@ def configure_servo(servo_id):
             print(f"  ID actuel: {id_actuel}")
             print(f"  Nouvel ID: {servo_id}")
 
-            # IMPORTANT: Écrire dans l'EEPROM (registre 3)
-            result, _ = packetHandler.write1ByteTxRx(portHandler, id_actuel, 3, servo_id)
-            if result == 0:  # COMM_SUCCESS
-                print(f"  ✅ ID changé avec succès!")
+            # Feetech STS3215 : l'ID est au registre 5 et l'EEPROM est verrouillée.
+            # Il faut déverrouiller (registre LOCK 55 = 0), écrire l'ID, puis reverrouiller (= 1).
+            packetHandler.write1ByteTxRx(portHandler, id_actuel, 55, 0)        # déverrouille l'EEPROM
+            time.sleep(0.05)
+            packetHandler.write1ByteTxRx(portHandler, id_actuel, 5, servo_id)  # écrit le nouvel ID (registre 5)
+            time.sleep(0.2)
+            packetHandler.write1ByteTxRx(portHandler, servo_id, 55, 1)         # reverrouille l'EEPROM (au nouvel ID)
+            time.sleep(0.05)
 
-                # SAUVEGARDE dans l'EEPROM (certains servos nécessitent un reboot)
-                time.sleep(1)
-
-                # Vérifier que le nouvel ID fonctionne
-                pos, result, _ = packetHandler.read2ByteTxRx(portHandler, servo_id, 56)
-                if result == 0:
-                    print(f"  ✅ Servo répond maintenant à l'ID {servo_id}")
-                else:
-                    print("  ⚠️ Le servo nécessite peut-être un redémarrage")
-                    print("  Débranchez et rebranchez le servo")
+            # Vérifier que le servo répond bien au nouvel ID (seul test fiable)
+            pos, result, _ = packetHandler.read2ByteTxRx(portHandler, servo_id, 56)
+            if result == 0:
+                print(f"  ✅ ID changé : le servo répond maintenant à l'ID {servo_id}")
             else:
-                print("❌ Impossible de changer l'ID")
+                print("  ❌ L'ID n'a pas changé (le servo ne répond pas au nouvel ID)")
+                # Sécurité EEPROM : reverrouiller, que le servo soit resté à l'ancien
+                # ID ou passé au nouveau (l'autre tentative est un no-op inoffensif).
+                for relock_id in (servo_id, id_actuel):
+                    try:
+                        packetHandler.write1ByteTxRx(portHandler, relock_id, 55, 1)
+                    except Exception:
+                        pass
+                print("  Débranchez/rebranchez le servo et réessayez")
                 portHandler.closePort()
                 return False
         else:
@@ -101,16 +110,21 @@ def configure_servo(servo_id):
         # 3. VÉRIFICATION de la configuration
         print("\n📋 Vérification de la configuration...")
 
-        # Lire l'ID pour confirmer
-        id_lu, result, _ = packetHandler.read1ByteTxRx(portHandler, servo_id, 3)
+        # Lire l'ID pour confirmer (registre 5, table Feetech)
+        id_lu, result, _ = packetHandler.read1ByteTxRx(portHandler, servo_id, 5)
         if result == 0 and id_lu == servo_id:
             print(f"  ✅ ID: {id_lu} [SAUVEGARDÉ]")
         else:
-            print(f"  ❌ Problème avec l'ID")
+            print("  ❌ Problème avec l'ID")
+            portHandler.closePort()
+            return False
 
-        # Lire le baudrate (registre 4)
-        baud_reg, result, _ = packetHandler.read1ByteTxRx(portHandler, servo_id, 4)
-        print(f"  ℹ️ Baudrate registre: {baud_reg} (3 = 1Mbps)")
+        # Lire le baudrate (registre 6, table Feetech)
+        baud_reg, result, _ = packetHandler.read1ByteTxRx(portHandler, servo_id, 6)
+        if result == 0:
+            print(f"  ℹ️ Baudrate registre: {baud_reg} (0 = 1Mbps)")
+        else:
+            print("  ⚠️ Baudrate non relu correctement")
 
         # 4. TEST DE MOUVEMENT
         print("\n🔄 Test de mouvement...")
@@ -148,10 +162,15 @@ def configure_servo(servo_id):
 
     except Exception as e:
         print(f"❌ Erreur: {e}")
+        if portHandler is not None:
+            try:
+                portHandler.closePort()
+            except Exception:
+                pass
         return False
 
 def main():
-    # AJOUT 1: Effacer l'écran au début
+    # Effacer l'écran au début
     os.system('clear')
 
     print("""
@@ -208,29 +227,31 @@ FOLLOWER:
             print("\n🔒 Blocage du servo au centre...")
             portHandler = PortHandler(port)
             packetHandler = PacketHandler(1.0)
-            if portHandler.openPort() and portHandler.setBaudRate(1000000):
-                # Chercher quel servo est branché
-                for test_id in range(1, 7):
-                    pos, result, _ = packetHandler.read2ByteTxRx(portHandler, test_id, 56)
-                    if result == 0:
-                        packetHandler.write1ByteTxRx(portHandler, test_id, 40, 1)
-                        packetHandler.write2ByteTxRx(portHandler, test_id, 42, 2048)
-                        print(f"✅ Servo {test_id} bloqué au centre")
-                        break
+            if portHandler.openPort():
+                if portHandler.setBaudRate(1000000):
+                    # Chercher quel servo est branché
+                    for test_id in range(1, 7):
+                        pos, result, _ = packetHandler.read2ByteTxRx(portHandler, test_id, 56)
+                        if result == 0:
+                            packetHandler.write1ByteTxRx(portHandler, test_id, 40, 1)
+                            packetHandler.write2ByteTxRx(portHandler, test_id, 42, 2048)
+                            print(f"✅ Servo {test_id} bloqué au centre")
+                            break
                 portHandler.closePort()
         elif choix == 'L':
             # Libérer le servo branché
             print("\n🔓 Libération du servo...")
             portHandler = PortHandler(port)
             packetHandler = PacketHandler(1.0)
-            if portHandler.openPort() and portHandler.setBaudRate(1000000):
-                # Chercher quel servo est branché
-                for test_id in range(1, 7):
-                    pos, result, _ = packetHandler.read2ByteTxRx(portHandler, test_id, 56)
-                    if result == 0:
-                        packetHandler.write1ByteTxRx(portHandler, test_id, 40, 0)
-                        print(f"✅ Servo {test_id} libéré")
-                        break
+            if portHandler.openPort():
+                if portHandler.setBaudRate(1000000):
+                    # Chercher quel servo est branché
+                    for test_id in range(1, 7):
+                        pos, result, _ = packetHandler.read2ByteTxRx(portHandler, test_id, 56)
+                        if result == 0:
+                            packetHandler.write1ByteTxRx(portHandler, test_id, 40, 0)
+                            print(f"✅ Servo {test_id} libéré")
+                            break
                 portHandler.closePort()
         elif choix == 'D':
             port = detect_port()
@@ -239,7 +260,7 @@ FOLLOWER:
             else:
                 print("❌ Aucun port détecté")
         elif choix == 'T':
-            # AJOUT 2: Configurer TOUS les servos
+            # Configurer TOUS les servos
             print("\n🔄 CONFIGURATION DE TOUS LES SERVOS")
             for servo_id in range(1, 7):
                 print(f"\n📋 SERVO {servo_id}/6")
