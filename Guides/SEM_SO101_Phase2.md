@@ -6,7 +6,7 @@ Développé par : Service Écoles-Médias (SEM)
 
 ### 📋 Prérequis
 
-- Phase 1 complétée (LeRobot installé, permissions USB configurées)
+- Phase 1 complétée (LeRobot et `dynamixel-sdk` installés, permissions USB configurées)
 - Environnement lerobot activé
 - 2 adaptateurs USB-Serial (Waveshare ou Feetech)
 - Alimentations :
@@ -26,7 +26,7 @@ Cette phase consiste à :
 2. Tester le mouvement de chaque servo
 3. Centrer chaque servo en position 2048
 4. Monter les servos sur la structure
-5. Reconfigurer si nécessaire après montage
+5. Recentrer si nécessaire après montage (option `B`, sans rejouer le test de mouvement)
 
 
 ### 🛠️ Étape 1 : Préparation de l'environnement
@@ -52,6 +52,8 @@ cd ~/lerobot/Scripts_SEM/scripts
 
 > **⚠️ Important :** Ne JAMAIS connecter plusieurs servos non configurés simultanément ! Configurez-les un par un.
 
+> **⚠️ Un seul adaptateur à la fois :** ne branchez que l'adaptateur USB du bras en cours de configuration. Si les adaptateurs Leader et Follower sont connectés en même temps, le script prend le premier port détecté et peut cibler le mauvais bras.
+
 
 ### 📝 Étape 2 : Le script de configuration
 
@@ -60,7 +62,7 @@ cd ~/lerobot/Scripts_SEM/scripts
 Le script effectue automatiquement les opérations suivantes :
 
 1. **Détection du port USB** — il trouve automatiquement l'adaptateur branché (l'option `D` du menu permet de relancer cette détection)
-2. **Attribution de l'ID** — il lit d'abord l'ID actuel du servo connecté, puis lui assigne le numéro voulu (1 à 6)
+2. **Attribution de l'ID** — il lit d'abord l'ID actuel du servo connecté, puis écrit le numéro voulu (1 à 6) dans l'EEPROM du servo ; l'ID y est conservé même après coupure d'alimentation
 3. **Test de mouvement** — il fait bouger le servo vers trois positions (MIN → MAX → CENTRE) pour vérifier son bon fonctionnement
 4. **Centrage et blocage** — il positionne le servo à 2048 (position neutre) et l'y maintient bloqué, couple actif, pour le montage
 5. **Configuration groupée** — l'option `T` enchaîne automatiquement la configuration des six servos
@@ -115,7 +117,7 @@ Procédure pour chaque servo :
 4. **Montage sur la structure :**
    - Monter le palonnier en position alignée
    - Fixer le servo sur le bras
-   - Si la position bouge pendant le montage, relancer le script
+   - Si la position bouge pendant le montage, utilisez l'option `B` du menu pour replacer le servo au centre (sans rejouer le test de mouvement)
 
 **B. Configuration du bras FOLLOWER**
 
@@ -123,7 +125,7 @@ Rappel Follower : Tous les servos du Follower sont identiques (ratio 1:345)
 
 Répéter la même procédure avec l'adaptateur USB du Follower.
 
-> **💡 Astuce :** Après avoir monté chaque servo, il est normal que la position centrale soit perdue. N'hésitez pas à relancer le script pour recentrer le servo après montage. C'est pourquoi nous configurons AVANT le montage (pour avoir l'ID) puis APRÈS si nécessaire (pour recentrer).
+> **💡 Astuce :** Après avoir monté chaque servo, il est normal que la position centrale puisse bouger. Pour recentrer un servo **déjà configuré**, utilisez l'option `B` du menu : elle place le servo à 2048 et le bloque, sans rejouer le balayage MIN → MAX → CENTRE. Évitez une configuration complète (1–6) sur un servo déjà monté : ce balayage peut être trop ample une fois le servo fixé à la structure. C'est aussi pourquoi nous configurons AVANT le montage (pour avoir l'ID) puis recentrons APRÈS si nécessaire.
 
 > **⚠️ Servo 6 (pince) :** lors du montage, fixez la pince en position **OUVERTE** (le script le rappelle au moment de configurer ce servo).
 
@@ -139,7 +141,7 @@ Au-delà de la configuration d'un servo (touches 1 à 6), le menu propose :
 - `L` — libère le servo connecté (relâche le couple), à utiliser après le montage
 - `D` — relance la détection du port USB (utile si l'adaptateur a été rebranché)
 
-> **Note :** Les options `B` et `L` recherchent le servo branché et affichent son ID — c'est le moyen le plus simple de vérifier quel servo est connecté.
+> **Note :** Les options `B` et `L` recherchent le servo branché et affichent son ID — c'est le moyen le plus simple de vérifier quel servo est connecté. Elles ne scrutent que les ID 1 à 6 : un servo neuf (livré en ID 1) ou déjà configuré est détecté ; un servo dont l'ID est hors de cette plage ne le sera pas.
 
 **Tableau de dépannage**
 
@@ -147,7 +149,7 @@ Au-delà de la configuration d'un servo (touches 1 à 6), le menu propose :
 | :--- | :--- | :--- |
 | Port USB non détecté | Adaptateur non branché, mauvais port USB, permissions insuffisantes | Vérifier le branchement, essayer un autre port USB, vérifier le groupe `dialout` (voir Phase 1, Étape 6) |
 | Servo ne bouge pas | Alimentation non connectée, câble 3-pins mal branché, servo défectueux | Vérifier l'alimentation (LED allumée), reconnecter le câble 3-pins, tester avec un autre servo |
-| Position incorrecte après montage | Normal — le montage fait bouger le servo, palonnier mal positionné | Relancer le script pour recentrer, démonter et remonter le palonnier |
+| Position incorrecte après montage | Normal — le montage fait bouger le servo, palonnier mal positionné | Utiliser l'option `B` pour recentrer (sans rejouer le test de mouvement) ; démonter/remonter le palonnier si besoin |
 | Plusieurs servos détectés | Plusieurs servos connectés en chaîne | Débrancher tous sauf un, configurer un par un |
 | ID déjà utilisé | Servo déjà configuré, mauvais servo branché | Utiliser `B` ou `L` pour afficher l'ID du servo branché, brancher le bon servo |
 
@@ -158,11 +160,11 @@ Au-delà de la configuration d'un servo (touches 1 à 6), le menu propose :
 
 1. **Un servo à la fois :** Ne JAMAIS connecter plusieurs servos non configurés
 2. **Position 2048 :** Toujours configurer avant montage
-3. **Reconfiguration :** Normal et recommandé après montage
+3. **Recentrage :** après montage, utilisez l'option `B` pour replacer le servo au centre (pas une reconfiguration complète)
 4. **Alimentation :**
    - Leader : TOUJOURS 5V
    - Follower : 5V (Standard) ou 12V (Pro)
-5. **Ordre :** Configurer → Tester → Monter → (Reconfigurer si besoin)
+5. **Ordre :** Configurer → Tester → Monter → (Recentrer avec `B` si besoin)
 
 
 ### 🚀 Commandes rapides de référence
