@@ -75,10 +75,25 @@ def detect_ports():
                 pass
     return ports
 
+# ----------------------------------------------------------------------------
+# Politique de gestion des erreurs (lecture de position) :
+# Certains servos Feetech peuvent renvoyer un octet de statut interne non nul
+# tout en conservant une position parfaitement lisible. Seul l'echec de
+# communication (result != COMM_SUCCESS) invalide la lecture ; l'octet de
+# statut interne est ignore (tolere silencieusement, contexte teleoperation).
+# Cause a identifier sur la table de controle Feetech STS3215 (hors urgence).
+# Regle limitee aux LECTURES ; ecritures/mouvements traites au cas par cas.
+# ----------------------------------------------------------------------------
 def lire_position(packet, port, servo_id):
-    """Lecture verifiee de la position (registre 56). Retourne (position, ok)."""
-    pos, result, error = packet.read2ByteTxRx(port, servo_id, 56)
-    if result != COMM_SUCCESS or error != 0:
+    """Lecture de la position (registre 56). Retourne (position, ok).
+
+    Seule une vraie panne de communication (result) invalide la lecture.
+    L'octet de statut interne du servo est ignore (tolere silencieusement,
+    contexte teleoperation) : la position reste valide ; la cause de ce
+    statut n'est PAS presumee ici, elle reste a identifier.
+    """
+    pos, result, _ = packet.read2ByteTxRx(port, servo_id, 56)
+    if result != COMM_SUCCESS:
         return None, False
     return pos, True
 
@@ -593,13 +608,13 @@ def teleoperation(lk, lp, fk, fp, calib_l, calib_f, mode, servos_miroir):
             pass
 
         # Lecture Leader -> écriture Follower (servo ignoré si la lecture échoue).
-        # CHOIX INTENTIONNEL : on ne vérifie que `result` (intégrité de la lecture),
-        # PAS l'octet `error` (drapeau d'alarme matérielle du servo : surcharge,
-        # surchauffe...). En suivi temps réel, la position reste valide même si ce
-        # drapeau est levé ; passer par lire_position() (qui rejette sur error != 0)
-        # ferait FIGER l'articulation du Follower sur une alarme transitoire — non
-        # souhaitable ici. Les fonctions de séquence, elles, utilisent bien
-        # lire_position() car un calcul de trajectoire doit s'annuler au moindre doute.
+        # CHOIX INTENTIONNEL : pour les lectures de position, on ne bloque que sur
+        # `result` (intégrité de la communication). L'octet `error` est un statut
+        # interne non identifié du servo (cf. servo 2 Leader, error=1 intermittent) ;
+        # il n'invalide PAS la position tant que la communication réussit. C'est
+        # désormais la même règle que lire_position() : les fonctions de séquence
+        # (centrage, repos...) s'annulent uniquement sur un échec réel de
+        # communication, pas sur ce drapeau interne.
         positions_leader = {}
         for servo_id in range(1, 7):
             pos, result, _ = lk.read2ByteTxRx(lp, servo_id, 56)
