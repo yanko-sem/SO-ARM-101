@@ -83,10 +83,25 @@ def detect_ports():
                 pass
     return ports
 
+# ----------------------------------------------------------------------------
+# Politique de gestion des erreurs (lecture de position) :
+# Certains servos Feetech peuvent renvoyer un octet de statut interne non nul
+# tout en conservant une position parfaitement lisible. Seul l'echec de
+# communication (result != COMM_SUCCESS) invalide la lecture ; l'octet de
+# statut interne est ignore (tolere silencieusement, contexte teleoperation).
+# Cause a identifier sur la table de controle Feetech STS3215 (hors urgence).
+# Regle limitee aux LECTURES ; ecritures/mouvements traites au cas par cas.
+# ----------------------------------------------------------------------------
 def lire_position(packet, port, servo_id):
-    """Lecture verifiee de la position (registre 56). Retourne (position, ok)."""
-    pos, result, error = packet.read2ByteTxRx(port, servo_id, 56)
-    if result != COMM_SUCCESS or error != 0:
+    """Lecture de la position (registre 56). Retourne (position, ok).
+
+    Seule une vraie panne de communication (result) invalide la lecture.
+    L'octet de statut interne du servo est ignore (tolere silencieusement,
+    contexte teleoperation) : la position reste valide ; la cause de ce
+    statut n'est PAS presumee ici, elle reste a identifier.
+    """
+    pos, result, _ = packet.read2ByteTxRx(port, servo_id, 56)
+    if result != COMM_SUCCESS:
         return None, False
     return pos, True
 
@@ -557,6 +572,114 @@ def detect_cameras():
             cap.release()
     return cameras
 
+def selectionner_camera_globale():
+    """Sélectionne la caméra GLOBALE (le script 7 n'utilise QUE celle-ci).
+    Les deux caméras du projet (globale + pince) sont identiques : aucune
+    détection automatique n'est possible, l'identification est donc visuelle.
+      - 0 caméra        -> None (erreur gérée par l'appelant).
+      - 1 seule caméra  -> aperçu + CONFIRMATION que c'est bien la vue d'ensemble
+                           (ferme le cas 'seule la pince est branchée').
+      - >= 2 caméras    -> on montre chaque flux (même UX que l'identification du
+                           script 8 : G/P/Q dans le terminal) et l'utilisateur
+                           désigne la GLOBALE. Dès qu'elle est trouvée, on s'arrête
+                           (la pince ne sert pas ici).
+    Retourne l'index de la caméra globale, ou None (abandon / non identifiée).
+    Toutes les fenêtres cv2.imshow sont ouvertes/fermées sur le thread principal."""
+    cameras = detect_cameras()
+    if not cameras:
+        return None
+
+    # --- Cas d'une seule caméra : confirmation visuelle obligatoire ---
+    if len(cameras) == 1:
+        idx = cameras[0]
+        print(f"\n📷 Une seule caméra détectée (index {idx}).")
+        fenetre = None
+        cap = cv2.VideoCapture(idx)
+        if cap.isOpened():
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)
+            ret, frame = cap.read()
+            cap.release()
+            if ret:
+                cv2.putText(frame, "Est-ce la vue GLOBALE ?", (10, 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                cv2.putText(frame, "Repondez dans le TERMINAL", (10, 60),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 1)
+                fenetre = f"Camera {idx} - Vue globale ?"
+                cv2.imshow(fenetre, frame)
+                cv2.waitKey(100)
+        # Sans image lisible, la confirmation visuelle est impossible -> on refuse.
+        if fenetre is None:
+            print(f"   ❌ Image indisponible pour la caméra {idx} — confirmation impossible, arrêt.")
+            return None
+        print("   ⚠️  Les deux caméras du projet sont identiques : vérifiez visuellement.")
+        print("   → [Entrée] : oui, c'est la vue GLOBALE (vue d'ensemble du plateau)")
+        print("   → [N]      : non / arrêter")
+        rep = input("   Confirmer ? [Entrée/N] : ").strip().upper()
+        cv2.destroyWindow(fenetre)
+        cv2.waitKey(1)
+        if rep == 'N':
+            print("   ❌ Caméra globale non confirmée — arrêt.")
+            return None
+        return idx
+
+    # --- Cas de >= 2 caméras : identification visuelle (UX miroir du script 8) ---
+    print("\n" + "="*60)
+    print("📷 IDENTIFICATION DE LA CAMÉRA GLOBALE")
+    print("="*60)
+    print(f"\n🔍 Caméras détectées : {cameras}")
+    print("   Les deux caméras du projet sont identiques : identifiez la GLOBALE")
+    print("   (vue d'ensemble du plateau), pas celle fixée sur la PINCE.")
+    print("\n   Appuyez sur ENTRÉE pour voir chaque caméra tour à tour...")
+    input()
+
+    cam_globale = None
+    for idx in cameras:
+        print(f"\n🎥 Caméra index {idx}...")
+        cap = cv2.VideoCapture(idx)
+        if not cap.isOpened():
+            print(f"   ❌ Impossible d'ouvrir la caméra {idx}")
+            continue
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)
+        window_name = f"Camera {idx} - Identifiez cette camera"
+        ret, frame = cap.read()
+        fenetre_ouverte = False
+        if ret:
+            cv2.putText(frame, f"Camera {idx}", (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            cv2.putText(frame, "Repondez dans le TERMINAL", (10, 60),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 1)
+            cv2.imshow(window_name, frame)
+            cv2.waitKey(100)
+            fenetre_ouverte = True
+        cap.release()
+        # Sans image lisible, identification visuelle impossible -> on ne propose pas cette caméra.
+        if not fenetre_ouverte:
+            print(f"   ⚠️  Image indisponible pour la caméra {idx} — identification impossible, on passe.")
+            continue
+        print(f"   📺 Regardez la fenêtre '{window_name}'")
+        print("   → Tapez G + Entrée si c'est la caméra GLOBALE (vue d'ensemble)")
+        print("   → Tapez P + Entrée si c'est la caméra PINCE")
+        print("   → Tapez Q + Entrée pour passer")
+        choix_cam = input("   Votre choix : ").strip().upper()
+        cv2.destroyWindow(window_name)
+        cv2.waitKey(1)
+        if choix_cam == 'G':
+            cam_globale = idx
+            print(f"   ✅ Caméra {idx} = GLOBALE (cam_top) — sélectionnée")
+            break  # le script 7 n'a besoin que de la globale
+        elif choix_cam == 'P':
+            print(f"   → Caméra {idx} = pince, ignorée pour la téléopération caméra")
+        else:
+            print(f"   ⏭️  Caméra {idx} passée")
+
+    cv2.destroyAllWindows()
+    cv2.waitKey(1)
+    if cam_globale is None:
+        print("\n   ❌ Aucune caméra GLOBALE identifiée — arrêt.")
+    return cam_globale
+
 def apercu_camera(camera_index):
     """Aperçu bref avant les robots : ouvre la caméra, force 640x360, affiche la
     résolution réelle et une image figée, puis libère. Pas de validation."""
@@ -577,7 +700,7 @@ def apercu_camera(camera_index):
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
         cv2.imshow('Apercu camera', frame)
         cv2.waitKey(100)
-        input("\nAppuyez sur ENTRÉE pour passer à l'identification des robots...")
+        input("\nAppuyez sur ENTRÉE pour passer à la gestion du masque caméra...")
         cv2.destroyWindow('Apercu camera')
         cv2.waitKey(1)
     cap.release()
@@ -677,44 +800,56 @@ def creer_masque_interactif(camera_index):
             print(f"⚠️  Saisie '{choix}' non reconnue — on recommence la sélection des points.")
         # sinon -> recommencer
 
+def charger_masque_valide_sans_creation():
+    """Charge et VALIDE STRICTEMENT le masque (MASK_FILE), SANS jamais créer.
+    Validation stricte : un fichier corrompu mais contenant une clé "points" ne
+    doit PAS être accepté. Retourne (points, ref_wh) si exactement 5 points
+    numériques valides, sinon (None, None). SOURCE UNIQUE de validation, partagée
+    par charger_ou_creer_masque et apercu_masque_existant (cohérence garantie)."""
+    if not os.path.exists(MASK_FILE):
+        return None, None
+    try:
+        with open(MASK_FILE, 'r') as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            raise ValueError("structure JSON invalide")
+        pts_raw = data.get("points")
+        if not isinstance(pts_raw, list) or len(pts_raw) != 5:
+            raise ValueError("le masque doit contenir exactement 5 points")
+        pts = []
+        for p in pts_raw:
+            if not isinstance(p, (list, tuple)) or len(p) != 2:
+                raise ValueError("chaque point doit contenir exactement 2 coordonnées")
+            x, y = p
+            if (isinstance(x, bool) or isinstance(y, bool)
+                    or not isinstance(x, (int, float)) or not isinstance(y, (int, float))):
+                raise ValueError("coordonnées non numériques")
+            pts.append((int(x), int(y)))
+        # Résolution de référence : exploitable uniquement si width/height numériques > 0
+        ref = data.get("reference_resolution", {})
+        rw = ref.get("width") if isinstance(ref, dict) else None
+        rh = ref.get("height") if isinstance(ref, dict) else None
+        ref_wh = None
+        if (isinstance(rw, (int, float)) and not isinstance(rw, bool)
+                and isinstance(rh, (int, float)) and not isinstance(rh, bool)
+                and rw > 0 and rh > 0):
+            ref_wh = (int(rw), int(rh))
+        return pts, ref_wh
+    except Exception as e:
+        print(f"⚠️  Masque existant illisible ou invalide ({e}), recréation nécessaire.")
+        return None, None
+
 def charger_ou_creer_masque(camera_index, forcer=False):
-    """Si MASK_FILE existe ET forcer=False -> charge (points + résolution de référence).
-    Sinon (ou si fichier absent/illisible) -> lance la création interactive (obligatoire).
+    """Si MASK_FILE existe ET forcer=False -> charge (points + résolution de référence)
+    via la validation stricte commune. Sinon (fichier absent/illisible/invalide) ->
+    lance la création interactive (obligatoire).
     Retourne (points, (w, h)) ou (None, None) si abandon."""
-    if not forcer and os.path.exists(MASK_FILE):
-        try:
-            with open(MASK_FILE, 'r') as f:
-                data = json.load(f)
-            # Validation stricte : un fichier corrompu mais contenant une clé "points"
-            # ne doit PAS être accepté — on force la recréation dans ce cas.
-            if not isinstance(data, dict):
-                raise ValueError("structure JSON invalide")
-            pts_raw = data.get("points")
-            if not isinstance(pts_raw, list) or len(pts_raw) != 5:
-                raise ValueError("le masque doit contenir exactement 5 points")
-            pts = []
-            for p in pts_raw:
-                if not isinstance(p, (list, tuple)) or len(p) != 2:
-                    raise ValueError("chaque point doit contenir exactement 2 coordonnées")
-                x, y = p
-                if (isinstance(x, bool) or isinstance(y, bool)
-                        or not isinstance(x, (int, float)) or not isinstance(y, (int, float))):
-                    raise ValueError("coordonnées non numériques")
-                pts.append((int(x), int(y)))
-            # Résolution de référence : exploitable uniquement si width/height numériques > 0
-            ref = data.get("reference_resolution", {})
-            rw = ref.get("width") if isinstance(ref, dict) else None
-            rh = ref.get("height") if isinstance(ref, dict) else None
-            ref_wh = None
-            if (isinstance(rw, (int, float)) and not isinstance(rw, bool)
-                    and isinstance(rh, (int, float)) and not isinstance(rh, bool)
-                    and rw > 0 and rh > 0):
-                ref_wh = (int(rw), int(rh))
+    if not forcer:
+        pts, ref_wh = charger_masque_valide_sans_creation()
+        if pts is not None:
             print(f"✅ Masque chargé : {len(pts)} points "
                   f"(réf. {ref_wh[0] if ref_wh else '?'}×{ref_wh[1] if ref_wh else '?'})")
             return pts, ref_wh
-        except Exception as e:
-            print(f"⚠️  Masque existant illisible ou invalide ({e}), recréation nécessaire.")
     if forcer:
         print("\n🔄 Recréation du masque demandée (--refaire-masque).")
     else:
@@ -737,6 +872,60 @@ def construire_mask_image(points, ref_wh, target_w, target_h):
     mask = np.zeros((target_h, target_w), dtype=np.uint8)
     cv2.fillPoly(mask, [np.array(pts_scaled, np.int32)], 255)
     return mask
+
+def apercu_masque_existant(camera_index):
+    """Affiche le masque actuel appliqué sur une image caméra en direct, puis
+    demande quoi faire. Retourne 'garder', 'refaire' ou 'quitter'.
+    Le masque est validé STRICTEMENT (charger_masque_valide_sans_creation, même
+    règle que le reste du script) : un masque invalide n'est jamais proposé à la
+    conservation -> retour 'refaire'. L'aperçu visuel est best-effort (si la
+    caméra ne donne pas d'image, on demande quand même car le masque est valide).
+    cv2.imshow reste sur le thread principal ; le choix se fait via input()."""
+    pts, ref_wh = charger_masque_valide_sans_creation()
+    if pts is None:
+        print("\n⚠️  Masque existant absent ou invalide — recréation nécessaire.")
+        return 'refaire'
+
+    fenetre = None
+    cap = cv2.VideoCapture(camera_index)
+    if cap.isOpened():
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)
+        ret, frame = cap.read()
+        cap.release()
+        if ret:
+            h_real, w_real = frame.shape[:2]
+            mask_img = construire_mask_image(pts, ref_wh, w_real, h_real)
+            apercu = cv2.bitwise_and(frame, frame, mask=mask_img) if mask_img is not None else frame.copy()
+            # Contour du polygone (mis à l'échelle si la référence diffère du réel)
+            if ref_wh and (ref_wh[0] != w_real or ref_wh[1] != h_real):
+                sx, sy = w_real / ref_wh[0], h_real / ref_wh[1]
+                pts_draw = [(int(round(x * sx)), int(round(y * sy))) for (x, y) in pts]
+            else:
+                pts_draw = pts
+            cv2.polylines(apercu, [np.array(pts_draw, np.int32)], True, (0, 255, 0), 2)
+            fenetre = "Apercu du masque actuel"
+            cv2.imshow(fenetre, apercu)
+            cv2.waitKey(100)
+            print("\n👁️  Aperçu du masque actuel (zone conservée en couleur, contour vert).")
+    if fenetre is None:
+        print("\n⚠️  Aperçu visuel indisponible (caméra), mais le masque enregistré est valide.")
+
+    print("\n🎭 GESTION DU MASQUE")
+    print("  [Entrée] : Garder ce masque")
+    print("  [M]      : Refaire le masque")
+    print("  [Q]      : Quitter")
+    rep = input("Choix [Entrée/M/Q] : ").strip().upper()
+
+    if fenetre is not None:
+        cv2.destroyWindow(fenetre)
+        cv2.waitKey(1)
+
+    if rep == 'M':
+        return 'refaire'
+    if rep == 'Q':
+        return 'quitter'
+    return 'garder'
 
 def teleoperation(lk, lp, fk, fp, calib_l, calib_f, mode, servos_miroir,
                   camera_index, mask_pts, mask_ref_wh):
@@ -907,13 +1096,13 @@ def teleoperation(lk, lp, fk, fp, calib_l, calib_f, mode, servos_miroir,
                 pass
 
             # Lecture Leader -> écriture Follower (servo ignoré si la lecture échoue).
-            # CHOIX INTENTIONNEL : on ne vérifie que `result` (intégrité de la lecture),
-            # PAS l'octet `error` (drapeau d'alarme matérielle du servo : surcharge,
-            # surchauffe...). En suivi temps réel, la position reste valide même si ce
-            # drapeau est levé ; passer par lire_position() (qui rejette sur error != 0)
-            # ferait FIGER l'articulation du Follower sur une alarme transitoire — non
-            # souhaitable ici. Les fonctions de séquence, elles, utilisent bien
-            # lire_position() car un calcul de trajectoire doit s'annuler au moindre doute.
+            # CHOIX INTENTIONNEL : pour les lectures de position, on ne bloque que sur
+            # `result` (intégrité de la communication). L'octet `error` est un statut
+            # interne non identifié du servo (cf. servo 2 Leader, error=1 intermittent) ;
+            # il n'invalide PAS la position tant que la communication réussit. C'est
+            # désormais la même règle que lire_position() : les fonctions de séquence
+            # (centrage, repos...) s'annulent uniquement sur un échec réel de
+            # communication, pas sur ce drapeau interne.
             positions_leader = {}
             for servo_id in range(1, 7):
                 pos, result, _ = lk.read2ByteTxRx(lp, servo_id, 56)
@@ -976,23 +1165,26 @@ def main():
         print("❌ Calibration Follower absente, incomplète ou invalide — faites la Phase 3.")
         return
 
-    # --- Caméra : détection + aperçu (avant les robots) ---
-    cameras = detect_cameras()
-    if not cameras:
-        print("\n❌ Aucune caméra détectée.")
-        print("   Branchez une caméra USB et relancez le script.")
+    # --- Caméra : sélection de la GLOBALE (jamais la pince) + aperçu, avant les robots ---
+    # Les 2 caméras sont identiques -> identification visuelle (cf. selectionner_camera_globale).
+    camera_index = selectionner_camera_globale()
+    if camera_index is None:
+        print("\n❌ Aucune caméra globale utilisable — arrêt (aucun robot engagé).")
         return
-    camera_index = cameras[0]
     apercu_camera(camera_index)
 
     # --- Masque de zone utile OBLIGATOIRE (défini avant tout branchement robot) ---
-    # Menu si un masque existe déjà ; --refaire-masque force la recréation sans menu.
+    # Si un masque existe : aperçu visuel + menu garder/refaire/quitter.
+    # --refaire-masque force la recréation sans menu.
     forcer_masque = '--refaire-masque' in sys.argv
     if os.path.exists(MASK_FILE) and not forcer_masque:
-        print("\n🎭 GESTION DU MASQUE")
-        print("  [Entrée] : Garder le masque actuel")
-        print("  [M]      : Forcer la création d'un nouveau masque")
-        if input("Choix [Entrée/M] : ").strip().upper() == 'M':
+        choix = apercu_masque_existant(camera_index)
+        if choix == 'quitter':
+            # Aucun robot n'est encore branché -> arrêt propre sans nettoyage matériel.
+            print("\n👋 Arrêt demandé — aucun robot engagé.")
+            cv2.destroyAllWindows()
+            return
+        if choix == 'refaire':
             forcer_masque = True
     mask_pts, mask_ref_wh = charger_ou_creer_masque(camera_index, forcer=forcer_masque)
     if mask_pts is None:
