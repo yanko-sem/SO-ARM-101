@@ -67,10 +67,25 @@ def detect_ports():
                 pass
     return ports
 
+# ----------------------------------------------------------------------------
+# Politique de gestion des erreurs (lecture de position) :
+# Certains servos Feetech peuvent renvoyer un octet de statut interne non nul
+# tout en conservant une position parfaitement lisible. Seul l'echec de
+# communication (result != COMM_SUCCESS) invalide la lecture ; l'octet de
+# statut interne est ignore (tolere silencieusement, contexte teleoperation).
+# Cause a identifier sur la table de controle Feetech STS3215 (hors urgence).
+# Regle limitee aux LECTURES ; ecritures/mouvements traites au cas par cas.
+# ----------------------------------------------------------------------------
 def lire_position(packet, port, servo_id):
-    """Lecture verifiee de la position (registre 56). Retourne (position, ok)."""
-    pos, result, error = packet.read2ByteTxRx(port, servo_id, 56)
-    if result != COMM_SUCCESS or error != 0:
+    """Lecture de la position (registre 56). Retourne (position, ok).
+
+    Seule une vraie panne de communication (result) invalide la lecture.
+    L'octet de statut interne du servo est ignore (tolere silencieusement,
+    contexte teleoperation) : la position reste valide ; la cause de ce
+    statut n'est PAS presumee ici, elle reste a identifier.
+    """
+    pos, result, _ = packet.read2ByteTxRx(port, servo_id, 56)
+    if result != COMM_SUCCESS:
         return None, False
     return pos, True
 
