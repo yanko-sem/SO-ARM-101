@@ -1,34 +1,43 @@
 #!/usr/bin/env python3
 """
-Script SEM_so101_9_consolidate_dataset.py
+Script SEM_so101_9_dataset.py
 Service Écoles-Médias (SEM) - DIP Genève
 
-CONSOLIDATION DU DATASET POUR L'ENTRAÎNEMENT
-=============================================
+PRÉPARATION COMPLÈTE DU DATASET POUR L'ENTRAÎNEMENT
+====================================================
 
-Ce script fusionne les 5 dossiers de positions créés par le script 8
-en un seul dataset unifié au format LeRobotDataset v2.1,
-compatible avec la commande lerobot-train.
+Prépare, en un seul geste, le dataset destiné à l'entraînement (script 11) :
+  1. Analyse + validation des données source (script 8) — fail-closed.
+  2. Consolidation des 5 positions dans un dossier TEMPORAIRE.
+  3. Finalisation : info.json complet, tasks.jsonl, episodes.jsonl, episodes_stats.jsonl,
+     traçabilité caméra, conversion H.264 (navigateur), vérification frames vidéo/parquet.
+  4. Bascule ATOMIQUE vers le dataset final UNIQUEMENT si les étapes critiques réussissent.
+  5. Visualisation LeRobot optionnelle (le script 10 fait la visualisation seule).
 
 Entrée : ~/.cache/huggingface/lerobot/local/so101_pick_place/position_X_*/
 Sortie : ~/.cache/huggingface/lerobot/local/so101_pick_place_consolidated/
 
 Auteur: Service Écoles-Médias (SEM)
-Version: 1.0
+Version: 2.0 (fusion 9+10 — préparation complète du dataset)
 """
 
 import os
 import sys
 import json
 import shutil
+import subprocess
+import threading
+import webbrowser
+import urllib.request
+import time
 from pathlib import Path
 from datetime import datetime
 
-# Module de référence visuelle caméra (étape 5, décision Q3) : à la
-# consolidation, la référence et le journal sont copiés dans le meta/ du
-# dataset, qui devient leur exemplaire de vérité. Import protégé et NON
-# bloquant : consolider un dataset existant doit rester possible sans le
-# module (avertissement de traçabilité incomplète à la place).
+# Module de référence visuelle caméra (étape 5, décision Q3) : à la consolidation,
+# la référence et le journal sont copiés dans le meta/ du dataset, qui devient leur
+# exemplaire de vérité. Import protégé et NON bloquant : consolider un dataset doit
+# rester possible sans le module (traçabilité incomplète signalée à la place ; le
+# script 12 possède un mode LEGACY pour les datasets sans références).
 try:
     from SEM_so101_camera_reference import copier_reference_vers_meta
     from SEM_so101_camera_reference import LOG_FILE as CAMERA_REF_LOG
@@ -41,8 +50,8 @@ except Exception:
 # Auto-activation de l'environnement lerobot si nécessaire
 try:
     import pandas as pd
+    import numpy as np
 except ImportError:
-    import subprocess
     lerobot_python = os.path.expanduser("~/miniconda3/envs/lerobot/bin/python3")
     if os.path.exists(lerobot_python):
         print("\n🔧 Activation automatique de l'environnement lerobot...")
@@ -59,7 +68,7 @@ except ImportError:
 
 POSITIONS = {
     1: {"nom": "Centre", "dossier": "position_1_centre"},
-    2: {"nom": "Bas", "dossier": "position_2_bas"},
+    2: {"nom": "Libre", "dossier": "position_2_libre"},
     3: {"nom": "Haut", "dossier": "position_3_haut"},
     4: {"nom": "Gauche", "dossier": "position_4_gauche"},
     5: {"nom": "Droite", "dossier": "position_5_droite"},
@@ -71,15 +80,32 @@ CAM_FOLLOWER = "cam_follower"
 SOURCE_BASE = Path(os.path.expanduser(
     "~/.cache/huggingface/lerobot/local/so101_pick_place"
 ))
-
 OUTPUT_BASE = Path(os.path.expanduser(
     "~/.cache/huggingface/lerobot/local/so101_pick_place_consolidated"
 ))
+# Dossier TEMPORAIRE : la consolidation + finalisation s'y font intégralement,
+# puis bascule atomique vers OUTPUT_BASE seulement si tout a réussi. Garantit
+# qu'un échec en cours de route ne détruit jamais le dataset final existant.
+TMP_BASE = Path(os.path.expanduser(
+    "~/.cache/huggingface/lerobot/local/so101_pick_place_consolidated_tmp"
+))
 
+LEROBOT_DIR = Path(os.path.expanduser("~/lerobot"))
 FPS = 30
 
+# Colonnes de DONNÉES obligatoires dans les parquets source. Les colonnes de
+# métadonnées (timestamp, frame_index, episode_index, index, task_index) sont
+# (re)générées à la consolidation, donc non exigées en entrée.
+COLONNES_DATA_REQUISES = ["observation.state", "action"]
+# Jeu complet attendu dans les parquets FINAUX (données + métadonnées régénérées).
+COLONNES_FINALES_REQUISES = COLONNES_DATA_REQUISES + [
+    "timestamp", "frame_index", "episode_index", "index", "task_index"
+]
+# Dimension attendue de observation.state et action (6 servos du SO-ARM 101).
+DIM_STATE_ACTION = 6
+
 # ============================================
-# FONCTIONS
+# FONCTIONS — ANALYSE & VALIDATION SOURCE
 # ============================================
 
 def clear_screen():
@@ -87,10 +113,14 @@ def clear_screen():
 
 
 def analyser_source():
-    """Analyse les données source et retourne un inventaire"""
+    """Analyse les données source et retourne (inventaire, total_episodes,
+    total_frames, donnees_erreurs). donnees_erreurs liste les parquets source
+    invalides : colonne de DONNÉES manquante, parquet vide, forme ≠ (n, 6), ou
+    valeurs non numériques / non finies (NaN/Inf) — dataset inexploitable."""
     inventaire = {}
     total_episodes = 0
     total_frames = 0
+    donnees_erreurs = []
 
     for pos_id, pos_info in POSITIONS.items():
         pos_path = SOURCE_BASE / pos_info['dossier']
@@ -102,6 +132,28 @@ def analyser_source():
             for pf in parquet_files:
                 try:
                     df = pd.read_parquet(pf)
+                    manquantes = [c for c in COLONNES_DATA_REQUISES if c not in df.columns]
+                    if manquantes:
+                        donnees_erreurs.append(
+                            f"Position {pos_id}, {pf.name} : colonne(s) manquante(s) {manquantes}")
+                    elif len(df) == 0:
+                        donnees_erreurs.append(
+                            f"Position {pos_id}, {pf.name} : parquet vide (0 ligne)")
+                    else:
+                        # Forme (n, 6), numérique et fini, pour observation.state et action.
+                        for col in COLONNES_DATA_REQUISES:
+                            try:
+                                arr = np.asarray(df[col].tolist(), dtype=np.float32)
+                            except (ValueError, TypeError):
+                                donnees_erreurs.append(
+                                    f"Position {pos_id}, {pf.name} : '{col}' non numérique ou de longueur variable")
+                                continue
+                            if arr.ndim != 2 or arr.shape[1] != DIM_STATE_ACTION:
+                                donnees_erreurs.append(
+                                    f"Position {pos_id}, {pf.name} : '{col}' forme {arr.shape} ≠ (n, {DIM_STATE_ACTION})")
+                            elif not np.isfinite(arr).all():
+                                donnees_erreurs.append(
+                                    f"Position {pos_id}, {pf.name} : '{col}' contient des valeurs non finies (NaN/Inf)")
                     episodes.append({
                         'file': pf,
                         'frames': len(df),
@@ -110,6 +162,7 @@ def analyser_source():
                     total_frames += len(df)
                 except Exception as e:
                     print(f"  ⚠️  Erreur lecture {pf.name}: {e}")
+                    donnees_erreurs.append(f"Position {pos_id}, {pf.name} : illisible ({e})")
 
         inventaire[pos_id] = {
             'nom': pos_info['nom'],
@@ -120,7 +173,7 @@ def analyser_source():
         }
         total_episodes += len(episodes)
 
-    return inventaire, total_episodes, total_frames
+    return inventaire, total_episodes, total_frames, donnees_erreurs
 
 
 def afficher_inventaire(inventaire, total_episodes, total_frames):
@@ -142,46 +195,36 @@ def afficher_inventaire(inventaire, total_episodes, total_frames):
 
 
 def verifier_videos(inventaire):
-    """Vérifie que les vidéos existent pour chaque épisode"""
+    """Vérifie que les deux vidéos existent pour chaque épisode. Retourne la liste
+    des manques (une vidéo absente pour un épisode existant = corruption)."""
     erreurs = []
-
     for pos_id, info in inventaire.items():
         pos_path = info['path']
         for ep in info['episodes']:
             idx = ep['episode_idx_original']
             fname = f"episode_{idx:06d}.mp4"
-
-            # Vérifier cam_top
             vid_top = pos_path / "videos" / "chunk-000" / f"observation.images.{CAM_TOP}" / fname
             if not vid_top.exists():
                 erreurs.append(f"Position {pos_id}, épisode {idx}: {CAM_TOP} manquant")
-
-            # Vérifier cam_follower
             vid_fol = pos_path / "videos" / "chunk-000" / f"observation.images.{CAM_FOLLOWER}" / fname
             if not vid_fol.exists():
                 erreurs.append(f"Position {pos_id}, épisode {idx}: {CAM_FOLLOWER} manquant")
-
     return erreurs
 
 
-def consolider(inventaire, total_episodes, total_frames):
-    """Fusionne toutes les positions en un seul dataset"""
+# ============================================
+# CONSOLIDATION (vers un dossier de destination)
+# ============================================
 
-    # Préparer le dossier de sortie
-    if OUTPUT_BASE.exists():
-        print(f"\n⚠️  Le dossier de sortie existe déjà :")
-        print(f"   {OUTPUT_BASE}")
-        choix = input("   [E]craser ou [A]nnuler ? ").strip().upper()
-        if choix != 'E':
-            print("   Annulé.")
-            return False
-        shutil.rmtree(OUTPUT_BASE)
-
-    # Créer l'arborescence
-    data_out = OUTPUT_BASE / "data" / "chunk-000"
-    video_top_out = OUTPUT_BASE / "videos" / "chunk-000" / f"observation.images.{CAM_TOP}"
-    video_fol_out = OUTPUT_BASE / "videos" / "chunk-000" / f"observation.images.{CAM_FOLLOWER}"
-    meta_out = OUTPUT_BASE / "meta"
+def consolider(inventaire, dest_base):
+    """Fusionne toutes les positions dans dest_base (dossier TEMPORAIRE).
+    Fail-closed : si une vidéo source attendue est absente au moment de la copie,
+    la consolidation est annulée (return (False, ref_status)). Retourne
+    (True, ref_status) sinon, avec ref_status dans {"copiee","absente","echec"}."""
+    data_out = dest_base / "data" / "chunk-000"
+    video_top_out = dest_base / "videos" / "chunk-000" / f"observation.images.{CAM_TOP}"
+    video_fol_out = dest_base / "videos" / "chunk-000" / f"observation.images.{CAM_FOLLOWER}"
+    meta_out = dest_base / "meta"
 
     data_out.mkdir(parents=True, exist_ok=True)
     video_top_out.mkdir(parents=True, exist_ok=True)
@@ -202,7 +245,6 @@ def consolider(inventaire, total_episodes, total_frames):
         pos_path = info['path']
         task_desc = f"Prendre le cube à la position {info['nom']} et le déposer dans la boîte"
 
-        # Enregistrer la tâche
         if task_desc not in tasks_set:
             tasks_set[task_desc] = len(tasks_set)
         task_index = tasks_set[task_desc]
@@ -218,32 +260,28 @@ def consolider(inventaire, total_episodes, total_frames):
 
             df = pd.read_parquet(src_parquet)
 
-            # Mettre à jour les index
             df['episode_index'] = new_idx
             df['task_index'] = task_index
             df['index'] = range(global_frame_idx, global_frame_idx + len(df))
             df['frame_index'] = range(len(df))
-
-            # Normaliser les timestamps (exactement 1/FPS entre chaque frame)
             df['timestamp'] = [i / FPS for i in range(len(df))]
 
             df.to_parquet(dst_parquet, index=False)
 
-            # 2. Copier les vidéos
+            # 2. Copier les vidéos — fail-closed si une source attendue est absente.
             orig_fname = f"episode_{orig_idx:06d}.mp4"
             new_fname = f"episode_{new_idx:06d}.mp4"
 
-            # cam_top
             src_vid_top = pos_path / "videos" / "chunk-000" / f"observation.images.{CAM_TOP}" / orig_fname
-            if src_vid_top.exists():
-                shutil.copy2(src_vid_top, video_top_out / new_fname)
-
-            # cam_follower
             src_vid_fol = pos_path / "videos" / "chunk-000" / f"observation.images.{CAM_FOLLOWER}" / orig_fname
-            if src_vid_fol.exists():
-                shutil.copy2(src_vid_fol, video_fol_out / new_fname)
+            if not src_vid_top.exists() or not src_vid_fol.exists():
+                manque = CAM_TOP if not src_vid_top.exists() else CAM_FOLLOWER
+                print(f"\n  ❌ Vidéo {manque} absente pour position {pos_id} épisode {orig_idx}"
+                      f" — consolidation annulée (dataset incomplet).")
+                return False, "echec"
+            shutil.copy2(src_vid_top, video_top_out / new_fname)
+            shutil.copy2(src_vid_fol, video_fol_out / new_fname)
 
-            # 3. Metadata épisode
             episodes_metadata.append({
                 "episode_index": new_idx,
                 "tasks": [task_desc],
@@ -252,8 +290,6 @@ def consolider(inventaire, total_episodes, total_frames):
 
             global_frame_idx += num_frames
             global_episode_idx += 1
-
-            # Progression
             print(f"  ✅ Position {pos_id} ({info['nom']:8}) ep {orig_idx} → épisode {new_idx:3d} ({num_frames} frames)")
 
     # 4. Générer info.json (format basé sur lerobot/svla_so101_pickplace)
@@ -261,7 +297,11 @@ def consolider(inventaire, total_episodes, total_frames):
         "shoulder_pan", "shoulder_lift", "elbow_flex",
         "wrist_flex", "wrist_roll", "gripper"
     ]
-
+    video_info = {
+        "video.fps": FPS, "video.height": 360, "video.width": 640,
+        "video.channels": 3, "video.codec": "mp4v", "video.pix_fmt": "yuv420p",
+        "video.is_depth_map": False, "has_audio": False
+    }
     info_json = {
         "codebase_version": "v2.1",
         "robot_type": "so101_follower",
@@ -276,45 +316,17 @@ def consolider(inventaire, total_episodes, total_frames):
         "data_path": "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet",
         "video_path": "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4",
         "features": {
-            "action": {
-                "dtype": "float32",
-                "shape": [6],
-                "names": motor_names
-            },
-            "observation.state": {
-                "dtype": "float32",
-                "shape": [6],
-                "names": motor_names
-            },
+            "action": {"dtype": "float32", "shape": [6], "names": motor_names},
+            "observation.state": {"dtype": "float32", "shape": [6], "names": motor_names},
             f"observation.images.{CAM_TOP}": {
-                "dtype": "video",
-                "shape": [360, 640, 3],
+                "dtype": "video", "shape": [360, 640, 3],
                 "names": ["height", "width", "channels"],
-                "info": {
-                    "video.fps": FPS,
-                    "video.height": 360,
-                    "video.width": 640,
-                    "video.channels": 3,
-                    "video.codec": "mp4v",
-                    "video.pix_fmt": "yuv420p",
-                    "video.is_depth_map": False,
-                    "has_audio": False
-                }
+                "info": dict(video_info)
             },
             f"observation.images.{CAM_FOLLOWER}": {
-                "dtype": "video",
-                "shape": [360, 640, 3],
+                "dtype": "video", "shape": [360, 640, 3],
                 "names": ["height", "width", "channels"],
-                "info": {
-                    "video.fps": FPS,
-                    "video.height": 360,
-                    "video.width": 640,
-                    "video.channels": 3,
-                    "video.codec": "mp4v",
-                    "video.pix_fmt": "yuv420p",
-                    "video.is_depth_map": False,
-                    "has_audio": False
-                }
+                "info": dict(video_info)
             },
             "timestamp": {"dtype": "float32", "shape": [1], "names": None},
             "frame_index": {"dtype": "int64", "shape": [1], "names": None},
@@ -323,21 +335,20 @@ def consolider(inventaire, total_episodes, total_frames):
             "task_index": {"dtype": "int64", "shape": [1], "names": None}
         }
     }
-
     with open(meta_out / "info.json", 'w') as f:
         json.dump(info_json, f, indent=2)
 
-    # 5. Générer tasks.jsonl
+    # 5. tasks.jsonl
     with open(meta_out / "tasks.jsonl", 'w') as f:
         for task_desc, task_idx in sorted(tasks_set.items(), key=lambda x: x[1]):
             f.write(json.dumps({"task_index": task_idx, "task": task_desc}) + "\n")
 
-    # 6. Générer episodes.jsonl
+    # 6. episodes.jsonl
     with open(meta_out / "episodes.jsonl", 'w') as f:
         for ep_meta in episodes_metadata:
             f.write(json.dumps(ep_meta) + "\n")
 
-    # 7. Sauvegarder un fichier de traçabilité
+    # 7. Traçabilité de consolidation
     trace = {
         "created": datetime.now().isoformat(),
         "source": str(SOURCE_BASE),
@@ -345,23 +356,37 @@ def consolider(inventaire, total_episodes, total_frames):
         "total_episodes": global_episode_idx,
         "total_frames": global_frame_idx,
         "positions": {
-            str(pos_id): {
-                "nom": info['nom'],
-                "episodes": info['count']
-            }
+            str(pos_id): {"nom": info['nom'], "episodes": info['count']}
             for pos_id, info in inventaire.items()
         }
     }
     with open(meta_out / "consolidation_trace.json", 'w') as f:
         json.dump(trace, f, indent=2)
 
-    # 8. Traçabilité « Référence visuelle caméra » (étape 5, décision Q3) :
-    #    copie de la référence active (JSON + image témoin masquée) et du
-    #    journal des passages 🟠 dans le meta/ du dataset consolidé — le
-    #    déploiement s'y rattachera via le train_config.json du checkpoint.
+    # 8. Traçabilité « Référence visuelle caméra » — statut fondé sur la PRÉSENCE
+    #    RÉELLE des fichiers dans meta/ (le script 12 y cherche des fichiers réels,
+    #    pas un code de retour). Non bloquant : le script 12 a un mode LEGACY.
+    ref_status = "absente"
     if CAMERA_REF_AVAILABLE:
         print("\n📷 Traçabilité caméra → meta/ ...")
-        copier_reference_vers_meta(meta_out)
+        ref_echec = False
+        try:
+            copier_reference_vers_meta(meta_out)
+        except Exception as e:
+            print(f"   ⚠️  Copie de la référence caméra impossible ({e}).")
+            ref_echec = True
+        # Vérification effective : fichiers camera_reference_<cam>.json attendus.
+        attendus = [meta_out / f"camera_reference_{CAM_TOP}.json",
+                    meta_out / f"camera_reference_{CAM_FOLLOWER}.json"]
+        presents = sum(1 for p in attendus if p.exists())
+        ref_status = ("copiee" if presents == 2 else "partielle" if presents == 1
+                      else "echec" if ref_echec else "absente")
+        if ref_status == "copiee":
+            print("   ✅ Références caméra présentes dans meta/ (2/2).")
+        elif ref_status == "partielle":
+            print(f"   ⚠️  Référence caméra incomplète dans meta/ ({presents}/2 — traçabilité partielle).")
+        else:
+            print("   ⚠️  Aucune référence caméra dans meta/ (traçabilité incomplète).")
         if CAMERA_REF_LOG is not None and Path(CAMERA_REF_LOG).exists():
             try:
                 shutil.copy2(CAMERA_REF_LOG, meta_out / Path(CAMERA_REF_LOG).name)
@@ -371,29 +396,290 @@ def consolider(inventaire, total_episodes, total_frames):
         else:
             print("   ℹ️  Aucun journal de passages 🟠 (normal si tout était 🟢).")
     else:
-        print("\n⚠️  Module SEM_so101_camera_reference indisponible — référence")
-        print("   caméra NON copiée dans le meta/ (traçabilité incomplète).")
+        print("\n⚠️  Module SEM_so101_camera_reference indisponible — référence caméra")
+        print("   NON copiée dans le meta/ (traçabilité incomplète ; mode LEGACY au script 12).")
 
-    return True
+    return True, ref_status
 
 
-def afficher_resultat():
-    """Affiche le résumé du dataset consolidé"""
-    info_file = OUTPUT_BASE / "meta" / "info.json"
+# ============================================
+# FINALISATION (opère sur un dataset donné)
+# ============================================
+
+def completer_info_json(dataset_path):
+    """Ajoute les champs manquants dans info.json pour la compatibilité LeRobot."""
+    info_file = dataset_path / "meta" / "info.json"
     if not info_file.exists():
-        print("❌ Aucun dataset consolidé trouvé")
-        return
+        return False
 
     with open(info_file) as f:
         info = json.load(f)
 
-    # Compter les fichiers
-    n_parquet = len(list((OUTPUT_BASE / "data" / "chunk-000").glob("*.parquet")))
-    n_vid_top = len(list((OUTPUT_BASE / "videos" / "chunk-000" / f"observation.images.{CAM_TOP}").glob("*.mp4")))
-    n_vid_fol = len(list((OUTPUT_BASE / "videos" / "chunk-000" / f"observation.images.{CAM_FOLLOWER}").glob("*.mp4")))
+    modifie = False
+    champs_requis = {
+        "chunks_size": 1000,
+        "data_path": "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet",
+        "video_path": "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4",
+    }
+    for champ, valeur in champs_requis.items():
+        if champ not in info:
+            info[champ] = valeur
+            print(f"  🔧 Ajouté dans info.json : {champ}")
+            modifie = True
 
-    # Taille totale
-    total_size = sum(f.stat().st_size for f in OUTPUT_BASE.rglob("*") if f.is_file())
+    colonnes_meta = {
+        "timestamp": {"dtype": "float32", "shape": [1]},
+        "frame_index": {"dtype": "int64", "shape": [1]},
+        "episode_index": {"dtype": "int64", "shape": [1]},
+        "index": {"dtype": "int64", "shape": [1]},
+        "task_index": {"dtype": "int64", "shape": [1]}
+    }
+    if "features" in info:
+        for col, spec in colonnes_meta.items():
+            if col not in info["features"]:
+                info["features"][col] = spec
+                print(f"  🔧 Ajouté dans features : {col}")
+                modifie = True
+
+    if modifie:
+        with open(info_file, 'w') as f:
+            json.dump(info, f, indent=2)
+        print("  ✅ info.json mis à jour")
+    else:
+        print("  ✅ info.json complet")
+    return True
+
+
+def generer_episodes_stats(dataset_path):
+    """Génère meta/episodes_stats.jsonl (requis par LeRobot v2.1).
+    Valide d'abord la présence des colonnes obligatoires dans CHAQUE parquet ;
+    refuse (return False) si une colonne manque (dataset inexploitable). Les stats
+    images utilisent volontairement les valeurs standard ImageNet (backbone ACT
+    pré-entraîné) — choix DOCUMENTÉ, non recalculé sans preuve LeRobot/ACT contraire."""
+    stats_file = dataset_path / "meta" / "episodes_stats.jsonl"
+    data_dir = dataset_path / "data" / "chunk-000"
+    parquets = sorted(data_dir.glob("*.parquet"))
+
+    if not parquets:
+        print("  ❌ Aucun fichier parquet trouvé")
+        return False
+
+    # Validation stricte des colonnes obligatoires AVANT tout calcul.
+    for pf in parquets:
+        cols = set(pd.read_parquet(pf, columns=None).columns)
+        manquantes = [c for c in COLONNES_FINALES_REQUISES if c not in cols]
+        if manquantes:
+            print(f"  ❌ {pf.name} : colonne(s) obligatoire(s) manquante(s) {manquantes}")
+            print("     Dataset inexploitable pour l'entraînement — génération des stats annulée.")
+            return False
+
+    print("\n📊 Génération de episodes_stats.jsonl...")
+    stats_lines = []
+    for pf in parquets:
+        ep_idx = int(pf.stem.split('_')[1])
+        df = pd.read_parquet(pf)
+
+        ep_stats = {"episode_index": ep_idx, "stats": {}}
+
+        states = np.array(df['observation.state'].tolist(), dtype=np.float32)
+        ep_stats["stats"]["observation.state"] = {
+            "mean": states.mean(axis=0).tolist(),
+            "std": states.std(axis=0).tolist(),
+            "min": states.min(axis=0).tolist(),
+            "max": states.max(axis=0).tolist(),
+            "count": [len(df)]
+        }
+
+        actions = np.array(df['action'].tolist(), dtype=np.float32)
+        ep_stats["stats"]["action"] = {
+            "mean": actions.mean(axis=0).tolist(),
+            "std": actions.std(axis=0).tolist(),
+            "min": actions.min(axis=0).tolist(),
+            "max": actions.max(axis=0).tolist(),
+            "count": [len(df)]
+        }
+
+        # Stats images : valeurs standard ImageNet (choix délibéré, cf. docstring).
+        num_frames = len(df)
+        for cam in [f"observation.images.{CAM_TOP}", f"observation.images.{CAM_FOLLOWER}"]:
+            ep_stats["stats"][cam] = {
+                "mean": [[[0.485]], [[0.456]], [[0.406]]],
+                "std": [[[0.229]], [[0.224]], [[0.225]]],
+                "min": [[[0.0]], [[0.0]], [[0.0]]],
+                "max": [[[1.0]], [[1.0]], [[1.0]]],
+                "count": [num_frames]
+            }
+
+        stats_lines.append(ep_stats)
+        print(f"  ✅ Épisode {ep_idx:3d} — {len(df)} frames, "
+              f"state range [{states.min():.0f}-{states.max():.0f}]")
+
+    with open(stats_file, 'w') as f:
+        for line in stats_lines:
+            f.write(json.dumps(line) + "\n")
+
+    print(f"\n  ✅ episodes_stats.jsonl généré ({len(stats_lines)} épisodes)")
+    return True
+
+
+def mettre_a_jour_codec_info_json(dataset_path):
+    """Met à jour video.codec ('mp4v' → 'h264') dans info.json après conversion H.264.
+    Idempotent : ne modifie que les champs encore à 'mp4v'. LeRobot décode d'après le
+    flux réel, donc non bloquant, mais une métadonnée fausse n'a pas lieu d'être."""
+    info_file = dataset_path / "meta" / "info.json"
+    if not info_file.exists():
+        return
+    with open(info_file) as f:
+        info = json.load(f)
+    modifie = False
+    for spec in info.get("features", {}).values():
+        if isinstance(spec, dict) and spec.get("dtype") == "video":
+            vinfo = spec.get("info", {})
+            if vinfo.get("video.codec") == "mp4v":
+                vinfo["video.codec"] = "h264"
+                modifie = True
+    if modifie:
+        with open(info_file, 'w') as f:
+            json.dump(info, f, indent=2)
+        print("  🔧 info.json : video.codec mis à jour (mp4v → h264)")
+
+
+def convertir_videos_h264(dataset_path):
+    """Convertit les vidéos en H.264 (compatibilité navigateur). Retourne un statut
+    explicite : 'ok' (tout converti ou déjà fait), 'non_fait' (ffmpeg absent),
+    'echec' (au moins une conversion a échoué)."""
+    vid_dir = dataset_path / "videos" / "chunk-000"
+    if not vid_dir.exists():
+        return "non_fait"
+
+    try:
+        result = subprocess.run(["ffmpeg", "-version"], capture_output=True)
+        if result.returncode != 0:
+            print("  ⚠️  ffmpeg non disponible — vidéos non converties")
+            return "non_fait"
+    except FileNotFoundError:
+        print("  ⚠️  ffmpeg non trouvé — vidéos non converties")
+        return "non_fait"
+
+    marker = dataset_path / "meta" / ".h264_converted"
+    if marker.exists():
+        print("  ✅ Vidéos déjà converties en H.264")
+        mettre_a_jour_codec_info_json(dataset_path)
+        return "ok"
+
+    print("\n🎬 Conversion des vidéos en H.264 (compatibilité navigateur)...")
+    mp4_files = list(vid_dir.rglob("*.mp4"))
+    total = len(mp4_files)
+
+    # TOUT-OU-RIEN : on convertit d'abord tout vers des fichiers temporaires SANS
+    # toucher aux originaux ; on ne remplace les originaux que si TOUTES les
+    # conversions réussissent. Sinon le dataset reste uniformément en mp4v (jamais
+    # un état mixte h264/mp4v).
+    convertis = []  # liste de (tmp_file, mp4_file) convertis avec succès
+    erreurs = 0
+    for i, mp4_file in enumerate(mp4_files):
+        tmp_file = mp4_file.with_suffix('.tmp.mp4')
+        result = subprocess.run(
+            ["ffmpeg", "-y", "-i", str(mp4_file),
+             "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+             "-pix_fmt", "yuv420p", str(tmp_file)],
+            capture_output=True
+        )
+        if result.returncode == 0:
+            convertis.append((tmp_file, mp4_file))
+            print(f"  ✅ [{i+1}/{total}] {mp4_file.parent.name}/{mp4_file.name}")
+        else:
+            if tmp_file.exists():
+                tmp_file.unlink()
+            erreurs += 1
+            print(f"  ❌ [{i+1}/{total}] {mp4_file.name} — échec conversion")
+
+    if erreurs:
+        # Annulation : on supprime les temporaires réussis, AUCUN original n'est modifié.
+        for tmp_file, _ in convertis:
+            if tmp_file.exists():
+                tmp_file.unlink()
+        print(f"\n  ❌ {erreurs}/{total} échec(s) — AUCUN original modifié "
+              f"(dataset laissé en mp4v ; relancez pour réessayer).")
+        return "echec"
+
+    # Toutes les conversions ont réussi : on remplace les originaux d'un seul tenant.
+    # Encadré : un échec d'E/S ici laisserait TMP en état mixte → arrêt propre (le
+    # dataset final n'étant pas encore basculé, l'ancien dataset reste intact).
+    try:
+        for tmp_file, mp4_file in convertis:
+            tmp_file.replace(mp4_file)
+    except Exception as e:
+        print(f"\n  ❌ Remplacement vidéo interrompu ({e}) — dataset temporaire incohérent.")
+        return "echec_remplacement"
+    marker.touch()
+    mettre_a_jour_codec_info_json(dataset_path)
+    print(f"\n  ✅ {total} vidéos converties en H.264")
+    return "ok"
+
+
+def verifier_frames_video(dataset_path):
+    """Vérifie que chaque vidéo contient autant de frames que son parquet.
+    Retourne (etat, detail) avec etat dans {"ok", "incoherences", "non_verifie"} :
+    « non vérifié » (ffprobe absent) n'est PAS « OK » — distinction explicite."""
+    print("\n🔍 Vérification frames vidéo vs parquet...")
+
+    try:
+        r = subprocess.run(["ffprobe", "-version"], capture_output=True)
+        if r.returncode != 0:
+            print("  ⚠️  ffprobe non disponible — vérification NON effectuée.")
+            return "non_verifie", None
+    except FileNotFoundError:
+        print("  ⚠️  ffprobe non trouvé — vérification NON effectuée.")
+        return "non_verifie", None
+
+    def compter_frames(video_path):
+        try:
+            r = subprocess.run(
+                ["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0",
+                 "-show_entries", "stream=nb_read_frames",
+                 "-of", "default=nokey=1:noprint_wrappers=1", str(video_path)],
+                capture_output=True, text=True
+            )
+            return int(r.stdout.strip())
+        except (ValueError, FileNotFoundError):
+            return None
+
+    parquets = sorted((dataset_path / "data" / "chunk-000").glob("*.parquet"))
+    incoherences = 0
+    non_comptees = 0
+    for pf in parquets:
+        ep_idx = int(pf.stem.split('_')[1])
+        n_parquet = len(pd.read_parquet(pf))
+        fname = f"episode_{ep_idx:06d}.mp4"
+        for cam in [CAM_TOP, CAM_FOLLOWER]:
+            vid = dataset_path / "videos" / "chunk-000" / f"observation.images.{cam}" / fname
+            if not vid.exists():
+                print(f"  ❌ Épisode {ep_idx:3d} ({cam}) : vidéo manquante")
+                incoherences += 1
+                continue
+            n_video = compter_frames(vid)
+            if n_video is None:
+                print(f"  ⚠️  Épisode {ep_idx:3d} ({cam}) : comptage de frames impossible")
+                non_comptees += 1
+            elif n_video != n_parquet:
+                print(f"  ❌ Épisode {ep_idx:3d} ({cam}) : {n_video} frames vidéo ≠ {n_parquet} lignes parquet")
+                incoherences += 1
+
+    if incoherences > 0:
+        print(f"  ❌ {incoherences} incohérence(s) — à examiner avant l'entraînement.")
+        return "incoherences", incoherences
+    if non_comptees > 0:
+        print(f"  ⚠️  {non_comptees} vidéo(s) non comptée(s) — vérification incomplète.")
+        return "non_verifie", non_comptees
+    print(f"  ✅ Frames vidéo = lignes parquet pour tous les épisodes ({len(parquets)})")
+    return "ok", 0
+
+
+def afficher_resume(info, dataset_path):
+    """Affiche le résumé du dataset préparé."""
+    n_parquet = len(list((dataset_path / "data" / "chunk-000").glob("*.parquet")))
+    total_size = sum(f.stat().st_size for f in dataset_path.rglob("*") if f.is_file())
     if total_size > 1024 * 1024 * 1024:
         size_str = f"{total_size / (1024**3):.1f} GB"
     elif total_size > 1024 * 1024:
@@ -401,94 +687,316 @@ def afficher_resultat():
     else:
         size_str = f"{total_size / 1024:.0f} KB"
 
+    meta_files = []
+    for f in ["info.json", "episodes.jsonl", "tasks.jsonl", "episodes_stats.jsonl"]:
+        status = "✅" if (dataset_path / "meta" / f).exists() else "❌"
+        meta_files.append(f"  {status} {f}")
+
     print(f"""
 ╔══════════════════════════════════════════════════════════╗
-║          DATASET CONSOLIDÉ — RÉSUMÉ                      ║
+║          DATASET PRÉPARÉ — RÉSUMÉ                        ║
 ╠══════════════════════════════════════════════════════════╣
 ║                                                          ║
-║  📊 Épisodes : {info['total_episodes']:4d}                                ║
-║  🎬 Frames   : {info['total_frames']:6d}                              ║
-║  📹 Vidéos   : {n_vid_top} (cam_top) + {n_vid_fol} (cam_follower)         ║
+║  📊 Épisodes : {info.get('total_episodes', '?'):4}                                ║
+║  🎬 Frames   : {info.get('total_frames', '?'):6}                              ║
 ║  📄 Parquet  : {n_parquet} fichiers                           ║
 ║  💾 Taille   : {size_str:10}                            ║
-║  🎯 Tâches   : {info['total_tasks']}                                    ║
-║  ⚡ FPS      : {info['fps']}                                     ║
-║                                                          ║
-║  📁 Chemin : {str(OUTPUT_BASE)[:42]}  ║
+║  🎯 Tâches   : {info.get('total_tasks', '?')}                                    ║
+║  ⚡ FPS      : {info.get('fps', '?')}                                     ║
 ║                                                          ║
 ╚══════════════════════════════════════════════════════════╝
 """)
-
-    # Lister les tâches
-    tasks_file = OUTPUT_BASE / "meta" / "tasks.jsonl"
-    if tasks_file.exists():
-        print("  📋 Tâches enregistrées :")
-        with open(tasks_file) as f:
-            for line in f:
-                task = json.loads(line)
-                print(f"     {task['task_index']}: {task['task']}")
-        print()
+    print("  📋 Fichiers de métadonnées :")
+    for mf in meta_files:
+        print(f"     {mf}")
+    print()
 
 
 # ============================================
-# PROGRAMME PRINCIPAL
+# BASCULE ATOMIQUE & RAPPORT
 # ============================================
+
+def nettoyer_tmp():
+    """Supprime le dossier temporaire s'il existe (best-effort)."""
+    if TMP_BASE.exists():
+        try:
+            shutil.rmtree(TMP_BASE)
+        except Exception as e:
+            print(f"  ⚠️  Nettoyage du dossier temporaire impossible ({e}).")
+
+
+def basculer_vers_final():
+    """Remplace OUTPUT_BASE par TMP_BASE de façon aussi atomique que possible :
+    l'ancien dataset n'est supprimé qu'au tout dernier moment, puis TMP est renommé.
+    Retourne True si la bascule a réussi."""
+    try:
+        if OUTPUT_BASE.exists():
+            ancien = OUTPUT_BASE.with_name(OUTPUT_BASE.name + "_old")
+            if ancien.exists():
+                shutil.rmtree(ancien)
+            OUTPUT_BASE.rename(ancien)            # met l'ancien de côté
+            try:
+                TMP_BASE.rename(OUTPUT_BASE)       # installe le nouveau
+            except Exception:
+                ancien.rename(OUTPUT_BASE)         # rollback si le renommage échoue
+                raise
+            # Le nouveau dataset est installé : le nettoyage de l'ancien est
+            # best-effort et ne doit JAMAIS faire échouer une bascule réussie.
+            try:
+                shutil.rmtree(ancien)
+            except Exception as e:
+                print(f"  ⚠️  Ancien dataset non supprimé ({ancien.name}) : {e}"
+                      f" — suppression manuelle possible, le nouveau dataset est en place.")
+        else:
+            TMP_BASE.rename(OUTPUT_BASE)
+        return True
+    except Exception as e:
+        print(f"  ❌ Bascule vers le dataset final impossible ({e}).")
+        return False
+
+
+def afficher_rapport_final(ref_status, h264_status, frames_status):
+    """Rapport à états DISTINCTS : on ne déclare jamais « tout prêt » d'un bloc."""
+    map_ref = {
+        "copiee": "✅ présentes dans meta/ (2/2)",
+        "partielle": "⚠️  INCOMPLÈTES dans meta/ (1/2) — le script 12 BLOQUERA le déploiement",
+        "absente": "⚠️  absentes (traçabilité incomplète — mode LEGACY au script 12)",
+        "echec":  "❌ copie échouée (traçabilité incomplète)",
+    }
+    map_h264 = {
+        "ok": "✅ vidéos en H.264 (visualisation navigateur OK)",
+        "non_fait": "⚠️  non faite (ffmpeg absent) — vidéos encore en mp4v, visualisation navigateur indisponible",
+        "echec": "❌ échec partiel — relancez le script pour réessayer",
+    }
+    map_frames = {
+        "ok": "✅ frames vidéo = lignes parquet (vérifié)",
+        "non_verifie": "⚠️  NON vérifiée (ffprobe absent ou comptage impossible)",
+        "incoherences": "❌ incohérences détectées",
+    }
+    print("\n" + "=" * 60)
+    print("  RAPPORT DE PRÉPARATION DU DATASET")
+    print("=" * 60)
+    print(f"  • Consolidation + métadonnées v2.1 : ✅ (info.json, tasks, episodes, episodes_stats)")
+    print(f"  • Références caméra : {map_ref.get(ref_status, ref_status)}")
+    print(f"  • Conversion H.264 (navigateur) : {map_h264.get(h264_status, h264_status)}")
+    print(f"  • Vérification frames vidéo/parquet : {map_frames.get(frames_status, frames_status)}")
+    print("-" * 60)
+    print(f"  📂 Dataset final : {OUTPUT_BASE}")
+    print("  ℹ️  Métadonnées complètes pour l'entraînement (script 11).")
+    print("     La lecture vidéo dépend de votre backend LeRobot : un essai avec le")
+    print("     script 11 confirme la compatibilité (mp4v vs H.264).")
+    print("=" * 60)
+
+
+# ============================================
+# VISUALISATION (optionnelle)
+# ============================================
+
+def ouvrir_navigateur_quand_pret(url, timeout=30.0, interval=0.5):
+    """Attend que le serveur local réponde avant d'ouvrir le navigateur."""
+    debut = time.time()
+    while time.time() - debut < timeout:
+        try:
+            with urllib.request.urlopen(url, timeout=1):
+                webbrowser.open(url)
+                return
+        except Exception:
+            time.sleep(interval)
+    print(f"⚠️  Le navigateur n'a pas été ouvert automatiquement : serveur non joignable après {timeout:.0f} s.")
+    print(f"   Ouvrez manuellement : {url}")
+
+
+def lancer_visualisation():
+    """Lance l'outil de visualisation officiel LeRobot sur le dataset final."""
+    script_path = LEROBOT_DIR / "lerobot" / "scripts" / "visualize_dataset_html.py"
+    if not script_path.exists():
+        print(f"\n❌ Script de visualisation introuvable :\n   {script_path}")
+        return
+
+    url = "http://127.0.0.1:9090"
+    print("\n🌐 Lancement de la visualisation LeRobot...")
+    print(f"   Le navigateur par défaut s'ouvrira automatiquement (sinon : {url}).")
+    print("   Appuyez sur Ctrl+C dans le terminal pour arrêter.\n")
+
+    threading.Thread(target=ouvrir_navigateur_quand_pret, args=(url,), daemon=True).start()
+    try:
+        subprocess.run(
+            [sys.executable, str(script_path),
+             "--repo-id", "local/so101_pick_place_consolidated",
+             "--tolerance-s", "1.0"],
+            cwd=str(LEROBOT_DIR)
+        )
+    except KeyboardInterrupt:
+        print("\n\n✅ Serveur de visualisation arrêté.")
+
+
+# ============================================
+# ORCHESTRATION
+# ============================================
+
+def dataset_final_pret():
+    """Heuristique (pas une validation complète) : OUTPUT_BASE ressemble-t-il à un
+    dataset déjà préparé ? Sert à proposer le raccourci visualisation."""
+    meta = OUTPUT_BASE / "meta"
+    for f in ["info.json", "episodes_stats.jsonl", "tasks.jsonl", "episodes.jsonl"]:
+        if not (meta / f).exists():
+            return False
+    return any((OUTPUT_BASE / "data" / "chunk-000").glob("*.parquet"))
+
+
+def preparer_dataset():
+    """Pipeline complet : analyse → validation → consolidation (TMP) → finalisation
+    → bascule atomique → rapport. Retourne True si un dataset final a été produit."""
+    if not SOURCE_BASE.exists():
+        print(f"❌ Dossier source introuvable :\n   {SOURCE_BASE}")
+        print("\n   Lancez d'abord le script 8 pour enregistrer des épisodes.")
+        return False
+
+    print("🔍 Analyse des données source...")
+    inventaire, total_episodes, total_frames, donnees_erreurs = analyser_source()
+
+    if total_episodes == 0:
+        print("\n❌ Aucun épisode trouvé. Enregistrez d'abord des épisodes avec le script 8.")
+        return False
+
+    afficher_inventaire(inventaire, total_episodes, total_frames)
+
+    # Fail-closed : parquets source invalides (colonnes, vide, forme, NaN/Inf).
+    if donnees_erreurs:
+        print(f"\n❌ {len(donnees_erreurs)} parquet(s) source invalide(s) :")
+        for err in donnees_erreurs[:10]:
+            print(f"   • {err}")
+        if len(donnees_erreurs) > 10:
+            print(f"   ... et {len(donnees_erreurs) - 10} autres")
+        print("   Préparation annulée (dataset inexploitable pour l'entraînement).")
+        return False
+
+    # Fail-closed : vidéos manquantes pour des épisodes existants.
+    print("\n🔍 Vérification des vidéos...")
+    erreurs_videos = verifier_videos(inventaire)
+    if erreurs_videos:
+        print(f"\n❌ {len(erreurs_videos)} vidéo(s) manquante(s) pour des épisodes existants :")
+        for err in erreurs_videos[:10]:
+            print(f"   • {err}")
+        if len(erreurs_videos) > 10:
+            print(f"   ... et {len(erreurs_videos) - 10} autres")
+        print("   Préparation annulée (dataset incomplet).")
+        return False
+    print("  ✅ Toutes les vidéos sont présentes")
+
+    # Pas de blocage sur le NOMBRE d'épisodes : un dataset réduit (peu d'épisodes
+    # par position) est un usage pédagogique légitime. On signale seulement les
+    # positions à 0 épisode (risque d'oubli après renommage, ex. position_2_libre)
+    # et on demande une confirmation explicite — sans empêcher quoi que ce soit.
+    positions_vides = [(pid, info['nom']) for pid, info in inventaire.items() if info['count'] == 0]
+    if positions_vides:
+        print("\n⚠️  Position(s) SANS épisode — absente(s) du dataset final :")
+        for pid, nom in positions_vides:
+            print(f"   • Position {pid} ({nom}) : 0 épisode")
+        n_ok = sum(1 for v in inventaire.values() if v['count'] > 0)
+        print(f"   Le dataset contiendra {n_ok}/{len(inventaire)} positions, {total_episodes} épisodes.")
+        if input("   Confirmer la préparation ainsi ? [O/N] : ").strip().upper() != 'O':
+            print("   Préparation annulée.")
+            return False
+
+    print(f"\n📦 Le dataset préparé sera créé dans :\n   {OUTPUT_BASE}")
+    print(f"   (construction temporaire : {TMP_BASE.name})")
+    input("\nAppuyez sur ENTRÉE pour lancer la préparation...")
+
+    # Construction dans le dossier temporaire (atomicité).
+    nettoyer_tmp()
+    ok_consol, ref_status = consolider(inventaire, TMP_BASE)
+    if not ok_consol:
+        nettoyer_tmp()
+        print("\n❌ Consolidation annulée — dataset final inchangé.")
+        return False
+
+    # Référence caméra PARTIELLE = état incohérent (1 caméra sur 2), que le script 12
+    # refuse au déploiement. On n'installe pas un dataset déjà condamné. ('absente'
+    # reste tolérée : mode LEGACY cohérent.)
+    if ref_status == "partielle":
+        nettoyer_tmp()
+        print("\n❌ Références caméra partielles (1/2) — état incohérent, refusé au déploiement"
+              " par le script 12. Préparation annulée (dataset final inchangé).")
+        print("   → Complétez la référence des DEUX caméras, ou retirez la référence partielle.")
+        return False
+
+    # Finalisation (sur le dossier temporaire).
+    completer_info_json(TMP_BASE)
+    if not generer_episodes_stats(TMP_BASE):
+        nettoyer_tmp()
+        print("\n❌ Finalisation impossible (statistiques) — dataset final inchangé.")
+        return False
+
+    h264_status = convertir_videos_h264(TMP_BASE)
+    if h264_status == "echec_remplacement":
+        nettoyer_tmp()
+        print("\n❌ Conversion vidéo interrompue (remplacement) — préparation annulée"
+              " (dataset final inchangé).")
+        return False
+    frames_status, _ = verifier_frames_video(TMP_BASE)
+
+    # Incohérences frames/parquet = corruption structurelle → arrêt dur en mode normal.
+    if frames_status == "incoherences":
+        nettoyer_tmp()
+        print("\n❌ Incohérences frames/parquet détectées — préparation annulée "
+              "(dataset final inchangé).")
+        return False
+
+    # Bascule atomique vers le dataset final.
+    if not basculer_vers_final():
+        nettoyer_tmp()
+        print("\n❌ Bascule impossible — dataset final inchangé.")
+        return False
+
+    # Résumé + rapport à états distincts.
+    info_file = OUTPUT_BASE / "meta" / "info.json"
+    with open(info_file) as f:
+        info = json.load(f)
+    afficher_resume(info, OUTPUT_BASE)
+    afficher_rapport_final(ref_status, h264_status, frames_status)
+    return True
+
 
 def main():
     clear_screen()
     print("""
 ╔══════════════════════════════════════════════════════════╗
-║     SEM — CONSOLIDATION DATASET SO-ARM 101               ║
+║     SEM — PRÉPARATION DATASET SO-ARM 101                 ║
 ║     Service Écoles-Médias — DIP Genève                   ║
 ╚══════════════════════════════════════════════════════════╝
     """)
 
-    # Vérifier que la source existe
-    if not SOURCE_BASE.exists():
-        print(f"❌ Dossier source introuvable :")
-        print(f"   {SOURCE_BASE}")
-        print(f"\n   Lancez d'abord le script 8 pour enregistrer des épisodes.")
-        return
-
-    # Analyser
-    print("🔍 Analyse des données source...")
-    inventaire, total_episodes, total_frames = analyser_source()
-
-    if total_episodes == 0:
-        print("\n❌ Aucun épisode trouvé. Enregistrez d'abord des épisodes avec le script 8.")
-        return
-
-    afficher_inventaire(inventaire, total_episodes, total_frames)
-
-    # Vérifier les vidéos
-    print("\n🔍 Vérification des vidéos...")
-    erreurs = verifier_videos(inventaire)
-    if erreurs:
-        print(f"\n⚠️  {len(erreurs)} vidéo(s) manquante(s) :")
-        for err in erreurs[:10]:
-            print(f"   • {err}")
-        if len(erreurs) > 10:
-            print(f"   ... et {len(erreurs) - 10} autres")
-        choix = input("\nContinuer quand même ? [O/N] : ").strip().upper()
-        if choix != 'O':
+    # Entrée intelligente : si un dataset final préparé existe déjà, proposer
+    # d'aller directement à la visualisation plutôt que de tout reconstruire.
+    if dataset_final_pret():
+        print(f"ℹ️  Un dataset préparé existe déjà :\n   {OUTPUT_BASE}")
+        print("\n  [P] Préparer à nouveau (reconsolider depuis le script 8)")
+        print("  [V] Visualiser directement le dataset existant")
+        print("  [Q] Quitter")
+        choix = input("\n  Votre choix : ").strip().upper()
+        if choix == 'V':
+            lancer_visualisation()
             return
+        if choix != 'P':
+            print("\n✅ Rien à faire.")
+            return
+
+    if not preparer_dataset():
+        return
+
+    # Visualisation optionnelle.
+    print("\n" + "=" * 55)
+    print("  V — Lancer la visualisation dans le navigateur")
+    print("  Q — Quitter (prochaine étape : entraînement)")
+    print("=" * 55)
+    choix = input("\n  Votre choix : ").strip().upper()
+    if choix == 'V':
+        lancer_visualisation()
     else:
-        print("  ✅ Toutes les vidéos sont présentes")
-
-    # Confirmer
-    print(f"\n📦 Le dataset consolidé sera créé dans :")
-    print(f"   {OUTPUT_BASE}")
-    input("\nAppuyez sur ENTRÉE pour lancer la consolidation...")
-
-    # Consolider
-    if consolider(inventaire, total_episodes, total_frames):
-        print("\n✅ Consolidation terminée !")
-        afficher_resultat()
-
+        print("\n✅ Préparation terminée.")
         print("🚀 Prochaine étape :")
-        print(f"   python SEM_so101_10_visualize_dataset.py")
-    else:
-        print("\n❌ Consolidation annulée.")
+        print("   python SEM_so101_11_train.py")
 
 
 if __name__ == "__main__":
