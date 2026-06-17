@@ -79,22 +79,44 @@ SERVO_NAMES = {
 # avec le depannage du guide Phase 3 (amplitude < 500 = probleme).
 MIN_AMPLITUDE = 500
 
+# ----------------------------------------------------------------------------
+# Politique de gestion des erreurs (calibration) :
+# Certains servos Feetech peuvent renvoyer un statut interne non nul (error)
+# tout en conservant une position parfaitement lisible. En calibration, seul
+# l'echec de communication (result != COMM_SUCCESS) bloque ; le statut interne
+# est affiche en avertissement, sans interrompre la calibration. La cause du
+# statut reste a identifier sur la table de controle Feetech STS3215 (hors
+# urgence). NB : regle LOCALE a la calibration, NON generalisee aux scripts
+# de mouvement (teleoperation, enregistrement, deploiement).
+# ----------------------------------------------------------------------------
 def ecrire_1byte(packetHandler, portHandler, servo_id, registre, valeur, action):
-    """Ecriture 1 octet verifiee. Retourne True si la communication a reussi."""
+    """Ecriture 1 octet. Bloque uniquement sur une vraie panne de communication.
+
+    result != COMM_SUCCESS -> echec de communication (bloquant).
+    error  != 0            -> statut interne non nul renvoye par le servo :
+                              commande transmise, cause NON identifiee. Non
+                              bloquant, signale pour surveillance.
+    """
     result, error = packetHandler.write1ByteTxRx(portHandler, servo_id, registre, valeur)
     if result != COMM_SUCCESS:
         print(f"  ❌ Échec communication ({action}, servo {servo_id})")
         return False
     if error != 0:
-        print(f"  ⚠️ Erreur servo {servo_id} ({action}, code {error})")
-        return False
+        print(f"  ⚠️ Servo {servo_id} : statut interne non nul ({action}, code {error}) — à surveiller, non bloquant")
     return True
 
 def lire_position(packetHandler, portHandler, servo_id):
-    """Lecture verifiee de la position (registre 56). Retourne (position, ok)."""
+    """Lecture de la position (registre 56). Retourne (position, ok).
+
+    Seule une vraie panne de communication (result) invalide la lecture.
+    Un statut interne non nul (error) est signale mais la position est
+    conservee : la cause n'est PAS presumee ici, elle reste a identifier.
+    """
     pos, result, error = packetHandler.read2ByteTxRx(portHandler, servo_id, 56)
-    if result != COMM_SUCCESS or error != 0:
+    if result != COMM_SUCCESS:
         return None, False
+    if error != 0:
+        print(f"  ⚠️ Servo {servo_id} : statut interne non nul (code {error}) — position conservée, à identifier")
     return pos, True
 
 def centrage_doux(packetHandler, portHandler, servo_id, pos_min, pos_max):
