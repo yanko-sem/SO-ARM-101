@@ -86,7 +86,7 @@ except ImportError:
 # Les 5 positions de cube
 POSITIONS = {
     1: {"nom": "Centre", "description": "Position centrale"},
-    2: {"nom": "Bas", "description": "Position proche du robot"},
+    2: {"nom": "Libre", "description": "Position libre"},
     3: {"nom": "Haut", "description": "Position éloignée du robot"},
     4: {"nom": "Gauche", "description": "Position gauche (boîte en dessous)"},
     5: {"nom": "Droite", "description": "Position droite (boîte en dessous)"},
@@ -241,6 +241,12 @@ def detect_cameras():
     return cameras
 
 def identification_cameras():
+    """Identification VISUELLE des deux caméras (globale cam_top + pince cam_follower).
+    Les deux caméras du projet sont identiques : aucune détection automatique possible.
+    Parcourt TOUTES les caméras détectées (pas seulement les deux premières) ; pour
+    chacune dont l'image est lisible, affiche le flux et demande G/P/Q. S'arrête dès
+    que les DEUX sont identifiées. AUCUNE auto-assignation : cam_top et cam_follower
+    doivent être désignées explicitement (exigence d'intégrité du dataset)."""
     if not CV2_AVAILABLE:
         print("❌ OpenCV non disponible")
         return None, None
@@ -252,26 +258,27 @@ def identification_cameras():
     print(f"\n🔍 Caméras détectées: {cameras}")
 
     if len(cameras) < 2:
-        print("❌ Moins de 2 caméras détectées!")
-        if len(cameras) == 1:
-            print(f"   Une seule caméra à l'index {cameras[0]}")
-            return cameras[0], None
+        print("❌ Deux caméras sont requises (globale + pince) pour l'enregistrement.")
+        print(f"   Détecté : {len(cameras)} caméra(s). Branchez les deux caméras et relancez.")
         return None, None
 
     print("\n📌 Vous allez voir chaque caméra tour à tour.")
-    print("   Identifiez laquelle est la caméra GLOBALE (vue d'ensemble)")
-    print("   et laquelle est sur la PINCE du follower.")
-    print("\n   Appuyez sur une touche pour continuer...")
+    print("   Identifiez la caméra GLOBALE (vue d'ensemble du plateau) et")
+    print("   la caméra PINCE (sur le follower). Les deux étant identiques,")
+    print("   distinguez-les par ce qu'elles cadrent.")
+    print("\n   Appuyez sur ENTRÉE pour continuer...")
     input()
 
     cam_top_index = None
     cam_follower_index = None
 
-    for idx in cameras[:2]:
-        print(f"\n🎥 Test caméra index {idx}...")
+    for idx in cameras:
+        if cam_top_index is not None and cam_follower_index is not None:
+            break  # les deux caméras sont identifiées, inutile de continuer
+        print(f"\n🎥 Caméra index {idx}...")
         cap = cv2.VideoCapture(idx)
         if not cap.isOpened():
-            print(f"   ❌ Impossible d'ouvrir la caméra {idx}")
+            print(f"   ❌ Impossible d'ouvrir la caméra {idx} — passée.")
             continue
 
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, CONFIG['camera_width'])
@@ -279,6 +286,7 @@ def identification_cameras():
         window_name = f"Camera {idx} - Identifiez cette camera"
 
         ret, frame = cap.read()
+        fenetre_ouverte = False
         if ret:
             cv2.putText(frame, f"Camera {idx}", (10, 30),
                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
@@ -286,12 +294,23 @@ def identification_cameras():
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 1)
             cv2.imshow(window_name, frame)
             cv2.waitKey(100)
+            fenetre_ouverte = True
+        cap.release()
+
+        # Sans image lisible, l'identification visuelle est impossible : on ne propose
+        # PAS cette caméra (pas de confirmation à l'aveugle) et on ne détruit pas une
+        # fenêtre qui n'a jamais été affichée.
+        if not fenetre_ouverte:
+            print(f"   ⚠️  Image indisponible pour la caméra {idx} — identification impossible, on passe.")
+            continue
 
         print(f"   📺 Regardez la fenêtre '{window_name}'")
         print(f"   → Tapez G + Entrée si c'est la caméra GLOBALE (vue d'ensemble)")
         print(f"   → Tapez P + Entrée si c'est la caméra PINCE (sur le follower)")
         print(f"   → Tapez Q + Entrée pour passer")
         choix_cam = input("   Votre choix : ").strip().upper()
+        cv2.destroyWindow(window_name)
+        cv2.waitKey(1)
 
         if choix_cam == 'G':
             cam_top_index = idx
@@ -299,28 +318,11 @@ def identification_cameras():
         elif choix_cam == 'P':
             cam_follower_index = idx
             print(f"   ✅ Caméra {idx} = {CAM_FOLLOWER} (pince)")
-        elif choix_cam == 'Q':
+        else:
             print(f"   ⏭️  Caméra {idx} passée")
 
-        cap.release()
-        cv2.destroyWindow(window_name)
-        cv2.waitKey(100)
-
     cv2.destroyAllWindows()
-
-    if cam_top_index is None and cam_follower_index is not None:
-        for idx in cameras[:2]:
-            if idx != cam_follower_index:
-                cam_top_index = idx
-                print(f"\n   → Caméra {idx} assignée automatiquement comme {CAM_TOP}")
-                break
-
-    if cam_follower_index is None and cam_top_index is not None:
-        for idx in cameras[:2]:
-            if idx != cam_top_index:
-                cam_follower_index = idx
-                print(f"\n   → Caméra {idx} assignée automatiquement comme {CAM_FOLLOWER}")
-                break
+    cv2.waitKey(1)
 
     print("\n" + "-"*40)
     print("📷 Résultat de l'identification:")
@@ -336,12 +338,18 @@ def identification_cameras():
 def clear_screen():
     os.system('clear')
 
+MIN_AMPLITUDE = 500
+
+# Fichier externe centralisant la position repos (partage entre tous les scripts)
+REPOS_FILE = os.path.expanduser("~/lerobot/calibration/repos_position.json")
+
 def detect_ports():
-    """Détecte les ports des robots.
+    """Détecte les ports des robots (liste).
 
     Teste chaque port candidat en interrogeant le servo 1 : ne garde que les
     ports qui répondent au protocole servo (= robots). Les autres périphériques
-    série (téléphone en charge, etc.) sont ignorés. Le robot doit être alimenté.
+    série sont ignorés. La téléopération a besoin des deux robots ; l'identification
+    guidée s'appuie sur le nombre exact de ports attendus.
     """
     BAUDRATE = 1000000
     ports = []
@@ -353,34 +361,177 @@ def detect_ports():
         try:
             if ph.openPort() and ph.setBaudRate(BAUDRATE):
                 _, result, _ = pk.read2ByteTxRx(ph, 1, 56)
-                ph.closePort()
                 if result == COMM_SUCCESS:
                     ports.append(port)
-            else:
-                ph.closePort()
         except Exception:
+            # Périphérique série qui se comporte mal : on l'ignore proprement
+            pass
+        finally:
             try:
                 ph.closePort()
             except Exception:
                 pass
     return ports
 
+# ----------------------------------------------------------------------------
+# Politique de gestion des erreurs (lecture de position) :
+# Certains servos Feetech peuvent renvoyer un octet de statut interne non nul
+# tout en conservant une position parfaitement lisible. Seul l'echec de
+# communication (result != COMM_SUCCESS) invalide la lecture ; l'octet de
+# statut interne est ignore (tolere silencieusement, contexte teleoperation).
+# Cause a identifier sur la table de controle Feetech STS3215 (hors urgence).
+# Regle limitee aux LECTURES ; ecritures/mouvements traites au cas par cas.
+# ----------------------------------------------------------------------------
+def lire_position(packet, port, servo_id):
+    """Lecture de la position (registre 56). Retourne (position, ok).
+
+    Seule une vraie panne de communication (result) invalide la lecture.
+    L'octet de statut interne du servo est ignore (tolere silencieusement,
+    contexte teleoperation) : la position reste valide ; la cause de ce
+    statut n'est PAS presumee ici, elle reste a identifier.
+    """
+    pos, result, _ = packet.read2ByteTxRx(port, servo_id, 56)
+    if result != COMM_SUCCESS:
+        return None, False
+    return pos, True
+
+def cleanup_ports(lp=None, fp=None, lk=None, fk=None, release=True):
+    """Nettoyage best-effort, idempotent et tolérant aux initialisations partielles.
+    Libère les servos (si les handlers existent) puis ferme les ports ouverts.
+    Ne lève jamais d'exception (appelable dans un finally ou avant un retour d'échec)."""
+    if release:
+        for pk, ph in ((lk, lp), (fk, fp)):
+            if pk is not None and ph is not None:
+                for i in range(1, 7):
+                    try:
+                        pk.write1ByteTxRx(ph, i, 40, 0)
+                    except Exception:
+                        pass
+    for ph in (lp, fp):
+        if ph is not None:
+            try:
+                ph.closePort()
+            except Exception:
+                pass
+
 def charger_calibration(robot_type):
+    """Charge la calibration d'un robot (ou None si absente/illisible)."""
     calib_file = os.path.expanduser(f"~/lerobot/calibration/{robot_type}_calibration.json")
     if os.path.exists(calib_file):
-        with open(calib_file, 'r') as f:
-            return json.load(f)
+        try:
+            with open(calib_file, 'r') as f:
+                return json.load(f)
+        except Exception:
+            return None
     return None
 
-def charger_config_teleoperation(mode):
-    config_file = os.path.expanduser(f"~/lerobot/calibration/teleoperation_config_{mode}.json")
-    if os.path.exists(config_file):
-        with open(config_file, 'r') as f:
+def calibration_complete(calibration):
+    """Vrai uniquement si les 6 servos sont calibres avec une plage exploitable
+    (presents, min/max/center numeriques, amplitude >= MIN_AMPLITUDE, min<=center<=max).
+    Meme exigence que les scripts 4/5. Sans calibration valide, le mapping retomberait
+    sur 0-4095 -> risque de butees sur le Follower piloté."""
+    if not calibration:
+        return False
+    for i in range(1, 7):
+        key = f"servo_{i}"
+        if key not in calibration:
+            return False
+        cal = calibration[key]
+        min_v = cal.get("min")
+        max_v = cal.get("max")
+        center_v = cal.get("center")
+        if not isinstance(min_v, (int, float)) or not isinstance(max_v, (int, float)):
+            return False
+        if max_v - min_v < MIN_AMPLITUDE:
+            return False
+        if not isinstance(center_v, (int, float)):
+            return False
+        if not (min_v <= center_v <= max_v):
+            return False
+    return True
+
+def charger_repos_pct():
+    """Charge la position repos (% par servo) depuis le fichier externe.
+    Retourne (dict {1:%,...}, origine) ou origine vaut 'custom' ou 'default'.
+    Valide le contenu ; le fallback par defaut est ANNONCE par l'appelant."""
+    defaut = {1: 50, 2: 10, 3: 88, 4: 76, 5: 50, 6: 11}
+    if not os.path.exists(REPOS_FILE):
+        return defaut, "default"
+    try:
+        with open(REPOS_FILE, 'r') as f:
             data = json.load(f)
-            return data.get('servos_miroir', [])
-    return []
+        repos = {int(k): float(v) for k, v in data.items()}
+        for i in range(1, 7):
+            if i not in repos or not (0.0 <= repos[i] <= 100.0):
+                return defaut, "default"
+        return repos, "custom"
+    except Exception:
+        return defaut, "default"
+
+def valider_servos_miroir(data):
+    """Valide une valeur 'servos_miroir' : liste d'entiers 1-6, sans doublon.
+    Retourne la liste triee, ou None si invalide. Une liste vide est VALIDE
+    (configuration tout-COPIE)."""
+    if not isinstance(data, list):
+        return None
+    vus = set()
+    for v in data:
+        if isinstance(v, bool) or not isinstance(v, int):
+            return None
+        if v < 1 or v > 6 or v in vus:
+            return None
+        vus.add(v)
+    return sorted(vus)
+
+def charger_servos_miroir_fichier(path):
+    """Lit un fichier de config telleop et renvoie la liste servos_miroir validee,
+    ou None si le fichier est illisible / mal forme / invalide."""
+    try:
+        with open(path, 'r') as f:
+            data = json.load(f)
+    except Exception:
+        return None
+    if not isinstance(data, dict) or 'servos_miroir' not in data:
+        return None
+    return valider_servos_miroir(data['servos_miroir'])
+
+def charger_config_teleoperation(mode):
+    """Charge la config COPIE/MIROIR du mode. Retourne la liste servos_miroir
+    VALIDÉE (entiers 1-6, sans doublon ; liste vide = tout-COPIE, valide), ou None
+    si le fichier est ABSENT, illisible ou mal formé. Le script 6 REFUSE alors de
+    lancer ce mode (au démarrage) ou de basculer dessus (flip F)."""
+    config_file = os.path.expanduser(f"~/lerobot/calibration/teleoperation_config_{mode}.json")
+    if not os.path.exists(config_file):
+        return None
+    miroir = charger_servos_miroir_fichier(config_file)
+    if miroir is None:
+        return None
+    print(f"  📁 Configuration chargée : {config_file}")
+    return miroir
+
+def _cible_ticks(calib, servo_id, pct):
+    """Convertit un pourcentage en ticks (calibration garantie valide au demarrage)."""
+    min_val = calib[f'servo_{servo_id}']['min']
+    max_val = calib[f'servo_{servo_id}']['max']
+    return int(min_val + (max_val - min_val) * pct / 100)
+
+def _est_en_repos_1robot(packet, port, calib, repos_pct, tolerance_pct=5):
+    """True si le robot est proche de la position repos (tous les servos).
+    False si au moins un servo en est eloigne. None si une lecture echoue
+    (etat indetermine -> l'appelant doit annuler la sequence)."""
+    for i in range(1, 7):
+        pos, ok = lire_position(packet, port, i)
+        if not ok:
+            return None
+        min_val = calib[f'servo_{i}']['min']
+        max_val = calib[f'servo_{i}']['max']
+        pct_actuel = (pos - min_val) / (max_val - min_val) * 100 if max_val > min_val else 50
+        if abs(pct_actuel - repos_pct.get(i, 50)) > tolerance_pct:
+            return False
+    return True
 
 def mouvement_fluide(packet, port, servo, debut, fin, duree=1.5):
+    """Mouvement fluide entre deux positions (interpolation cosinus)."""
     steps = int(duree * 50)
     for i in range(steps + 1):
         t = i / steps
@@ -389,227 +540,22 @@ def mouvement_fluide(packet, port, servo, debut, fin, duree=1.5):
         packet.write2ByteTxRx(port, servo, 42, pos)
         time.sleep(duree / steps)
 
-def mapper_position(pos_leader, servo_id, calib_leader, calib_follower, servos_miroir):
-    if calib_leader and f"servo_{servo_id}" in calib_leader:
-        min_l = calib_leader[f"servo_{servo_id}"]["min"]
-        max_l = calib_leader[f"servo_{servo_id}"]["max"]
-    else:
-        min_l, max_l = 0, 4095
-
-    if calib_follower and f"servo_{servo_id}" in calib_follower:
-        min_f = calib_follower[f"servo_{servo_id}"]["min"]
-        max_f = calib_follower[f"servo_{servo_id}"]["max"]
-    else:
-        min_f, max_f = 0, 4095
-
-    ratio = (pos_leader - min_l) / (max_l - min_l) if max_l > min_l else 0.5
-    ratio = max(0, min(1, ratio))
-
-    if servo_id in servos_miroir:
-        ratio = 1 - ratio
-
-    pos_follower = int(min_f + ratio * (max_f - min_f))
-    return max(min_f, min(max_f, pos_follower))
-
-# ============================================
-# IDENTIFICATION & POSITIONNEMENT
-# ============================================
-
-def test_connexion_fluide(packet, port, robot_name, calib):
-    print(f"\n  🔄 Test de connexion {robot_name}...")
-    packet.write1ByteTxRx(port, 6, 40, 1)
-
-    if calib and 'servo_6' in calib:
-        centre = calib['servo_6']['center']
-        min_val = calib['servo_6']['min']
-        max_val = calib['servo_6']['max']
-
-        amplitude = max_val - min_val
-        pos_25 = int(min_val + amplitude * 0.25)
-        pos_75 = int(min_val + amplitude * 0.75)
-
-        pos_actuelle, _, _ = packet.read2ByteTxRx(port, 6, 56)
-
-        print("     → Centre...")
-        mouvement_fluide(packet, port, 6, pos_actuelle, centre, 1.0)
-        print("     → Fermé (45°)...")
-        mouvement_fluide(packet, port, 6, centre, pos_25, 0.8)
-        print("     → Ouvert (90°)...")
-        mouvement_fluide(packet, port, 6, pos_25, pos_75, 1.2)
-        print("     → Centre...")
-        mouvement_fluide(packet, port, 6, pos_75, centre, 0.8)
-    else:
-        packet.write2ByteTxRx(port, 6, 42, 2048)
-        time.sleep(1)
-        packet.write2ByteTxRx(port, 6, 42, 1500)
-        time.sleep(1)
-        packet.write2ByteTxRx(port, 6, 42, 2500)
-        time.sleep(1)
-        packet.write2ByteTxRx(port, 6, 42, 2048)
-    print(f"  ✅ {robot_name} connecté et testé")
-
-def identification_guidee():
-    clear_screen()
-    print("""
-╔══════════════════════════════════════════════════════════════════════╗
-║     IDENTIFICATION LEADER/FOLLOWER                                   ║
-╚══════════════════════════════════════════════════════════════════════╝
-    """)
-    ports = detect_ports()
-    while len(ports) > 0:
-        print(f"⚠️  Débranchez tous les robots")
-        input("   Entrée quand fait...")
-        ports = detect_ports()
-
-    print("\n🔌 Branchez le LEADER")
-    input("   Entrée quand branché...")
-    time.sleep(1)
-    ports = detect_ports()
-    if len(ports) == 0:
-        print("❌ Aucun port détecté")
-        return None, None, None, None, None, None
-    leader_port = ports[0]
-    print(f"✅ LEADER détecté sur {leader_port}")
-
-    lp = PortHandler(leader_port)
-    lk = PacketHandler(1.0)
-    if not lp.openPort() or not lp.setBaudRate(1000000):
-        print("❌ Erreur connexion Leader")
-        return None, None, None, None, None, None
-
-    calib_l = charger_calibration('leader')
-    test_connexion_fluide(lk, lp, "LEADER", calib_l)
-
-    if input("\nPince du LEADER bougée? [O/N]: ").upper() != 'O':
-        return None, None, None, None, None, None
-
-    print("\n🔌 Branchez le FOLLOWER (gardez Leader branché)")
-    input("   Entrée quand branché...")
-    time.sleep(1)
-    ports = detect_ports()
-    if len(ports) < 2:
-        print("❌ Follower non détecté")
-        return None, None, None, None, None, None
-    follower_port = ports[1] if ports[0] == leader_port else ports[0]
-    print(f"✅ FOLLOWER détecté sur {follower_port}")
-
-    fp = PortHandler(follower_port)
-    fk = PacketHandler(1.0)
-    if not fp.openPort() or not fp.setBaudRate(1000000):
-        print("❌ Erreur connexion Follower")
-        return None, None, None, None, None, None
-
-    calib_f = charger_calibration('follower')
-    test_connexion_fluide(fk, fp, "FOLLOWER", calib_f)
-
-    if input("\nPince du FOLLOWER bougée? [O/N]: ").upper() != 'O':
-        return None, None, None, None, None, None
-
-    print("\n✅ Identification réussie!")
-    return lp, lk, fp, fk, calib_l, calib_f
-
-def centrage_parallele(lk, lp, fk, fp, calib_l, calib_f):
-    print("\n🎯 Centrage simultané des robots...")
-    for i in range(1, 7):
-        lk.write1ByteTxRx(lp, i, 40, 1)
-        fk.write1ByteTxRx(fp, i, 40, 1)
-
-    pos_l = {}
-    pos_f = {}
-    for i in range(1, 7):
-        pos_l[i], _, _ = lk.read2ByteTxRx(lp, i, 56)
-        pos_f[i], _, _ = fk.read2ByteTxRx(fp, i, 56)
-
-    duree = 2.0
-    steps = int(duree * 50)
-    for step in range(steps + 1):
-        t = step / steps
-        smooth = (1 - math.cos(t * math.pi)) / 2
-
-        for i in range(1, 7):
-            centre_l = calib_l[f'servo_{i}']['center'] if calib_l else 2048
-            new_pos_l = int(pos_l[i] + (centre_l - pos_l[i]) * smooth)
-            lk.write2ByteTxRx(lp, i, 42, new_pos_l)
-
-            centre_f = calib_f[f'servo_{i}']['center'] if calib_f else 2048
-            new_pos_f = int(pos_f[i] + (centre_f - pos_f[i]) * smooth)
-            fk.write2ByteTxRx(fp, i, 42, new_pos_f)
-
-        time.sleep(duree / steps)
-    print("✅ Robots centrés")
-
-# Fichier externe centralisant la position repos (partagé entre tous les scripts)
-REPOS_FILE = os.path.expanduser("~/lerobot/calibration/repos_position.json")
-
-# Fichier externe du masque de zone utile (créé par le script 7, partagé avec le 12)
-MASK_FILE = os.path.expanduser("~/lerobot/calibration/camera_mask.json")
-
-
-def charger_masque_globale():
-    """Lit MASK_FILE (créé par le script 7) et renvoie la liste des points
-    du polygone, ou None si le fichier est absent ou invalide."""
-    if not os.path.exists(MASK_FILE):
-        return None
-    try:
-        with open(MASK_FILE, 'r') as f:
-            data = json.load(f)
-        pts = [tuple(p) for p in data["points"]]
-        return pts
-    except Exception:
-        return None
-
-
-def construire_mask_image(points, width, height):
-    """Construit le masque binaire (uint8 0/255) à partir des points du polygone."""
-    if points is None:
-        return None
-    mask = np.zeros((height, width), dtype=np.uint8)
-    pts = np.array(points, np.int32)
-    cv2.fillPoly(mask, [pts], 255)
-    return mask
-
-
-def charger_repos_pct():
-    """Charge la position repos (% par servo) depuis le fichier externe.
-    Fallback sur les valeurs par défaut si le fichier est absent ou invalide."""
-    defaut = {1: 50, 2: 10, 3: 88, 4: 76, 5: 50, 6: 11}
-    if os.path.exists(REPOS_FILE):
-        try:
-            with open(REPOS_FILE, 'r') as f:
-                data = json.load(f)
-                return {int(k): float(v) for k, v in data.items()}
-        except Exception:
-            return defaut
-    return defaut
-
-def _cible_ticks(calib, servo_id, pct):
-    """Convertit un pourcentage en ticks pour un servo (fallback 2048)."""
-    if calib and f'servo_{servo_id}' in calib:
-        min_val = calib[f'servo_{servo_id}']['min']
-        max_val = calib[f'servo_{servo_id}']['max']
-        return int(min_val + (max_val - min_val) * pct / 100)
-    return 2048
-
-def _est_en_repos_1robot(packet, port, calib, repos_pct, tolerance_pct=5):
-    """Vrai si le robot est actuellement proche de la position repos (tous les servos)."""
-    for i in range(1, 7):
-        pos, _, _ = packet.read2ByteTxRx(port, i, 56)
-        if calib and f'servo_{i}' in calib:
-            min_val = calib[f'servo_{i}']['min']
-            max_val = calib[f'servo_{i}']['max']
-            pct_actuel = (pos - min_val) / (max_val - min_val) * 100 if max_val > min_val else 50
-        else:
-            pct_actuel = 50
-        if abs(pct_actuel - repos_pct.get(i, 50)) > tolerance_pct:
-            return False
-    return True
-
 def mouvement_parallele_2robots(lk, lp, fk, fp, cl, cf, cibles_pct, servos, duree=2.0):
-    """Déplace les servos indiqués sur Leader ET Follower simultanément vers cibles_pct (%)."""
+    """Déplace les servos indiqués sur Leader ET Follower vers cibles_pct (%).
+    Lectures de départ vérifiées : retourne None si une lecture échoue (mouvement
+    annulé), True sinon."""
     pos_l, pos_f = {}, {}
     for s in servos:
-        pos_l[s], _, _ = lk.read2ByteTxRx(lp, s, 56)
-        pos_f[s], _, _ = fk.read2ByteTxRx(fp, s, 56)
+        p, ok = lire_position(lk, lp, s)
+        if not ok:
+            print(f"❌ Lecture Leader servo {s} impossible — mouvement annulé")
+            return None
+        pos_l[s] = p
+        p, ok = lire_position(fk, fp, s)
+        if not ok:
+            print(f"❌ Lecture Follower servo {s} impossible — mouvement annulé")
+            return None
+        pos_f[s] = p
     cible_l, cible_f = {}, {}
     for s in servos:
         cible_l[s] = _cible_ticks(cl, s, cibles_pct[s])
@@ -622,60 +568,342 @@ def mouvement_parallele_2robots(lk, lp, fk, fp, cl, cf, cibles_pct, servos, dure
             lk.write2ByteTxRx(lp, s, 42, int(pos_l[s] + (cible_l[s] - pos_l[s]) * smooth))
             fk.write2ByteTxRx(fp, s, 42, int(pos_f[s] + (cible_f[s] - pos_f[s]) * smooth))
         time.sleep(duree / steps)
+    return True
+
 
 def aller_a_position_2robots(lk, lp, fk, fp, cl, cf, cibles_pct, duree=2.0):
-    """Déplace Leader ET Follower vers cibles_pct (%) en respectant les contraintes
-    physiques (séquence sûre), appliquée IDENTIQUEMENT aux deux robots :
-      Phase 0 (par robot) : si servo 4 > 2700 et robot pas en repos, lever le bras
-                            (servo 2 -> min(actuel, 1027)) pour dégager la pince du sol
-      Phase 1 : servo 4 -> 20% (pince en l'air)
-      Phase 2 : servos 1,2,3,5,6 -> cibles, en parallèle
-      Phase 3 : servo 4 -> cible finale
-    """
+    """Déplace Leader ET Follower vers cibles_pct (%) via la séquence sûre
+    (servo 4 en l'air d'abord, etc.), appliquée à l'identique aux deux robots.
+    Lectures vérifiées partout : retourne None si une lecture critique échoue
+    (mouvement annulé), True sinon.
+
+    Phase 0 (par robot) : si servo 4 > 2700 et robot pas en repos, lever le bras
+    (servo 2 -> min(actuel, 1027)) pour dégager la pince du sol. La levée se fait
+    EN PARALLÈLE sur les deux robots (cohérent avec les scripts 8/12). 2700 et 1027
+    sont des réglages empiriques de l'installation, identiques aux scripts 4 et 5."""
     # Activer tous les servos
     for i in range(1, 7):
         lk.write1ByteTxRx(lp, i, 40, 1)
         fk.write1ByteTxRx(fp, i, 40, 1)
 
-    repos_pct = charger_repos_pct()
+    repos_pct, _ = charger_repos_pct()
 
-    # --- Phase 0 (conditionnelle, par robot) : levée d'épaule EN PARALLÈLE sur les deux robots ---
-    pos4_l, _, _ = lk.read2ByteTxRx(lp, 4, 56)
-    pos4_f, _, _ = fk.read2ByteTxRx(fp, 4, 56)
-    besoin_l = pos4_l > 2700 and not _est_en_repos_1robot(lk, lp, cl, repos_pct)
-    besoin_f = pos4_f > 2700 and not _est_en_repos_1robot(fk, fp, cf, repos_pct)
+    # --- Phase 0 (conditionnelle, par robot, exécutée EN PARALLÈLE) ---
+    # Lectures vérifiées : toute lecture critique ratée annule le mouvement.
+    pos4_l, ok = lire_position(lk, lp, 4)
+    if not ok:
+        print("❌ Lecture Leader servo 4 impossible — mouvement annulé")
+        return None
+    pos4_f, ok = lire_position(fk, fp, 4)
+    if not ok:
+        print("❌ Lecture Follower servo 4 impossible — mouvement annulé")
+        return None
+
+    besoin_l = False
+    if pos4_l > 2700:
+        etat = _est_en_repos_1robot(lk, lp, cl, repos_pct)
+        if etat is None:
+            print("❌ État repos Leader indéterminé — mouvement annulé")
+            return None
+        besoin_l = not etat
+    besoin_f = False
+    if pos4_f > 2700:
+        etat = _est_en_repos_1robot(fk, fp, cf, repos_pct)
+        if etat is None:
+            print("❌ État repos Follower indéterminé — mouvement annulé")
+            return None
+        besoin_f = not etat
+
     if besoin_l or besoin_f:
-        deb_l, _, _ = lk.read2ByteTxRx(lp, 2, 56)
-        deb_f, _, _ = fk.read2ByteTxRx(fp, 2, 56)
-        fin_l = min(deb_l, 1027) if besoin_l else deb_l
-        fin_f = min(deb_f, 1027) if besoin_f else deb_f
+        deb_l = deb_f = None
+        if besoin_l:
+            deb_l, ok = lire_position(lk, lp, 2)
+            if not ok:
+                print("❌ Lecture Leader servo 2 impossible — mouvement annulé")
+                return None
+        if besoin_f:
+            deb_f, ok = lire_position(fk, fp, 2)
+            if not ok:
+                print("❌ Lecture Follower servo 2 impossible — mouvement annulé")
+                return None
+        fin_l = min(deb_l, 1027) if besoin_l else None
+        fin_f = min(deb_f, 1027) if besoin_f else None
         steps = int(duree * 50)
         for step in range(steps + 1):
             t = step / steps
             smooth = (1 - math.cos(t * math.pi)) / 2
-            lk.write2ByteTxRx(lp, 2, 42, int(deb_l + (fin_l - deb_l) * smooth))
-            fk.write2ByteTxRx(fp, 2, 42, int(deb_f + (fin_f - deb_f) * smooth))
+            if besoin_l:
+                lk.write2ByteTxRx(lp, 2, 42, int(deb_l + (fin_l - deb_l) * smooth))
+            if besoin_f:
+                fk.write2ByteTxRx(fp, 2, 42, int(deb_f + (fin_f - deb_f) * smooth))
             time.sleep(duree / steps)
 
-    # --- Phase 1 : servo 4 -> 20% sur les deux robots ---
-    mouvement_parallele_2robots(lk, lp, fk, fp, cl, cf, {4: 20}, [4], duree)
-
-    # --- Phase 2 : servos 1,2,3,5,6 en parallèle ---
-    mouvement_parallele_2robots(lk, lp, fk, fp, cl, cf, cibles_pct, [1, 2, 3, 5, 6], duree)
-
+    # --- Phase 1 : servo 4 -> 20% ---
+    if mouvement_parallele_2robots(lk, lp, fk, fp, cl, cf, {4: 20}, [4], duree) is None:
+        return None
+    # --- Phase 2 : servos 1,2,3,5,6 ---
+    if mouvement_parallele_2robots(lk, lp, fk, fp, cl, cf, cibles_pct, [1, 2, 3, 5, 6], duree) is None:
+        return None
     # --- Phase 3 : servo 4 -> cible finale ---
-    mouvement_parallele_2robots(lk, lp, fk, fp, cl, cf, cibles_pct, [4], duree)
+    if mouvement_parallele_2robots(lk, lp, fk, fp, cl, cf, cibles_pct, [4], duree) is None:
+        return None
+    return True
 
-def position_repos_parallele(lk, lp, fk, fp, calib_l, calib_f):
-    """Met les deux robots en position repos (repos partagé, séquence sûre)."""
+
+def test_connexion_fluide(packet, port, robot_name, calib):
+    """Test fluide de connexion : fait bouger la pince (servo 6) pour confirmer
+    visuellement le bon robot. Calibration GARANTIE valide (validée au démarrage),
+    pas de fallback brut. Retourne False si la lecture échoue."""
+    print(f"\n  🔄 Test de connexion {robot_name}...")
+
+    # Activer le servo 6
+    packet.write1ByteTxRx(port, 6, 40, 1)
+
+    centre = calib['servo_6']['center']
+    min_val = calib['servo_6']['min']
+    max_val = calib['servo_6']['max']
+    amplitude = max_val - min_val
+    pos_25 = int(min_val + amplitude * 0.25)
+    pos_75 = int(min_val + amplitude * 0.75)
+
+    pos_actuelle, ok = lire_position(packet, port, 6)
+    if not ok:
+        print(f"  ❌ Lecture servo 6 impossible sur {robot_name}")
+        return False
+
+    print("     → Centre...")
+    mouvement_fluide(packet, port, 6, pos_actuelle, centre, 1.0)
+    print("     → Fermé (45°)...")
+    mouvement_fluide(packet, port, 6, centre, pos_25, 0.8)
+    print("     → Ouvert (90°)...")
+    mouvement_fluide(packet, port, 6, pos_25, pos_75, 1.2)
+    print("     → Centre...")
+    mouvement_fluide(packet, port, 6, pos_75, centre, 0.8)
+
+    print(f"  ✅ {robot_name} connecté et testé")
+    return True
+
+def identification_guidee(calib_l, calib_f):
+    """Identifie Leader et Follower avec test fluide. Calibrations déjà validées,
+    passées en argument. Détection STRICTE : exactement 1 port après le Leader,
+    exactement 2 après le Follower. Chaque échec (et toute exception/CTRL+C interne)
+    ferme proprement les ports déjà ouverts. Retourne (True, lp, lk, fp, fk) ou
+    (False, None, None, None, None)."""
+    clear_screen()
+    print("""
+╔══════════════════════════════════════════════════════════╗
+║     IDENTIFICATION LEADER/FOLLOWER                      ║
+╚══════════════════════════════════════════════════════════╝
+    """)
+
+    lp = fp = lk = fk = None
+    try:
+        # Débrancher tout
+        ports = detect_ports()
+        while len(ports) > 0:
+            print("⚠️  Débranchez tous les robots")
+            input("   Entrée quand fait...")
+            ports = detect_ports()
+
+        # LEADER
+        print("\n🔌 Branchez le LEADER")
+        input("   Entrée quand branché...")
+
+        time.sleep(1)
+        ports = detect_ports()
+        if len(ports) != 1:
+            print(f"❌ Attendu exactement 1 robot après branchement du Leader, détecté : {len(ports)}.")
+            print("   Débranchez tout et recommencez (un seul adaptateur pour le Leader).")
+            return False, None, None, None, None
+
+        leader_port = ports[0]
+        print(f"✅ LEADER détecté sur {leader_port}")
+
+        lp = PortHandler(leader_port)
+        lk = PacketHandler(1.0)
+        if not lp.openPort() or not lp.setBaudRate(1000000):
+            print("❌ Erreur connexion Leader")
+            cleanup_ports(lp, None, lk, None)
+            return False, None, None, None, None
+
+        if not test_connexion_fluide(lk, lp, "LEADER", calib_l):
+            cleanup_ports(lp, None, lk, None)
+            return False, None, None, None, None
+
+        if input("\nPince du LEADER bougée? [O/N]: ").strip().upper() != 'O':
+            cleanup_ports(lp, None, lk, None)
+            return False, None, None, None, None
+
+        # FOLLOWER
+        print("\n🔌 Branchez le FOLLOWER (gardez Leader branché)")
+        input("   Entrée quand branché...")
+
+        time.sleep(1)
+        ports = detect_ports()
+        if len(ports) != 2:
+            print(f"❌ Attendu exactement 2 robots après branchement du Follower, détecté : {len(ports)}.")
+            cleanup_ports(lp, None, lk, None)
+            return False, None, None, None, None
+
+        follower_port = ports[1] if ports[0] == leader_port else ports[0]
+        print(f"✅ FOLLOWER détecté sur {follower_port}")
+
+        fp = PortHandler(follower_port)
+        fk = PacketHandler(1.0)
+        if not fp.openPort() or not fp.setBaudRate(1000000):
+            print("❌ Erreur connexion Follower")
+            cleanup_ports(lp, fp, lk, fk)
+            return False, None, None, None, None
+
+        if not test_connexion_fluide(fk, fp, "FOLLOWER", calib_f):
+            cleanup_ports(lp, fp, lk, fk)
+            return False, None, None, None, None
+
+        if input("\nPince du FOLLOWER bougée? [O/N]: ").strip().upper() != 'O':
+            cleanup_ports(lp, fp, lk, fk)
+            return False, None, None, None, None
+
+        print("\n✅ Identification réussie!")
+        return True, lp, lk, fp, fk
+
+    except BaseException:
+        # Exception ou CTRL+C avant le retour : fermer les ports ouverts localement
+        cleanup_ports(lp, fp, lk, fk)
+        raise
+
+def centrage_parallele(lk, lp, fk, fp, cl, cf):
+    """Centre tous les servos EN PARALLÈLE de manière fluide (les deux robots).
+    Lectures vérifiées : retourne False si une position de départ est illisible
+    (centrage annulé), True sinon."""
+    print("\n🎯 Centrage simultané des robots...")
+
+    for i in range(1, 7):
+        lk.write1ByteTxRx(lp, i, 40, 1)
+        fk.write1ByteTxRx(fp, i, 40, 1)
+
+    pos_l, pos_f = {}, {}
+    for i in range(1, 7):
+        p, ok = lire_position(lk, lp, i)
+        if not ok:
+            print(f"❌ Lecture Leader servo {i} impossible — centrage annulé")
+            return False
+        pos_l[i] = p
+        p, ok = lire_position(fk, fp, i)
+        if not ok:
+            print(f"❌ Lecture Follower servo {i} impossible — centrage annulé")
+            return False
+        pos_f[i] = p
+
+    duree = 2.0
+    steps = int(duree * 50)
+    for step in range(steps + 1):
+        t = step / steps
+        smooth = (1 - math.cos(t * math.pi)) / 2
+        for i in range(1, 7):
+            centre_l = cl[f'servo_{i}']['center']
+            lk.write2ByteTxRx(lp, i, 42, int(pos_l[i] + (centre_l - pos_l[i]) * smooth))
+            centre_f = cf[f'servo_{i}']['center']
+            fk.write2ByteTxRx(fp, i, 42, int(pos_f[i] + (centre_f - pos_f[i]) * smooth))
+        time.sleep(duree / steps)
+
+    print("✅ Robots centrés")
+    return True
+
+def position_repos_parallele(lk, lp, fk, fp, cl, cf):
+    """Met les deux robots en position repos (séquence sûre partagée). Fallback
+    repos ANNONCÉ. Retourne False si une lecture critique échoue (mouvement
+    annulé), True sinon."""
     print("\n🏁 Position repos simultanée...")
-
-    # Repos lu depuis le fichier unique partagé, atteint via la séquence sûre
-    # (servo 4 en l'air d'abord, etc.) appliquée à l'identique aux deux robots
-    repos_pct = charger_repos_pct()
-    aller_a_position_2robots(lk, lp, fk, fp, calib_l, calib_f, repos_pct, duree=2.0)
-
+    repos_pct, origine = charger_repos_pct()
+    if origine == "default":
+        print("⚠️  repos_position.json absent ou invalide — position de repos PAR DÉFAUT utilisée.")
+    if aller_a_position_2robots(lk, lp, fk, fp, cl, cf, repos_pct, duree=2.0) is None:
+        print("⚠️  Retour repos incomplet (lecture servo) — vérifiez la posture des robots.")
+        return False
     print("✅ Position repos atteinte (robot replié)")
+    return True
+
+def mapper_position(pos_leader, servo_id, calib_leader, calib_follower, servos_miroir):
+    """Mapping proportionnel Leader -> Follower avec COPIE/MIROIR (calibration
+    garantie valide), borné sur les limites Follower, retour int."""
+    min_l = calib_leader[f"servo_{servo_id}"]["min"]
+    max_l = calib_leader[f"servo_{servo_id}"]["max"]
+    min_f = calib_follower[f"servo_{servo_id}"]["min"]
+    max_f = calib_follower[f"servo_{servo_id}"]["max"]
+
+    ratio = (pos_leader - min_l) / (max_l - min_l) if max_l > min_l else 0.5
+    ratio = max(0, min(1, ratio))
+
+    if servo_id in servos_miroir:
+        ratio = 1 - ratio
+
+    return int(max(min_f, min(max_f, int(min_f + ratio * (max_f - min_f)))))
+
+def choisir_mode():
+    """Choix explicite de la disposition (boucle jusqu'à C ou F)."""
+    print("\n[C]ôte à côte ou [F]ace à face ?")
+    while True:
+        c = input("Choix [C/F] : ").strip().upper()
+        if c == 'C':
+            return "cote", "CÔTÉ À CÔTÉ"
+        if c == 'F':
+            return "face", "FACE À FACE"
+        print("❌ Choix invalide : tapez C ou F")
+
+# Fichier externe du masque de zone utile (cree par le script 7, partage avec le 12)
+MASK_FILE = os.path.expanduser("~/lerobot/calibration/camera_mask.json")
+
+
+def charger_masque_globale():
+    """Lit et VALIDE STRICTEMENT le masque cam_top (MASK_FILE, cree par le script 7).
+    Retourne la liste des 5 points (tuples) si valide, sinon None.
+    Validation : exactement 5 points, coordonnees numeriques. Si une resolution de
+    reference est presente, elle DOIT correspondre a la resolution d'enregistrement
+    (CONFIG camera_width x camera_height) ; sinon le masque serait applique a la
+    mauvaise echelle -> refus (le script 8 impose deja 640x360 aux frames)."""
+    if not os.path.exists(MASK_FILE):
+        return None
+    try:
+        with open(MASK_FILE, 'r') as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            raise ValueError("structure JSON invalide")
+        pts_raw = data.get("points")
+        if not isinstance(pts_raw, list) or len(pts_raw) != 5:
+            raise ValueError("le masque doit contenir exactement 5 points")
+        pts = []
+        for p in pts_raw:
+            if not isinstance(p, (list, tuple)) or len(p) != 2:
+                raise ValueError("chaque point doit contenir exactement 2 coordonnees")
+            x, y = p
+            if (isinstance(x, bool) or isinstance(y, bool)
+                    or not isinstance(x, (int, float)) or not isinstance(y, (int, float))):
+                raise ValueError("coordonnees non numeriques")
+            pts.append((int(x), int(y)))
+        ref = data.get("reference_resolution", {})
+        rw = ref.get("width") if isinstance(ref, dict) else None
+        rh = ref.get("height") if isinstance(ref, dict) else None
+        if (isinstance(rw, (int, float)) and not isinstance(rw, bool)
+                and isinstance(rh, (int, float)) and not isinstance(rh, bool)):
+            if int(rw) != CONFIG['camera_width'] or int(rh) != CONFIG['camera_height']:
+                raise ValueError(
+                    f"masque cree en {int(rw)}x{int(rh)}, attendu "
+                    f"{CONFIG['camera_width']}x{CONFIG['camera_height']} (recreer via le script 7)")
+        return pts
+    except Exception as e:
+        print(f"⚠️  Masque existant illisible ou invalide ({e}).")
+        return None
+
+
+def construire_mask_image(points, width, height):
+    """Construit le masque binaire (uint8 0/255) à partir des points du polygone."""
+    if points is None:
+        return None
+    mask = np.zeros((height, width), dtype=np.uint8)
+    pts = np.array(points, np.int32)
+    cv2.fillPoly(mask, [pts], 255)
+    return mask
+
 
 
 # ============================================
@@ -931,6 +1159,12 @@ def teleoperation_thread(lk, lp, fk, fp, calib_l, calib_f, servos_miroir, record
 
         actions_cibles, positions_follower = [], []
         serial_ok = True   # passe à False si une lecture/écriture série échoue → instant non enregistré
+        # Lectures de position : on ne bloque que sur `result` (intégrité de la
+        # communication). L'octet `error` (statut interne non identifié du servo,
+        # cf. servo 2 Leader error=1 intermittent) n'invalide PAS une position tant
+        # que result == COMM_SUCCESS — même règle que lire_position(). Ici, la
+        # lecture Follower (état enregistré) est en plus contrôlée pour l'intégrité
+        # du dataset : un instant n'est sauvegardé que si serial_ok ET les 2 images.
         for servo_id in range(1, 7):
             pos_l, result, _ = lk.read2ByteTxRx(lp, servo_id, 56)
             if result == COMM_SUCCESS:
@@ -997,13 +1231,13 @@ def keyboard_thread():
                         cmd_queue.put(ch)
         finally:
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
-    except:
+    except Exception:
         while not stop_threads:
             try:
                 cmd = input().strip().upper()
                 if cmd:
                     cmd_queue.put(cmd[0])
-            except:
+            except Exception:
                 pass
 
 def get_command():
@@ -1037,7 +1271,7 @@ def afficher_instructions():
 ║       [BOÎTE]                        [BOÎTE]                         ║
 ║                           |                                          ║
 ║                           ●                                          ║
-║                    Position 2 (Bas/Proche)                           ║
+║                    Position 2 (Libre)                                ║
 ║                                                                      ║
 ║                        🤖 ROBOT                                      ║
 ║                                                                      ║
@@ -1206,12 +1440,14 @@ def session_enregistrement(recorder, position_id, num_episodes, lk, lp, fk, fp, 
         for i in range(1, 7):
             lk.write1ByteTxRx(lp, i, 40, 1)
             fk.write1ByteTxRx(fp, i, 40, 1)
-        repos_pct = charger_repos_pct()
+        repos_pct, _ = charger_repos_pct()
         deja_repos = (_est_en_repos_1robot(lk, lp, calib_l, repos_pct)
                       and _est_en_repos_1robot(fk, fp, calib_f, repos_pct))
         if not deja_repos:
             print("\n🏁 Repositionnement automatique vers repos...")
-            position_repos_parallele(lk, lp, fk, fp, calib_l, calib_f)
+            if not position_repos_parallele(lk, lp, fk, fp, calib_l, calib_f):
+                print("❌ Retour repos impossible — session interrompue.")
+                return episodes_done
         # Les deux robots RESTENT rigides ; la téléopération RESTE en pause.
 
         clear_screen()
@@ -1258,7 +1494,8 @@ def session_enregistrement(recorder, position_id, num_episodes, lk, lp, fk, fp, 
         if action == 'repos':
             # Repositionnement forcé ; les robots restent rigides à repos ensuite.
             print("\n🏁 Repositionnement à repos...")
-            position_repos_parallele(lk, lp, fk, fp, calib_l, calib_f)
+            if not position_repos_parallele(lk, lp, fk, fp, calib_l, calib_f):
+                print("❌ Repositionnement à repos impossible — vérifiez la posture des robots.")
             time.sleep(1.0)
             continue
 
@@ -1301,7 +1538,10 @@ def session_enregistrement(recorder, position_id, num_episodes, lk, lp, fk, fp, 
                     print(f"\n✅ Épisode sauvegardé! ({episodes_done}/{num_episodes} cette session)")
 
                 print("\n🏁 Retour à repos (hors enregistrement)...")
-                aller_a_position_2robots(lk, lp, fk, fp, calib_l, calib_f, charger_repos_pct(), duree=2.0)
+                repos_pct_t, _ = charger_repos_pct()
+                if aller_a_position_2robots(lk, lp, fk, fp, calib_l, calib_f, repos_pct_t, duree=2.0) is None:
+                    print("❌ Retour repos impossible — session interrompue.")
+                    return episodes_done
                 # aller_a_position_2robots laisse les deux robots rigides (torque=1) : on n'y touche pas.
                 print("✅ À repos. Vous pouvez replacer le cube pour le prochain épisode.")
                 time.sleep(1.0)
@@ -1360,6 +1600,17 @@ Format de sortie : LeRobotDataset v2.1 (2 caméras: top + follower)
     """)
     input("\nAppuyez sur ENTRÉE pour commencer...")
 
+    # Calibrations OBLIGATOIRES et VALIDES (Leader + Follower) — vérifiées en TÊTE,
+    # avant toute interaction caméra/robot (échec rapide ; mêmes garde-fous que 4-7).
+    calib_l = charger_calibration('leader')
+    calib_f = charger_calibration('follower')
+    if not calibration_complete(calib_l):
+        print("❌ Calibration Leader absente, incomplète ou invalide — refaire la Phase 3.")
+        return
+    if not calibration_complete(calib_f):
+        print("❌ Calibration Follower absente, incomplète ou invalide — refaire la Phase 3.")
+        return
+
     cam_top_index, cam_follower_index = identification_cameras()
     if cam_top_index is None or cam_follower_index is None:
         print("\n❌ Enregistrement annulé : les deux caméras (globale + pince) sont requises.")
@@ -1382,30 +1633,38 @@ Format de sortie : LeRobotDataset v2.1 (2 caméras: top + follower)
     if cam_follower_index is not None:
         capturer_reglages_camera(f"/dev/video{cam_follower_index}", CAM_FOLLOWER, titre="PINCE (cam_follower)   [2/2]")
 
-    # Chargement du masque globale (créé par le script 7, partagé avec le 12).
-    # Si absent → message + enregistrement avec l'image brute, pas de crash.
+    # Chargement + VALIDATION STRICTE du masque globale (créé par le script 7, partagé
+    # avec le 12). OBLIGATOIRE : sans masque valide, l'enregistrement ne correspondrait
+    # pas au cadrage de la Phase 6 → fail-closed (on arrête et on renvoie au script 7).
     global _MASK_GLOBALE_IMG
     mask_pts = charger_masque_globale()
-    if mask_pts:
-        _MASK_GLOBALE_IMG = construire_mask_image(
-            mask_pts, CONFIG['camera_width'], CONFIG['camera_height']
-        )
-        print(f"\n✅ Masque globale actif ({len(mask_pts)} points)")
-    else:
-        print("\n⚠️  Aucun masque trouvé — l'enregistrement utilisera l'image brute.")
-        print("   Lance le script 7 d'abord pour créer le masque si tu veux le bénéfice du cadrage.")
+    if mask_pts is None:
+        print("\n❌ Masque de zone utile absent ou invalide — enregistrement annulé.")
+        print("   Le masque est obligatoire pour l'enregistrement (cohérence du cadrage avec le déploiement).")
+        print("   Lancez d'abord le script 7 (Phase 6) pour le créer/valider, puis relancez ce script.")
+        if CV2_AVAILABLE:
+            cv2.destroyAllWindows()
+        sys.exit(1)
+    _MASK_GLOBALE_IMG = construire_mask_image(
+        mask_pts, CONFIG['camera_width'], CONFIG['camera_height']
+    )
+    print(f"\n✅ Masque globale actif ({len(mask_pts)} points)")
 
     input("\n✅ Caméras identifiées. Appuyez sur ENTRÉE pour continuer avec les robots...")
-    result = identification_guidee()
-    if not result[0]:
+
+    ok, lp, lk, fp, fk = identification_guidee(calib_l, calib_f)
+    if not ok:
         print("❌ Identification échouée")
         return
 
-    lp, lk, fp, fk, calib_l, calib_f = result
-    print("\n[C]ôte à côte ou [F]ace à face?")
-    choix = input("Choix [C]: ").upper()
-    mode = "face" if choix == 'F' else "cote"
+    mode, mode_name = choisir_mode()
     servos_miroir = charger_config_teleoperation(mode)
+    if servos_miroir is None:
+        print(f"❌ Configuration {mode_name} absente ou invalide.")
+        print("   Lancez le script 5 pour configurer ce mode avant l'enregistrement.")
+        cleanup_ports(lp, fp, lk, fk, release=True)
+        return
+    print(f"\n✅ Mode sélectionné : {mode_name}")
 
     urgence = False  # Devient True sur CTRL+C : arrêt d'urgence, pas de retour repos
     # Variables de nettoyage définies AVANT le try : si un CTRL+C ou une exception survient
@@ -1415,7 +1674,9 @@ Format de sortie : LeRobotDataset v2.1 (2 caméras: top + follower)
     cam_follower = None
     try:
         print("\n🎯 Positionnement automatique (séquence sûre vers repos)...")
-        position_repos_parallele(lk, lp, fk, fp, calib_l, calib_f)
+        if not position_repos_parallele(lk, lp, fk, fp, calib_l, calib_f):
+            print("❌ Position repos impossible au démarrage — arrêt.")
+            return
 
         for i in range(1, 7):
             lk.write1ByteTxRx(lp, i, 40, 0)
@@ -1558,13 +1819,16 @@ Format de sortie : LeRobotDataset v2.1 (2 caméras: top + follower)
                 for i in range(1, 7):
                     lk.write1ByteTxRx(lp, i, 40, 1)
                     fk.write1ByteTxRx(fp, i, 40, 1)
-                position_repos_parallele(lk, lp, fk, fp, calib_l, calib_f)
+                ok_repos = position_repos_parallele(lk, lp, fk, fp, calib_l, calib_f)
                 # Libérer Leader, garder Follower actif pour reprendre la téléopération
                 for i in range(1, 7):
                     lk.write1ByteTxRx(lp, i, 40, 0)
                     fk.write1ByteTxRx(fp, i, 40, 1)
                 pause_teleop = False
-                print("\n✅ Robot repositionné à repos.")
+                if ok_repos:
+                    print("\n✅ Robot repositionné à repos.")
+                else:
+                    print("\n❌ Repositionnement à repos impossible — vérifiez la posture des robots.")
                 time.sleep(1.5)
 
     except KeyboardInterrupt:
@@ -1597,7 +1861,7 @@ Format de sortie : LeRobotDataset v2.1 (2 caméras: top + follower)
                 lk.write1ByteTxRx(lp, i, 40, 1)
                 fk.write1ByteTxRx(fp, i, 40, 1)
 
-            repos_pct = charger_repos_pct()
+            repos_pct, _ = charger_repos_pct()
             deja_repos = (_est_en_repos_1robot(lk, lp, calib_l, repos_pct)
                           and _est_en_repos_1robot(fk, fp, calib_f, repos_pct))
             if deja_repos:
