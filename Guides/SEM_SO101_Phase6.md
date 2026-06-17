@@ -7,8 +7,12 @@ Service Écoles-Médias (SEM) — DIP Genève
 ### ✅ Prérequis
 
 - Phases 1 à 5 complétées
+- Calibrations Leader et Follower **complètes et valides** (Phase 3)
+- Configuration de téléopération du mode choisi **créée en Phase 5** (script 5)
 - Support de la caméra Globale installé
 - Caméra Globale branchée
+
+> **⚠️ Important :** le script 7 **refuse de démarrer** si une calibration est absente/invalide, si aucune caméra n'est détectée, ou si la configuration du mode choisi n'existe pas.
 
 
 ### 🎯 Objectif de cette phase
@@ -40,6 +44,8 @@ L'ajout de la caméra permet de :
 
 - **Caméra Globale :** posée dans le coin opposé du plateau, orientée vers l'espace de travail — elle donne la vue d'ensemble de la scène.
 - **Caméra Pince :** vissée sur la pince via le support imprimé en 3D fourni (fichier STL), orientée vers les doigts — elle donne la vue rapprochée de la préhension.
+
+> **⚠️ En Phase 6, le script 7 n'utilise QUE la Caméra Globale.** La Caméra Pince fait partie du projet global mais n'est pas pilotée par ce script, qui prend automatiquement la **première caméra détectée** (`cameras[0]`). Pour éviter une mauvaise détection automatique, **ne laissez branchée que la Caméra Globale** pendant cette phase — ou vérifiez soigneusement l'aperçu affiché au lancement.
 
 
 ### 🔧 Étape 2 : Résolution du problème OpenCV
@@ -161,40 +167,45 @@ python SEM_so101_7_teleoperation_camera.py
 
 Le script suit ce déroulement :
 
-1. **Détection et aperçu de la caméra** — le script sonde les caméras disponibles, prend la première détectée et affiche un bref aperçu (résolution réelle + image figée). Appuyez sur ENTRÉE pour continuer.
+1. **Vérification des calibrations** — au tout début, le script vérifie que les calibrations Leader et Follower sont complètes et valides, et **refuse de démarrer** sinon (avant toute interaction caméra ou robot).
 
-2. **Définition du masque de zone utile (obligatoire)** — étape déterminante, détaillée juste après.
+2. **Détection et aperçu de la caméra** — le script sonde les caméras disponibles, prend la **première détectée** et affiche un bref aperçu (résolution réelle + image figée). Appuyez sur ENTRÉE pour continuer. Si **aucune caméra** n'est détectée, le script s'arrête.
 
-3. **Identification des robots** — débrancher tout, brancher Leader, valider, brancher Follower, valider (test de la pince pour chaque)
+3. **Définition du masque de zone utile (obligatoire)** — étape déterminante, détaillée juste après. Si la création est **abandonnée**, le script **s'arrête** (aucun robot n'est encore branché).
 
-4. **Choix de la disposition**
+4. **Identification des robots** — débrancher tout, brancher Leader, valider, brancher Follower, valider (test de la pince pour chaque). La détection est **stricte** : exactement 1 robot après le Leader, exactement 2 après le Follower.
+
+5. **Choix de la disposition** (choix explicite, redemandé si invalide)
    ```
-   [C]ôte à côte ou [F]ace à face?
-   Choix [C]: _
+   [C]ôte à côte ou [F]ace à face ?
+   Choix [C/F] : _
    ```
 
-5. **Positionnement automatique** — centrage parallèle puis position repos
+6. **Chargement de la configuration du mode** — le script charge la config COPIE/MIROIR du mode choisi (créée en Phase 5) et **refuse de démarrer** si elle est absente, illisible ou mal formée.
 
-6. **Téléopération avec caméra** — la fenêtre `Camera SO-ARM 101` s'ouvre en plus de l'interface terminal (voir « Interface de téléopération » plus bas).
+7. **Positionnement automatique** — centrage parallèle puis position repos.
+
+8. **Téléopération avec caméra** — la fenêtre `Camera SO-ARM 101` s'ouvre en plus de l'interface terminal (voir « Interface de téléopération » plus bas). Si la caméra **ne peut pas s'ouvrir** à ce moment, le script s'arrête proprement.
 
 **Définition du masque de zone utile (obligatoire)**
 
 > **⚠️ Rappel — étape déterminante.** Le masque tracé ici est réutilisé tel quel lors de l'enregistrement (Phase 7), appliqué à la caméra Globale : c'est la zone exacte qui entrera dans le jeu de données d'apprentissage. Soignez le cadrage du plateau — un masque mal placé fausse tout l'apprentissage.
 
-Le script applique un **masque** sur l'image : seule la zone utile (le plateau) reste visible, tout le reste est noirci. L'image conserve sa taille (640×360) ; ce sont les pixels hors du plateau qui sont mis à zéro, il ne s'agit pas d'un recadrage.
+Le script applique un **masque** sur l'image : seule la zone utile (le plateau) reste visible, tout le reste est noirci. Ce sont les pixels hors du plateau qui sont mis à zéro : il ne s'agit **pas** d'un recadrage. Le script demande une résolution de 640×360, mais si la caméra en renvoie une autre, le masque est **reconstruit à la taille réelle de l'image** (les points sont mis à l'échelle automatiquement) — il reste donc correct.
 
 Au lancement, après l'aperçu caméra :
 
-- Si un masque existe déjà : `[Entrée]` pour le garder, `[M]` pour en refaire un.
-- Sinon, la création est lancée automatiquement (elle est obligatoire).
+- Si un masque existe déjà **et est valide** : `[Entrée]` pour le garder, `[M]` pour en refaire un.
+- Si le fichier `camera_mask.json` existant est **corrompu ou invalide** (il doit contenir exactement 5 points avec des coordonnées numériques), il est **rejeté** et la recréation est lancée automatiquement.
+- Sinon, la création est lancée automatiquement (elle est **obligatoire** : un abandon arrête le script).
 
-Création interactive : une image figée de la caméra s'ouvre. Cliquez **5 points** délimitant le plateau, **dans le sens horaire en partant du haut-gauche**. Un aperçu masqué s'affiche, puis le terminal demande `[V]` valider / `[R]` recommencer / `[A]` abandonner. Le masque est enregistré dans :
+Création interactive : une image figée de la caméra s'ouvre. Cliquez **5 points** délimitant le plateau, **dans le sens horaire en partant du haut-gauche**. Un aperçu masqué s'affiche, puis le terminal demande `[V]` valider / `[R]` recommencer / `[A]` abandonner. Le masque est enregistré (de façon atomique) dans :
 
 ```
 ~/lerobot/calibration/camera_mask.json
 ```
 
-Pour forcer la recréation au lancement : `python SEM_so101_7_teleoperation_camera.py --refaire-masque`. Pendant la téléopération, la touche `M` permet aussi de le refaire (les robots reviennent au repos, puis la téléopération reprend).
+Pour forcer la recréation au lancement : `python SEM_so101_7_teleoperation_camera.py --refaire-masque`. Pendant la téléopération, la touche `M` permet aussi de le refaire (les robots reviennent au repos, puis la téléopération reprend). **Si le retour repos ou la réouverture de la caméra échoue pendant `M`**, la recréation est annulée et la téléopération **s'arrête proprement** (l'état des bras est alors incertain).
 
 **Interface de téléopération**
 
@@ -210,6 +221,7 @@ Une fois le masque défini et les robots positionnés, la fenêtre vidéo s'ouvr
   [Q] + Enter : Quitter
   [F] + Enter : Flip mode (côté ↔ face)
   [M] + Enter : Refaire le masque caméra (téléop en pause)
+  [q] (fenêtre vidéo) : Quitter
 ----------------------------------------
 
 📷 Caméra activée
@@ -221,13 +233,14 @@ Une fois le masque défini et les robots positionnés, la fenêtre vidéo s'ouvr
 
 | Commande | Action |
 | :--- | :--- |
-| Q + Entrée | Quitter la téléopération (dans le terminal) |
-| F + Entrée | Basculer côté à côte ↔ face à face (dans le terminal) |
-| M + Entrée | Refaire le masque caméra (téléop en pause → retour repos → reprise) |
-| q | Quitter (dans la fenêtre vidéo OpenCV) |
+| Q + Entrée | Quitter proprement (terminal) : retour repos **puis** libération |
+| F + Entrée | Basculer côté à côte ↔ face à face — uniquement si la config du mode cible est valide ; sinon mode conservé (terminal) |
+| M + Entrée | Refaire le masque caméra (téléop en pause → retour repos → reprise ; **arrêt propre** si le repos ou la réouverture caméra échoue) |
+| q (fenêtre vidéo) | Quitter proprement, **comme `Q`** (retour repos puis libération) |
+| CTRL+C | Interruption immédiate : libération des servos, **sans** retour repos |
 
 **Fenêtre vidéo :**
-- Résolution : 640×360 pixels (fenêtre affichée à 1280×720)
+- Résolution demandée : 640×360 pixels ; si la caméra renvoie une autre taille, le masque est ajusté à la taille réelle de l'image. La fenêtre est affichée en 1280×720.
 - La fenêtre affiche le flux en temps réel de la caméra, masqué selon la zone définie
 - Le script utilise la **première caméra détectée** ; l'aperçu au lancement permet de confirmer que c'est la bonne
 
@@ -260,7 +273,7 @@ Une fois le masque défini et les robots positionnés, la fenêtre vidéo s'ouvr
 
 1. Appuyez sur F + Entrée pour changer de mode
 2. La vidéo doit continuer sans interruption
-3. Les mouvements miroir/copie restent synchronisés
+3. Si la config du mode cible est **valide** : le mode bascule et les mouvements miroir/copie restent synchronisés. Si elle est **absente/invalide** : la bascule est refusée, le mode courant est conservé, et la téléop continue.
 
 **Test 5 : Stabilité sur 5 minutes**
 
@@ -275,7 +288,7 @@ Une fois le masque défini et les robots positionnés, la fenêtre vidéo s'ouvr
 > - Image nette et stable
 > - Pas de ralentissement de la téléopération
 > - Système stable pendant 5 minutes
-> - Fermeture propre avec Q ou q
+> - `Q` (terminal) et `q` (fenêtre vidéo) ramènent au repos puis libèrent ; `CTRL+C` libère immédiatement, **sans** retour repos
 
 
 ### 🔧 Dépannage
@@ -283,12 +296,14 @@ Une fois le masque défini et les robots positionnés, la fenêtre vidéo s'ouvr
 | Problème | Cause possible | Solution |
 | :--- | :--- | :--- |
 | Erreur "function not implemented" | `opencv-python-headless` installé | Voir Étape 2 : remplacer par `opencv-python` |
-| Fenêtre vidéo ne s'ouvre pas | Caméra non détectée | Vérifier `ls /dev/video*` |
-| Image noire / mauvaise caméra | Mauvaise caméra auto-sélectionnée | L'aperçu au lancement montre la caméra retenue ; débrancher la caméra non désirée ou ajuster `camera_index = cameras[0]` |
+| Le script s'arrête : « Aucune caméra détectée » | Caméra débranchée / non reconnue | Brancher la Caméra Globale, vérifier `ls /dev/video*`, relancer |
+| Le script s'arrête : « Caméra indisponible » (au lancement ou après `M`) | Caméra occupée par une autre application, ou déconnectée | Fermer l'autre application, vérifier le câble USB, relancer |
+| Le script s'arrête : masque abandonné | Création du masque interrompue (`A` ou ESC) | Relancer et définir le masque (obligatoire en Phase 6) |
+| Le script s'arrête : calibration ou configuration manquante | Phase 3 ou Phase 5 non faite pour ce mode | Refaire la calibration (Phase 3) / créer la config (script 5, Phase 5) |
+| Image noire / mauvaise caméra | Mauvaise caméra auto-sélectionnée (Pince branchée ?) | L'aperçu au lancement montre la caméra retenue ; ne laisser branchée que la Caméra Globale |
 | Téléopération ralentie | Charge CPU trop élevée | Fermer autres applications |
 | Permission denied /dev/video* | Droits insuffisants | Vérifier le groupe `video` (voir Phase 1, Étape 6) |
 | Caméra se déconnecte | Câble USB instable | Changer de port USB, éviter les hubs |
-| Fenêtre se ferme seule | Exception non gérée | Relancer le script, vérifier les logs |
 | Image floue | Mise au point incorrecte | Ajuster la molette de focus sur la caméra |
 | Robots ne bougent pas | Problème d'identification | Relancer le script, suivre l'ordre de branchement |
 | Module cv2 not found | Mauvais environnement | `conda activate lerobot` |
@@ -311,14 +326,14 @@ Cette phase prépare l'enregistrement de trajectoires (Phase 7). Quelques points
 
 **✅ Phase 6 terminée quand :**
 
-- La caméra Globale est montée et branchée
+- Les calibrations Leader/Follower et la configuration du mode (Phase 5) sont valides (sinon le script refuse de démarrer)
+- La caméra Globale est montée, branchée et **détectée** (seule caméra branchée, ou confirmée par l'aperçu)
 - OpenCV avec support GUI est installé
-- La caméra est détectée sur `/dev/video0` (ou `video2`)
 - Le masque de zone utile est défini (5 points du plateau)
 - La fenêtre vidéo s'affiche pendant la téléopération
 - Pas de ralentissement de la téléopération
 - Le système reste stable pendant 5 minutes
-- Vous savez fermer proprement avec Q ou q
+- Vous maîtrisez la sortie normale (`Q` ou `q`, retour repos) et l'interruption immédiate (`CTRL+C`, sans repos)
 
 > **🚀 Objectif atteint :** Votre système de téléopération dispose maintenant d'une visualisation en temps réel ! La caméra est prête pour l'enregistrement de trajectoires et l'apprentissage par imitation qui seront couverts dans la Phase 7.
 
@@ -331,4 +346,4 @@ Cette phase prépare l'enregistrement de trajectoires (Phase 7). Quelques points
 | `~/lerobot/outputs/images_from_opencv_cameras/` | Dossier contenant les images test de la caméra | Test caméra (optionnel) |
 
 Service Écoles-Médias — DIP Genève
-Guide Phase 6 — Version 2.0
+Guide Phase 6 — Version 2.1
