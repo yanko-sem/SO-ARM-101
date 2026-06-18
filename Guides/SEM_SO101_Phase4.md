@@ -12,6 +12,8 @@ Service Écoles-Médias (SEM)
 - Scripts SEM installés depuis GitHub
 - Environnement lerobot activé
 
+> **Note :** Cette phase utilise le script `SEM_so101_4_control.py` (contrôle manuel et tests des servos).
+
 
 ### 🎯 Objectif des tests
 
@@ -125,7 +127,7 @@ Appuyez sur **Entrée** pour lancer la mise en position INITIALE sécurisée, ou
 | P | Active/désactive le mode précis (pas de 10 au lieu de 50) |
 | S | Affiche le tableau détaillé des positions et limites |
 | A | Position ATTRAPER (prêt pour la manipulation) |
-| R | Position REPOS (bras replié pour le rangement) |
+| R | Position REPOS (définie en Phase 3, point de départ/retour commun) |
 | Q | Quitte proprement : retour en position REPOS **puis** libération des moteurs |
 | X | ARRÊT D'URGENCE : libère immédiatement les moteurs, **sans** retour repos (termine la session) |
 
@@ -153,7 +155,7 @@ Position: 2048
 | :--- | :--- | :--- |
 | INITIALE | Position de départ sécurisée | Lancement du script |
 | ATTRAPER | Bras prêt pour saisir un objet | Tests de manipulation |
-| REPOS | Bras replié compact | Rangement, fin de session |
+| REPOS | Position de repos définie en Phase 3 | Point de départ/retour commun ; fin de session |
 
 > **Note :** La position REPOS (touche `R`, ainsi que le retour automatique lors de `Q`) utilise la position de repos définie en Phase 3 (`repos_position.json`). Si ce fichier est **absent ou invalide**, le script **l'annonce** et applique une position de repos **par défaut**.
 
