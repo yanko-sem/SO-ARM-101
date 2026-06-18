@@ -13,6 +13,8 @@ Service Écoles-Médias (SEM) — DIP Genève
 - Scripts SEM installés depuis GitHub
 - Environnement lerobot activé
 
+> **Note :** Cette phase utilise deux scripts : `SEM_so101_5_config_teleoperation.py` (configuration COPIE/MIROIR par servo) puis `SEM_so101_6_teleoperation.py` (téléopération temps réel).
+
 
 ### 🎯 Objectif de la téléopération
 
@@ -86,8 +88,8 @@ Le script guide l'identification des robots étape par étape :
 
   🔄 Test de connexion LEADER...
      → Centre...
-     → Fermé (45°)...
-     → Ouvert (90°)...
+     → Pince fermée...
+     → Pince ouverte...
      → Centre...
   ✅ LEADER connecté et testé
 
@@ -215,7 +217,7 @@ Le script charge la configuration COPIE/MIROIR du mode choisi (créée par le sc
 Le script exécute dans l'ordre :
 
 1. Centrage parallèle des deux robots (mouvement fluide)
-2. Position repos parallèle (bras repliés)
+2. Position repos parallèle (position de repos définie en Phase 3)
 3. Compte à rebours de 3 secondes pour prendre le Leader en main
 
 > **Note :** La position repos utilisée ici (et lors de la séquence de fin) est celle définie en Phase 3 (`repos_position.json`), avec repli **annoncé** sur une valeur par défaut si le fichier manque **ou est invalide**.
