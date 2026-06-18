@@ -335,9 +335,9 @@ def test_connexion_fluide(packet, port, robot_name, calib):
     # Séquence fluide : Actuel -> Centre -> 25% -> 75% -> Centre
     print("     → Centre...")
     mouvement_fluide(packet, port, 6, pos_actuelle, centre, 1.0)
-    print("     → Fermé (45°)...")
+    print("     → Pince fermée...")
     mouvement_fluide(packet, port, 6, centre, pos_25, 0.8)
-    print("     → Ouvert (90°)...")
+    print("     → Pince ouverte...")
     mouvement_fluide(packet, port, 6, pos_25, pos_75, 1.2)
     print("     → Centre...")
     mouvement_fluide(packet, port, 6, pos_75, centre, 0.8)
