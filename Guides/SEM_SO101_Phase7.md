@@ -14,8 +14,14 @@ Service Écoles-Médias (SEM) — DIP Genève
 - Objet de manipulation : un cube et une boîte (ou récipient)
 - **Masque de la caméra globale** créé en Phase 6 (`camera_mask.json`) —
   obligatoire : l'enregistrement s'arrête sans lui
-- **Module de référence visuelle** `SEM_so101_camera_reference.py` présent
-  dans le dossier des scripts (contrôle des deux caméras)
+- **Module de configuration caméra** `SEM_8_camera_config.py` présent dans le
+  dossier des scripts (réglage et verrouillage des caméras)
+- Outils système `v4l-utils` (commande `v4l2-ctl`) et `guvcview` installés
+  (`sudo apt install v4l-utils guvcview`)
+
+> **Note :** Cette phase utilise le script `SEM_so101_8_record_dataset.py`
+> (enregistrement bi-caméra du dataset), qui s'appuie sur le module
+> `SEM_8_camera_config.py` pour régler et verrouiller les caméras.
 
 
 ### 🎯 Objectif de cette phase
@@ -66,7 +72,7 @@ ls /dev/video*
 | Position | Emplacement | Description |
 | :--- | :--- | :--- |
 | 1 - Centre | Devant le robot | Position de référence |
-| 2 - Bas | Plus près du robot | Accès facile |
+| 2 - Libre | Au choix | Position libre |
 | 3 - Haut | Plus loin du robot | Extension du bras |
 | 4 - Gauche | Côté gauche | Rotation latérale |
 | 5 - Droite | Côté droit | Rotation latérale |
@@ -97,33 +103,21 @@ cd ~/lerobot/Scripts_SEM/scripts
 python SEM_so101_8_record_dataset.py
 ```
 
-> **🔑 Ordre du démarrage (important).** La vue de la caméra **pince**
-> dépend de la position du bras. Pour que la référence de la pince
-> corresponde à la scène réelle, **les robots sont mis au repos AVANT** la
-> préparation des caméras, et ils y restent maintenus (rigides) pendant
-> toute cette préparation. Le déroulé est donc :
+> **🔑 Ordre du démarrage (important).** Les caméras sont **identifiées et
+> réglées d'abord** (avant les robots), puis le masque globale est chargé ;
+> ensuite seulement les robots sont identifiés et mis au repos, et les
+> caméras sont connectées puis verrouillées juste avant la téléopération. Le
+> déroulé est donc :
 >
-> **robots → repos → caméras → menus de référence → récapitulatif →
-> téléopération.**
+> **caméras (identification + réglages) → masque globale → robots
+> (identification) → disposition → repos → connexion + verrouillage des
+> caméras → téléopération.**
 
-**1. Identification des robots**
+Au lancement, le script vérifie d'abord les **calibrations** Leader et
+Follower (Phase 3) et refuse de démarrer si elles sont absentes ou invalides.
+Le déroulement est ensuite le suivant.
 
-Le script identifie d'abord le Leader et le Follower (même processus que les
-scripts 5 et 6 : débrancher, brancher, valider par test de la pince), puis
-demande la disposition :
-
-| Touche | Disposition |
-| :--- | :--- |
-| C + Entrée | Robots **C**ôte à côte |
-| F + Entrée | Robots en **F**ace à face |
-
-**2. Position de repos**
-
-Le script place automatiquement les deux robots en position de repos. À
-partir d'ici, **les deux bras restent rigides** jusqu'au menu de
-téléopération — ne les forcez pas à la main.
-
-**3. Identification des caméras**
+**1. Identification des caméras**
 
 Le script affiche une fenêtre vidéo pour chaque caméra détectée. Pour
 chacune, indiquez son rôle **dans le terminal** :
@@ -137,59 +131,61 @@ chacune, indiquez son rôle **dans le terminal** :
 > **💡 Conseil :** Regardez la fenêtre vidéo. Vue d'ensemble → G ; pince de
 > près → P. Les numéros `/dev/videoX` changent d'un branchement à l'autre,
 > c'est pourquoi cette identification manuelle est nécessaire à chaque fois.
+> Les **deux** caméras (globale + pince) sont obligatoires : sans les deux,
+> le script s'arrête.
 
-> **📷 Premier lancement d'une caméra :** si une caméra n'a encore aucun
-> réglage enregistré, le script propose une seule fois un réglage initial
-> avec guvcview (papier blanc). Ensuite, le réglage « à l'œil » n'est plus
-> proposé : tout passe par les menus de référence ci-dessous.
+**2. Réglage des deux caméras**
 
-### 🎯 Étape 3 bis : Menus de référence des deux caméras
+Une fois les caméras identifiées, le script règle **chaque caméra** (d'abord
+la GLOBALE `[1/2]`, puis la PINCE `[2/2]`) via le module
+`SEM_8_camera_config.py`. Pour chacune :
 
-Une fois les caméras identifiées, le script ouvre **successivement le menu
-de référence de chaque caméra** (d'abord la GLOBALE, puis la PINCE). Ce menu
-remplace le réglage « à l'œil » : il mesure les conditions visuelles et les
-compare à une **référence chiffrée**, pour que tous les épisodes du dataset
-soient visuellement cohérents (condition importante pour que le modèle
-apprenne bien).
+- Il affiche les réglages déjà enregistrés (`camera_settings.json`).
+- Si des réglages existent : `[Entrée]` pour les garder, `[R]` pour les
+  refaire.
+- Refaire ouvre **guvcview** : décochez « Auto » pour l'exposition, ajustez
+  l'exposition et la balance des blancs, puis fermez guvcview. Le script
+  relit les valeurs (via `v4l2-ctl`), vous les confirmez, et elles sont
+  enregistrées.
 
-Pour chaque caméra, le menu propose :
+Le but est de **figer l'exposition et la balance des blancs** pour que tous
+les épisodes soient visuellement cohérents (condition importante pour que le
+modèle apprenne bien). Ces réglages seront **verrouillés** sur les caméras
+plus loin, juste avant la téléopération.
 
-| Option | Rôle |
+> **⚠️ Réglez les caméras une seule fois, puis gardez les mêmes réglages.**
+> Si vous changez l'exposition ou la balance des blancs entre deux sessions,
+> les images ne seront plus cohérentes avec le reste du dataset.
+
+**3. Masque de zone utile (globale)**
+
+Le script charge le masque de la caméra globale (`camera_mask.json`, créé en
+Phase 6). Il est **obligatoire** : sans masque valide, l'enregistrement
+s'arrête (relancez le script 7, Phase 6, pour le créer). Le masque est
+appliqué à la vue globale — seule la zone utile (le plateau) est enregistrée.
+
+**4. Identification des robots**
+
+Le script identifie ensuite le Leader et le Follower (même processus que les
+scripts 5 et 6 : débrancher, brancher, valider par test de la pince), puis
+demande la disposition :
+
+| Touche | Disposition |
 | :--- | :--- |
-| 1 | Définir / redessiner les zones de mesure |
-| 2 | Visualiser les zones actuelles |
-| 3 | Mesurer en direct |
-| 4 | Créer / remplacer la référence (scène standard requise) |
-| 5 | Afficher la référence active |
-| 6 | Diagnostic de conformité (vs référence active) |
-| 7 | Recalibrer pour revenir à la référence (ajuster jusqu'à 🟢) |
-| **S** | **Étape suivante** — passer à la caméra suivante, puis aux robots |
+| C + Entrée | Robots **C**ôte à côte |
+| F + Entrée | Robots en **F**ace à face |
 
-**Usage typique :**
+La configuration du mode choisi (créée en Phase 5) est **obligatoire** : si
+elle est absente ou invalide, le script s'arrête.
 
-- **Tout premier dataset** (aucune référence) : pour chaque caméra, dessinez
-  les zones (option 1), puis créez la référence (option 4) avec la scène
-  standard en place (robots au repos, bol vide, **pas de cube**). Puis `S`.
-- **Sessions suivantes** (référence déjà créée) : faites un diagnostic
-  (option 6). Si l'éclairage a changé (🟠 ou 🔴), recalibrez (option 7)
-  jusqu'au 🟢. Puis `S`.
+**5. Repos, puis connexion et verrouillage des caméras**
 
-> **💡 La scène de référence est la même pour les deux caméras** : robots au
-> repos, bol vide, **pas de cube** sur le plateau. La caméra globale utilise
-> le masque ; la caméra pince mesure sur toute l'image (sa sentinelle de
-> couleur est la pince verte, toujours visible).
-
-> **⚠️ Ne réglez pas les caméras « à la main » après avoir créé la
-> référence.** Si vous changez l'exposition ou la balance des blancs ensuite,
-> l'image ne correspondra plus à la référence et le contrôle bloquera. Les
-> réglages se décident **une fois**, au moment de créer la référence.
-
-**Récapitulatif avant / après**
-
-Après les deux menus, le script affiche un **récapitulatif** des deux
-caméras : date de leur référence et réglages, avec mention « ← modifié » sur
-ce qui a changé pendant les menus. Appuyez sur Entrée pour **libérer le
-Leader** et démarrer la téléopération.
+Le script place automatiquement les deux robots en position de repos, puis
+**libère le Leader** (le Follower reste actif). Il connecte ensuite les deux
+caméras (en vérifiant la résolution 640×360) et **verrouille** leurs réglages
+(via `v4l2-ctl`). La téléopération démarre alors : le script affiche **« Tenez
+le LEADER »** et laisse 2 secondes pour saisir le Leader avant d'ouvrir le
+menu d'enregistrement.
 
 
 ### 🎬 Étape 4 : Enregistrement des épisodes
@@ -210,26 +206,28 @@ principal propose :
 - **Option 2 — Test rapide** : enregistre 2 épisodes (pour se familiariser
   ou vérifier la chaîne complète).
 - **Option 3 — Enregistrer 10 épisodes** : le bloc normal d'une position. Le
-  script demande ensuite **quelle position** (Centre, Bas, Haut, Gauche,
+  script demande ensuite **quelle position** (Centre, Libre, Haut, Gauche,
   Droite).
-
-> **📷 Contrôle caméra avant chaque bloc.** Que vous lanciez un test rapide
-> (2 épisodes) ou un bloc de 10, le script contrôle d'abord **les deux
-> caméras** (globale puis pince) par rapport à leur référence. Les robots
-> sont remis au repos le temps du contrôle. **L'enregistrement ne démarre
-> que si les deux caméras sont conformes.** Si une caméra n'est pas conforme,
-> l'option **[M]** ouvre son menu de référence pour recalibrer, puis le
-> contrôle est refait.
 
 **Processus d'un épisode**
 
+À l'entrée d'un bloc, les deux bras sont **rigides au repos** et la
+téléopération est en pause (mains libres pour placer le cube). L'écran
+d'attente propose :
+
+| Touche | Action |
+| :--- | :--- |
+| D | **D**émarrer l'enregistrement (cube placé, Leader en main) |
+| R | **R**epositionner les robots au repos |
+| S | **S**topper la session (revenir au menu) |
+
 1. Placez le cube sur la position demandée
-2. L'enregistrement démarre (les robots reviennent d'abord au repos)
+2. Prenez le Leader en main, puis appuyez sur **D** pour démarrer
 3. Téléopérez : guidez le Leader pour que le Follower saisisse le cube et le
    dépose dans la boîte
 4. Terminez avec **T** (succès, données sauvegardées)
 
-Pendant un épisode :
+Pendant l'enregistrement :
 
 | Touche | Action |
 | :--- | :--- |
@@ -250,7 +248,7 @@ Pendant un épisode :
 | Position | Épisodes | Objectif |
 | :--- | :--- | :--- |
 | 1 - Centre | 10 épisodes | Position de référence |
-| 2 - Bas | 10 épisodes | Varier l'approche |
+| 2 - Libre | 10 épisodes | Varier l'approche |
 | 3 - Haut | 10 épisodes | Tester l'extension |
 | 4 - Gauche | 10 épisodes | Rotation latérale |
 | 5 - Droite | 10 épisodes | Rotation latérale |
@@ -323,7 +321,7 @@ Chaque épisode produit :
 │       └── observation.images.cam_follower/
 │           ├── episode_000000.mp4
 │           └── ...
-├── position_2_bas/
+├── position_2_libre/
 │   └── ...
 ├── position_3_haut/
 │   └── ...
@@ -343,13 +341,13 @@ Chaque épisode produit :
 | Fenêtre vidéo noire | Mauvais index caméra | Passer la caméra avec Q et identifier la suivante |
 | Touche D ne réagit pas | Focus sur la mauvaise fenêtre | Cliquer dans le terminal avant de taper |
 | Épisode très court | T appuyé trop tôt | Annuler avec A, recommencer |
-| Vidéos vides | ffmpeg manquant | `ffmpeg -version`, installer si absent |
+| Vidéos vides | Flux caméra absent, ou écriture OpenCV (`VideoWriter`, codec `mp4v`) en échec | Vérifier que les deux caméras fournissent des images et qu'OpenCV peut écrire un `.mp4` |
 | Robots ne s'identifient pas | Branchement incorrect | Suivre l'ordre : débrancher tout, brancher Leader d'abord |
 | Erreur "import cv2" | Mauvais environnement | `conda activate lerobot` |
 | Fenêtre vidéo ne s'ouvre pas | opencv-python-headless | Voir Phase 6, Étape 2 |
 | « Masque globale introuvable » au lancement | `camera_mask.json` absent | Lancer le script 7 (Phase 6) pour créer le masque |
-| Bloc refusé : contrôle caméra non conforme | Éclairage différent de la référence | Option [M] → recalibrer (option 7) jusqu'au 🟢 |
-| « Réglages non verrouillés » dans un menu de référence | Caméra sans réglages valides | Option [R] dans le menu pour (re)faire les réglages |
+| Image trop claire/sombre ou couleurs fausses | Exposition/balance des blancs mal réglées | Au réglage de la caméra, choisir `[R]` (guvcview) et réajuster |
+| « Verrouillage caméra incomplet » | `v4l2-ctl` absent ou contrôle non appliqué | Installer `v4l-utils` ; vérifier la caméra ; relancer |
 
 
 ### 💡 Conseils pour des enregistrements de qualité
@@ -396,10 +394,10 @@ done
 | Fichier | Description | Créé par |
 | :--- | :--- | :--- |
 | `SEM_so101_8_record_dataset.py` | Script d'enregistrement | Phase 7 |
-| `SEM_so101_camera_reference.py` | Module de référence visuelle (contrôle des 2 caméras) | Sous-projet caméra |
+| `SEM_8_camera_config.py` | Module de configuration caméra (réglage + verrouillage) | Sous-projet caméra |
 | `position_X_*/` | Dossiers de données par position | Script 8 |
-| `~/lerobot/calibration/camera_reference_*` | Références visuelles actives des 2 caméras | Menus de référence |
+| `~/lerobot/calibration/camera_settings.json` | Réglages des 2 caméras (exposition / balance des blancs) | Réglage caméra |
 | Fichiers Phase 6 inchangés | Configuration caméra et calibration | Phases 3-6 |
 
 Service Écoles-Médias — DIP Genève
-Guide Phase 7 — Version 1.1 (enregistrement bi-caméra + référence visuelle)
+Guide Phase 7 — Version 1.2 (enregistrement bi-caméra ; réglage + verrouillage caméra)
