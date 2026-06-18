@@ -12,6 +12,8 @@ Service Écoles-Médias (SEM) — DIP Genève
 - Support de la caméra Globale installé
 - Caméra Globale branchée
 
+> **Note :** Cette phase utilise le script `SEM_so101_7_teleoperation_camera.py`, qui ajoute la caméra Globale et le masque de zone utile à la téléopération validée en Phase 5.
+
 > **⚠️ Important :** le script 7 **refuse de démarrer** si une calibration est absente/invalide, si aucune caméra n'est détectée, ou si la configuration du mode choisi n'existe pas.
 
 
@@ -45,7 +47,7 @@ L'ajout de la caméra permet de :
 - **Caméra Globale :** posée dans le coin opposé du plateau, orientée vers l'espace de travail — elle donne la vue d'ensemble de la scène.
 - **Caméra Pince :** vissée sur la pince via le support imprimé en 3D fourni (fichier STL), orientée vers les doigts — elle donne la vue rapprochée de la préhension.
 
-> **⚠️ En Phase 6, le script 7 n'utilise QUE la Caméra Globale.** La Caméra Pince fait partie du projet global mais n'est pas pilotée par ce script, qui prend automatiquement la **première caméra détectée** (`cameras[0]`). Pour éviter une mauvaise détection automatique, **ne laissez branchée que la Caméra Globale** pendant cette phase — ou vérifiez soigneusement l'aperçu affiché au lancement.
+> **⚠️ En Phase 6, le script 7 n'utilise QUE la Caméra Globale.** La Caméra Pince fait partie du projet global mais n'est pas pilotée par ce script. **Les deux caméras du projet étant identiques**, le script ne devine pas laquelle est la Globale : il vous la fait **identifier visuellement** au lancement — une seule caméra branchée : aperçu + confirmation ; plusieurs caméras : il les montre tour à tour et vous tapez `G` (Globale), `P` (Pince) ou `Q` (passer). Pour simplifier, vous pouvez ne laisser branchée que la Caméra Globale.
 
 
 ### 🔧 Étape 2 : Résolution du problème OpenCV
@@ -80,7 +82,7 @@ python -c "import cv2; print('OpenCV version:', cv2.__version__)"
 
 ### 📷 Étape 3 : Détection et test de la caméra
 
-> **💡 Note :** Le script 7 détecte automatiquement la caméra et en affiche un aperçu au lancement (résolution réelle + image figée). Cette étape est donc une **vérification optionnelle** : confirmer que la caméra est branchée et, si vous en avez plusieurs, repérer son index.
+> **💡 Note :** Le script 7 vous fait **identifier la caméra Globale** et en affiche un aperçu au lancement (résolution réelle + image figée). Cette étape est donc une **vérification optionnelle** : confirmer que la caméra est branchée et, si vous en avez plusieurs, repérer son index.
 
 **Vérification de la connexion USB**
 
@@ -169,7 +171,7 @@ Le script suit ce déroulement :
 
 1. **Vérification des calibrations** — au tout début, le script vérifie que les calibrations Leader et Follower sont complètes et valides, et **refuse de démarrer** sinon (avant toute interaction caméra ou robot).
 
-2. **Détection et aperçu de la caméra** — le script sonde les caméras disponibles, prend la **première détectée** et affiche un bref aperçu (résolution réelle + image figée). Appuyez sur ENTRÉE pour continuer. Si **aucune caméra** n'est détectée, le script s'arrête.
+2. **Sélection et aperçu de la caméra Globale** — le script sonde les caméras disponibles. Les deux caméras du projet étant identiques, il vous fait **identifier la Globale** : s'il n'y en a qu'une, il affiche un aperçu et demande **confirmation** ; s'il y en a plusieurs, il les montre tour à tour pour que vous désigniez la Globale (`G`), la Pince (`P`) ou que vous passiez (`Q`). Il affiche ensuite un bref aperçu (résolution réelle + image figée) ; appuyez sur ENTRÉE pour continuer. Si **aucune caméra** n'est détectée — ou si la Globale n'est pas confirmée/identifiée — le script s'arrête.
 
 3. **Définition du masque de zone utile (obligatoire)** — étape déterminante, détaillée juste après. Si la création est **abandonnée**, le script **s'arrête** (aucun robot n'est encore branché).
 
@@ -195,7 +197,7 @@ Le script applique un **masque** sur l'image : seule la zone utile (le plateau) 
 
 Au lancement, après l'aperçu caméra :
 
-- Si un masque existe déjà **et est valide** : `[Entrée]` pour le garder, `[M]` pour en refaire un.
+- Si un masque existe déjà **et est valide** : `[Entrée]` pour le garder, `[M]` pour en refaire un, `[Q]` pour quitter (aucun robot n'est encore engagé).
 - Si le fichier `camera_mask.json` existant est **corrompu ou invalide** (il doit contenir exactement 5 points avec des coordonnées numériques), il est **rejeté** et la recréation est lancée automatiquement.
 - Sinon, la création est lancée automatiquement (elle est **obligatoire** : un abandon arrête le script).
 
@@ -224,7 +226,6 @@ Une fois le masque défini et les robots positionnés, la fenêtre vidéo s'ouvr
   [q] (fenêtre vidéo) : Quitter
 ----------------------------------------
 
-📷 Caméra activée
 ✅ Téléopération active!
 🤖 Bougez le LEADER, le FOLLOWER suit
 ```
@@ -242,9 +243,9 @@ Une fois le masque défini et les robots positionnés, la fenêtre vidéo s'ouvr
 **Fenêtre vidéo :**
 - Résolution demandée : 640×360 pixels ; si la caméra renvoie une autre taille, le masque est ajusté à la taille réelle de l'image. La fenêtre est affichée en 1280×720.
 - La fenêtre affiche le flux en temps réel de la caméra, masqué selon la zone définie
-- Le script utilise la **première caméra détectée** ; l'aperçu au lancement permet de confirmer que c'est la bonne
+- La caméra Globale est celle que vous avez **identifiée au lancement** (confirmation, ou choix `G`/`P`) ; l'aperçu permet de vérifier le cadrage
 
-> **💡 Note :** Le script prend automatiquement la première caméra trouvée (`cameras[0]`). Si ce n'est pas la bonne (par exemple votre webcam intégrée), l'aperçu vous le montrera. Pour en forcer une autre, débranchez la caméra non désirée ou modifiez la ligne `camera_index = cameras[0]` dans le script.
+> **💡 Note :** Comme les deux caméras du projet sont identiques, le script ne choisit pas tout seul : il vous fait **identifier la Globale** au lancement (confirmation si une seule caméra, sinon choix `G`/`P`/`Q` en regardant chaque flux). En cas d'erreur, relancez le script et reprenez l'identification. Pour simplifier, ne laissez branchée que la Caméra Globale.
 
 
 ### 📊 Étape 5 : Tests de validation
@@ -296,11 +297,11 @@ Une fois le masque défini et les robots positionnés, la fenêtre vidéo s'ouvr
 | Problème | Cause possible | Solution |
 | :--- | :--- | :--- |
 | Erreur "function not implemented" | `opencv-python-headless` installé | Voir Étape 2 : remplacer par `opencv-python` |
-| Le script s'arrête : « Aucune caméra détectée » | Caméra débranchée / non reconnue | Brancher la Caméra Globale, vérifier `ls /dev/video*`, relancer |
+| Le script s'arrête : « Aucune caméra globale utilisable » | Caméra débranchée / non reconnue / non confirmée | Brancher la Caméra Globale, vérifier `ls /dev/video*`, relancer |
 | Le script s'arrête : « Caméra indisponible » (au lancement ou après `M`) | Caméra occupée par une autre application, ou déconnectée | Fermer l'autre application, vérifier le câble USB, relancer |
 | Le script s'arrête : masque abandonné | Création du masque interrompue (`A` ou ESC) | Relancer et définir le masque (obligatoire en Phase 6) |
 | Le script s'arrête : calibration ou configuration manquante | Phase 3 ou Phase 5 non faite pour ce mode | Refaire la calibration (Phase 3) / créer la config (script 5, Phase 5) |
-| Image noire / mauvaise caméra | Mauvaise caméra auto-sélectionnée (Pince branchée ?) | L'aperçu au lancement montre la caméra retenue ; ne laisser branchée que la Caméra Globale |
+| Image noire / mauvaise caméra | Caméra Pince identifiée à la place de la Globale | Relancer et identifier la Globale (`G`) ; ou ne laisser branchée que la Caméra Globale |
 | Téléopération ralentie | Charge CPU trop élevée | Fermer autres applications |
 | Permission denied /dev/video* | Droits insuffisants | Vérifier le groupe `video` (voir Phase 1, Étape 6) |
 | Caméra se déconnecte | Câble USB instable | Changer de port USB, éviter les hubs |
@@ -327,7 +328,7 @@ Cette phase prépare l'enregistrement de trajectoires (Phase 7). Quelques points
 **✅ Phase 6 terminée quand :**
 
 - Les calibrations Leader/Follower et la configuration du mode (Phase 5) sont valides (sinon le script refuse de démarrer)
-- La caméra Globale est montée, branchée et **détectée** (seule caméra branchée, ou confirmée par l'aperçu)
+- La caméra Globale est montée, branchée et **identifiée** au lancement (confirmation si une seule caméra, sinon choix `G`/`P`)
 - OpenCV avec support GUI est installé
 - Le masque de zone utile est défini (5 points du plateau)
 - La fenêtre vidéo s'affiche pendant la téléopération
