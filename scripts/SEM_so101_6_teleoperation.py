@@ -355,9 +355,9 @@ def test_connexion_fluide(packet, port, robot_name, calib):
 
     print("     → Centre...")
     mouvement_fluide(packet, port, 6, pos_actuelle, centre, 1.0)
-    print("     → Fermé (45°)...")
+    print("     → Pince fermée...")
     mouvement_fluide(packet, port, 6, centre, pos_25, 0.8)
-    print("     → Ouvert (90°)...")
+    print("     → Pince ouverte...")
     mouvement_fluide(packet, port, 6, pos_25, pos_75, 1.2)
     print("     → Centre...")
     mouvement_fluide(packet, port, 6, pos_75, centre, 0.8)
@@ -502,7 +502,7 @@ def position_repos_parallele(lk, lp, fk, fp, cl, cf):
     if aller_a_position_2robots(lk, lp, fk, fp, cl, cf, repos_pct, duree=2.0) is None:
         print("⚠️  Retour repos incomplet (lecture servo) — vérifiez la posture des robots.")
         return False
-    print("✅ Position repos atteinte (robot replié)")
+    print("✅ Position repos atteinte")
     return True
 
 def mapper_position(pos_leader, servo_id, calib_leader, calib_follower, servos_miroir):
