@@ -736,6 +736,10 @@ def main():
                 sortie_normale = True
                 break
 
+            elif key == '\x03':  # Ctrl+C capté en mode raw (pas de SIGINT) : interruption clavier
+                print("\n⚠️  Interruption clavier")
+                break
+
     except KeyboardInterrupt:
         print("\n⚠️  Interruption clavier")
     except Exception as e:
@@ -748,7 +752,11 @@ def main():
         if sortie_normale and not urgence:
             print("\n🏁 Position repos avant libération...")
             try:
-                position_repos(packetHandler, portHandler, calibration)
+                result = position_repos(packetHandler, portHandler, calibration)
+                if result is None:
+                    print("❌ Retour repos non confirmé — état du bras incertain.")
+                else:
+                    print("✅ Position repos atteinte.")
                 print("⚠️  Tenez le robot avant libération")
                 time.sleep(2)
             except Exception:
