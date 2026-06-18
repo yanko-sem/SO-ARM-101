@@ -194,7 +194,7 @@ def capturer_repos_mode_A(packetHandler, portHandler, calibration, robot_type):
     """Mode A : capture la position physique actuelle du robot comme position repos."""
     clear_screen()
     print("="*60)
-    print("📍 CAPTURE POSITION REPOS - Mode A (position physique actuelle)")
+    print("📍 CAPTURE POSITION REPOS — touche C (position physique actuelle)")
     print("="*60)
     print(f"\nRobot monitoré : {robot_type.upper()}")
 
@@ -213,10 +213,15 @@ def capturer_repos_mode_A(packetHandler, portHandler, calibration, robot_type):
     positions = {}
     for i in range(1, 7):
         pos, result, error = packetHandler.read2ByteTxRx(portHandler, i, 56)
-        if result != COMM_SUCCESS or error != 0:
+        # Aligne sur la calibration (script 2) : seule une vraie panne de
+        # communication bloque. Un statut interne non nul est signalé mais la
+        # position est conservée — elle reste vérifiée contre les limites ci-dessous.
+        if result != COMM_SUCCESS:
             print(f"\n❌ Lecture impossible du servo {i} — position de repos NON enregistrée.")
             input("\nAppuyez sur Entrée pour revenir au monitoring...")
             return
+        if error != 0:
+            print(f"  ⚠️ Servo {i} : statut interne non nul (code {error}) — position conservée, à identifier")
         positions[i] = pos
 
     repos_pct = ticks_vers_pct(positions, calibration)
@@ -253,7 +258,7 @@ def saisir_repos_mode_B(calibration, robot_type):
     """Mode B : saisie manuelle des 6 valeurs (ticks bruts) comme position repos."""
     clear_screen()
     print("="*60)
-    print("⌨️  CAPTURE POSITION REPOS - Mode B (saisie manuelle des ticks)")
+    print("⌨️  CAPTURE POSITION REPOS — touche M (saisie manuelle des ticks)")
     print("="*60)
     print(f"\nCalibration utilisée : {robot_type.upper()}")
 
