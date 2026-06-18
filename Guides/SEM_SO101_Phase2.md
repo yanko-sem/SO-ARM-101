@@ -15,14 +15,14 @@ Développé par : Service Écoles-Médias (SEM)
 - 12 servos Feetech STS3215
 - Câbles 3-pins fournis
 
-> **Note :** Cette phase utilise le script `SEM_so101_1_configure.py` développé par le Service Écoles-Médias, optimisé pour l'éducation et la formation.
+> **Note :** Cette phase utilise le script `SEM_so101_1_configure.py`.
 
 
 ### 🔍 Vue d'ensemble de la Phase 2
 
 Cette phase consiste à :
 
-1. Attribuer un ID unique à chaque servo (1 à 6)
+1. Attribuer les IDs 1 à 6 aux servos de **chaque bras** (le Leader et le Follower ont chacun leurs propres IDs 1 à 6, car ils sont sur deux bus séparés)
 2. Tester le mouvement de chaque servo
 3. Centrer chaque servo en position 2048
 4. Monter les servos sur la structure
@@ -61,12 +61,14 @@ cd ~/lerobot/Scripts_SEM/scripts
 
 Le script effectue automatiquement les opérations suivantes :
 
-1. **Détection du port USB** — il trouve automatiquement l'adaptateur branché (l'option `D` du menu permet de relancer cette détection)
+1. **Détection du port USB** — il sélectionne le **premier port USB disponible** (l'option `D` permet de relancer cette détection). Cela suppose qu'un seul adaptateur est branché à la fois (voir Étape 1)
 2. **Attribution de l'ID** — il lit d'abord l'ID actuel du servo connecté, puis écrit le numéro voulu (1 à 6) dans l'EEPROM du servo ; l'ID y est conservé même après coupure d'alimentation
 3. **Test de mouvement** — il fait bouger le servo vers trois positions (MIN → MAX → CENTRE) pour vérifier son bon fonctionnement
 4. **Centrage et blocage** — il positionne le servo à 2048 (position neutre) et l'y maintient bloqué, couple actif, pour le montage
 5. **Configuration groupée** — l'option `T` enchaîne automatiquement la configuration des six servos
 6. **Blocage / libération** — les options `B` et `L` bloquent ou libèrent le servo connecté (utiliser `L` pour relâcher le couple après le montage)
+
+> **Note technique (Feetech STS3215) :** l'ID est stocké dans le registre EEPROM **5** (et non au registre 3 des conventions AX/MX). L'EEPROM étant verrouillée, le script la déverrouille, écrit l'ID, la reverrouille, puis vérifie que le servo répond à son nouvel ID — automatiquement, sans action manuelle.
 
 **Correspondance des servos :**
 
@@ -86,6 +88,17 @@ python SEM_so101_1_configure.py
 ```
 
 Le script affiche un menu : choisissez le numéro d'un servo (1 à 6), `T` pour les configurer tous, `B` ou `L` pour bloquer ou libérer le servo connecté, `D` pour relancer la détection du port USB, ou `Q` pour quitter.
+
+> ### ℹ️ Messages affichés pendant l'attribution d'un ID — faut-il s'inquiéter ?
+>
+> Quand le script change l'ID d'un servo, il déverrouille la mémoire EEPROM, écrit le nouvel ID, la reverrouille, puis **vérifie que le servo répond à son nouvel ID**. Selon le résultat, vous verrez l'un de ces messages :
+>
+> - ✅ **« ID changé : le servo répond maintenant à l'ID X »** — tout est correct ; l'ID est sauvegardé dans l'EEPROM, de façon permanente (même après coupure de courant).
+> - ✅ **« Le servo a déjà l'ID X »** — rien à faire, il était déjà au bon ID.
+> - ❌ **« L'ID n'a pas changé… Débranchez/rebranchez le servo et réessayez »** — **ce n'est pas une panne.** L'écriture n'a pas été confirmée. Débranchez puis rebranchez le servo, vérifiez l'alimentation, et relancez la configuration. Aucun risque pour le matériel.
+> - ⚠️ **« Baudrate non relu correctement »** — **avertissement sans conséquence** : l'ID a déjà été configuré ; seule la relecture du débit a échoué. Si l'ID s'affiche **[SAUVEGARDÉ]**, la configuration est valide.
+>
+> En résumé : un ❌ sur l'ID se règle en rebranchant le servo ; un ⚠️ sur le baudrate est inoffensif.
 
 
 ### ⚙️ Étape 3 : Procédure de configuration
@@ -127,7 +140,7 @@ Répéter la même procédure avec l'adaptateur USB du Follower.
 
 > **💡 Astuce :** Après avoir monté chaque servo, il est normal que la position centrale puisse bouger. Pour recentrer un servo **déjà configuré**, utilisez l'option `B` du menu : elle place le servo à 2048 et le bloque, sans rejouer le balayage MIN → MAX → CENTRE. Évitez une configuration complète (1–6) sur un servo déjà monté : ce balayage peut être trop ample une fois le servo fixé à la structure. C'est aussi pourquoi nous configurons AVANT le montage (pour avoir l'ID) puis recentrons APRÈS si nécessaire.
 
-> **⚠️ Servo 6 (pince) :** lors du montage, fixez la pince en position **OUVERTE** (le script le rappelle au moment de configurer ce servo).
+> **⚠️ Servo 6 (pince) :** le script centre le servo à 2048 et affiche un rappel (il n'ouvre pas la pince lui-même). Lors du montage mécanique, fixez la pince en position **OUVERTE** autour de cette position centrale.
 
 
 ### 🔍 Étape 4 : Vérification et dépannage
@@ -141,7 +154,7 @@ Au-delà de la configuration d'un servo (touches 1 à 6), le menu propose :
 - `L` — libère le servo connecté (relâche le couple), à utiliser après le montage
 - `D` — relance la détection du port USB (utile si l'adaptateur a été rebranché)
 
-> **Note :** Les options `B` et `L` recherchent le servo branché et affichent son ID — c'est le moyen le plus simple de vérifier quel servo est connecté. Elles ne scrutent que les ID 1 à 6 : un servo neuf (livré en ID 1) ou déjà configuré est détecté ; un servo dont l'ID est hors de cette plage ne le sera pas.
+> **Note :** Les options `B` et `L` recherchent le servo branché et affichent son ID — c'est le moyen le plus simple de vérifier quel servo est connecté. Elles ne scrutent que les ID 1 à 6 : un servo neuf (livré en ID 1) ou déjà configuré est détecté ; un servo dont l'ID est hors de cette plage ne le sera pas. Si aucune confirmation n'apparaît après `B` ou `L`, c'est qu'aucun servo n'a répondu sur les IDs 1 à 6 : vérifiez le branchement et l'alimentation du servo.
 
 **Tableau de dépannage**
 
@@ -150,8 +163,9 @@ Au-delà de la configuration d'un servo (touches 1 à 6), le menu propose :
 | Port USB non détecté | Adaptateur non branché, mauvais port USB, permissions insuffisantes | Vérifier le branchement, essayer un autre port USB, vérifier le groupe `dialout` (voir Phase 1, Étape 6) |
 | Servo ne bouge pas | Alimentation non connectée, câble 3-pins mal branché, servo défectueux | Vérifier l'alimentation (LED allumée), reconnecter le câble 3-pins, tester avec un autre servo |
 | Position incorrecte après montage | Normal — le montage fait bouger le servo, palonnier mal positionné | Utiliser l'option `B` pour recentrer (sans rejouer le test de mouvement) ; démonter/remonter le palonnier si besoin |
-| Plusieurs servos détectés | Plusieurs servos connectés en chaîne | Débrancher tous sauf un, configurer un par un |
+| Mauvais servo configuré | Plusieurs servos branchés en même temps — le script configure le premier qui répond | Débrancher tous les servos sauf celui à configurer, puis relancer |
 | ID déjà utilisé | Servo déjà configuré, mauvais servo branché | Utiliser `B` ou `L` pour afficher l'ID du servo branché, brancher le bon servo |
+| L'ID n'a pas changé après tentative | Écriture EEPROM non confirmée, coupure pendant l'écriture, alimentation instable | Débrancher/rebrancher le servo, vérifier l'alimentation, relancer la configuration |
 
 
 ### 📝 Notes importantes
