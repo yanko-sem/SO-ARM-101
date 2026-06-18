@@ -12,6 +12,8 @@ Service Écoles-Médias (SEM)
 - Scripts SEM installés depuis GitHub
 - Environnement lerobot activé
 
+> **Note :** Cette phase utilise deux scripts : `SEM_so101_2_calibrate.py` (calibration des limites min/max des servos) et `SEM_so101_3_monitor.py` (monitoring temps réel et définition de la position de repos).
+
 
 ### 🎯 Objectif de la calibration
 
@@ -147,6 +149,17 @@ Position actuelle: 1800
 
 > **⚠️ Recentrage non confirmé :** si le script affiche « recentrage non confirmé » ou « couple non réactivé, recentrage ignoré », la calibration (MIN/MAX) reste **valide et sauvegardée** — mais le servo n'a pas rejoint son centre. Replacez alors le bras à la main dans une **position sûre** avant de continuer.
 
+> ### ℹ️ Message « statut interne non nul » — faut-il s'inquiéter ?
+>
+> Certains servos (le **servo 2 / ÉPAULE** surtout) peuvent renvoyer un statut interne non nul pendant la **calibration** ou la **capture du repos**, par exemple :
+> `⚠️ Servo 2 : statut interne non nul (code 1) — position conservée, à identifier`
+>
+> Ce n'est **pas une panne de communication** : le servo répond, mais signale un **drapeau interne**. Ce drapeau peut tenir à l'alimentation, à la charge mécanique, à la température ou à un autre état interne du servo — la **cause exacte reste à identifier** si le message revient régulièrement. En conséquence :
+> - la **lecture de position reste valide** et l'opération **continue** — seul un véritable échec de communication bloque ;
+> - ce n'est pas anodin pour autant : c'est un **signal de surveillance**, à examiner si le message est récurrent.
+>
+> Cette tolérance ne vaut que pour les **lectures de position** de la Phase 3 (calibration et capture du repos) ; elle ne garantit pas le bon fonctionnement du servo en mouvement.
+
 
 ### 📊 Étape 4 : Calibration complète (option T)
 
@@ -265,7 +278,7 @@ Sous le tableau, deux touches permettent de créer ou modifier le repos :
 
 Dans les deux cas, un récapitulatif s'affiche avant la confirmation, puis la position est enregistrée dans `repos_position.json` (écriture atomique).
 
-> **🔒 Sécurités à l'enregistrement :** une position **hors des limites** de calibration est refusée (repositionnez le bras et recommencez) ; et si vous n'êtes **pas sur le FOLLOWER**, le script demande de taper `OUI` en toutes lettres pour confirmer. En mode `C`, si une lecture de servo échoue, la capture est annulée (aucune valeur erronée n'est enregistrée).
+> **🔒 Sécurités à l'enregistrement :** une position **hors des limites** de calibration est refusée (repositionnez le bras et recommencez) ; et si vous n'êtes **pas sur le FOLLOWER**, le script demande de taper `OUI` en toutes lettres pour confirmer. En mode `C`, si la **communication** avec un servo échoue, la capture est annulée ; un statut interne non nul est, lui, **signalé sans bloquer** (voir l'encadré en Étape 3).
 
 > **💡 Recommandation :** capturez la position de repos depuis le **FOLLOWER** — c'est lui qui sert de référence au déploiement. Le script le rappelle si vous monitorez le Leader.
 
@@ -306,6 +319,7 @@ Les calibrations sont stockées dans :
 | Port USB non détecté | Adaptateur débranché ou permissions | Vérifier le groupe `dialout` (voir Phase 1, Étape 6) |
 | Plusieurs robots détectés (script refuse) | Leader ET Follower branchés en même temps | Ne garder branché que l'adaptateur du bras à calibrer |
 | Servo ne bouge pas manuellement | Couple moteur actif | Normal au début, le script libère les servos |
+| « Statut interne non nul (code X) » sur un servo | Drapeau interne du servo, communication OK ; cause à vérifier (alimentation, câblage, charge mécanique, température) | Non bloquant pour la lecture : l'opération continue. Vérifier le servo si le message est récurrent |
 | Amplitude trop faible (< 500) | MIN/MAX trop proches (servo peu/pas bougé, butées trop proches) | Le script **refuse** la sauvegarde ; recommencez avec des limites MIN/MAX bien distinctes |
 | Amplitude très élevée (> 3800) | Plage presque complète de l'encodeur, ou limites trop larges | Vérifier que MIN/MAX ne forcent pas contre les butées mécaniques |
 | Le servo force après calibration | Limites mal définies | Recalibrer ce servo spécifiquement |
