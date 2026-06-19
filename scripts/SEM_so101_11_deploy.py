@@ -7,7 +7,8 @@ DÉPLOIEMENT DU MODÈLE ACT — INFÉRENCE AUTONOME
 ================================================
 
 Ce script charge un modèle ACT entraîné et laisse le bras Follower
-agir de façon autonome : aucun opérateur n'est nécessaire.
+agir de façon autonome : aucun opérateur n'est nécessaire pendant
+l'action autonome, après la phase de préparation.
 
 Le modèle observe en continu les deux caméras et les positions actuelles
 des servos du Follower, calcule les positions cibles, et les envoie
@@ -20,7 +21,7 @@ Contrôles pendant l'inférence (au clavier, dans le terminal):
     Q      : Quitter
 
 Auteur: Service Écoles-Médias (SEM)
-Version: 1.0
+Version: 1.1
 Date: Avril 2026
 """
 
@@ -43,7 +44,8 @@ try:
     CV2_AVAILABLE = True
 except ImportError:
     CV2_AVAILABLE = False
-    print("⚠️  OpenCV non disponible - déploiement sans affichage vidéo")
+    print("⚠️  OpenCV non disponible — requis pour le déploiement "
+          "(caméras, masque, conversion image→tenseur).")
 
 # Auto-activation de l'environnement lerobot si nécessaire
 try:
@@ -192,12 +194,18 @@ def detect_ports():
 
 
 def charger_calibration(robot_type):
-    """Charge la calibration d'un robot depuis le fichier JSON"""
+    """Charge la calibration d'un robot depuis le fichier JSON. Fail-closed :
+    retourne None si le fichier est absent OU illisible/corrompu — jamais une
+    exception qui remonterait (potentiellement après activation du couple)."""
     calib_file = CALIB_DIR / f"{robot_type}_calibration.json"
-    if calib_file.exists():
+    if not calib_file.exists():
+        return None
+    try:
         with open(calib_file, 'r') as f:
             return json.load(f)
-    return None
+    except Exception as e:
+        print(f"❌ Calibration {robot_type} illisible : {e}")
+        return None
 
 
 def calibration_complete(calibration):
@@ -256,10 +264,36 @@ def lire_positions(packet_handler, port_handler):
     return positions, True
 
 
-def ecrire_position(packet_handler, port_handler, servo_id, position):
-    """Écrit une position cible sur un servo avec clipping [0, 4095]"""
-    position = max(0, min(4095, int(position)))
-    packet_handler.write2ByteTxRx(port_handler, servo_id, 42, position)
+def ecrire_position(packet_handler, port_handler, servo_id, position, calib=None):
+    """Écrit une position cible sur un servo. Retourne True/False (COMM_SUCCESS).
+
+    Clipping de sécurité : si `calib` est fourni, la cible est bornée à la plage
+    CALIBRÉE [min, max] du servo — barrière contre une prédiction aberrante du
+    modèle qui sortirait de l'espace de travail appris. Sinon, repli sur la plage
+    registre brute [0, 4095]. En fonctionnement normal le modèle reste dans
+    [min, max] : le clip ne mord qu'en cas d'aberration.
+    Une panne de communication (result != COMM_SUCCESS) est signalée par False,
+    pour permettre à l'appelant de détecter une défaillance persistante."""
+    position = int(position)
+    if calib is not None:
+        info = calib.get(f'servo_{servo_id}', {})
+        min_val, max_val = info.get('min'), info.get('max')
+        if (isinstance(min_val, (int, float)) and isinstance(max_val, (int, float))
+                and min_val < max_val):
+            position = max(int(min_val), min(int(max_val), position))
+        else:
+            position = max(0, min(4095, position))
+    else:
+        position = max(0, min(4095, position))
+    try:
+        result = packet_handler.write2ByteTxRx(port_handler, servo_id, 42, position)
+    except Exception as e:
+        print(f"❌ Écriture servo {servo_id} impossible : {e}")
+        return False
+    comm_result = result[0] if isinstance(result, tuple) else result
+    if comm_result != COMM_SUCCESS:
+        return False
+    return True
 
 
 def charger_masque_globale():
@@ -376,7 +410,13 @@ def mouvement_servos(packet, port, calib, cibles_pct, servos, duree=2.0):
         t = step / steps
         smooth = (1 - math.cos(t * math.pi)) / 2
         for s in servos:
-            packet.write2ByteTxRx(port, s, 42, int(pos[s] + (cible[s] - pos[s]) * smooth))
+            cible_pas = int(pos[s] + (cible[s] - pos[s]) * smooth)
+            # Écriture contrôlée : abandon à la PREMIÈRE panne de communication
+            # (symétrique avec les lectures ci-dessus). Le repos est un invariant :
+            # aller_position_repos doit pouvoir renvoyer False sur un échec réel.
+            if not ecrire_position(packet, port, s, cible_pas, calib):
+                print(f"❌ Écriture servo {s} impossible — mouvement annulé")
+                return None
         time.sleep(duree / steps)
     return True
 
@@ -419,7 +459,10 @@ def aller_a_position(packet, port, calib, cibles_pct, duree=2.0):
             for step in range(steps + 1):
                 t = step / steps
                 smooth = (1 - math.cos(t * math.pi)) / 2
-                packet.write2ByteTxRx(port, 2, 42, int(deb + (fin - deb) * smooth))
+                if not ecrire_position(packet, port, 2,
+                                       int(deb + (fin - deb) * smooth), calib):
+                    print("❌ Écriture servo 2 impossible — mouvement annulé")
+                    return None
                 time.sleep(duree / steps)
 
     # --- Phase 1 : servo 4 -> 20% (pince en l'air) ---
@@ -587,10 +630,16 @@ def selectionner_checkpoint():
         print("   → Vérifiez que l'entraînement (Script 10) a bien été effectué.")
         return None
 
-    # Scanner les sous-dossiers qui contiennent un dossier pretrained_model/
+    # Tri par valeur entière (chiffres croissants) ; 'last' et tout nom non
+    # numérique placés en fin. Sinon le tri alphabétique mettrait "50000" après
+    # "200000" et le repli ci-dessous recommanderait un checkpoint plus ancien.
+    def _cle_checkpoint(cp):
+        return (0, int(cp.name)) if cp.name.isdigit() else (1, cp.name)
+
     checkpoints = sorted(
         [item for item in checkpoints_dir.iterdir()
-         if item.is_dir() and (item / "pretrained_model").is_dir()]
+         if item.is_dir() and (item / "pretrained_model").is_dir()],
+        key=_cle_checkpoint,
     )
 
     if not checkpoints:
@@ -598,8 +647,11 @@ def selectionner_checkpoint():
         print(f"   {checkpoints_dir}")
         return None
 
-    # Checkpoint utilisé par défaut : "last" s'il existe, sinon le plus avancé.
-    last_cp = next((cp for cp in checkpoints if cp.name == "last"), checkpoints[-1])
+    # Checkpoint par défaut : "last" s'il existe, sinon le plus grand checkpoint
+    # NUMÉRIQUE (plus de steps), et seulement à défaut un dossier non numérique.
+    numeriques = [cp for cp in checkpoints if cp.name.isdigit()]
+    last_cp = next((cp for cp in checkpoints if cp.name == "last"),
+                   numeriques[-1] if numeriques else checkpoints[-1])
 
     print(f"\n📋 Checkpoints disponibles ({len(checkpoints)}) :")
     print("   (un « step » = une itération d'entraînement : le modèle ajuste ses")
@@ -643,21 +695,26 @@ def resoudre_meta_dataset(checkpoint_path):
     """Étape 6 : remonte du checkpoint au meta/ du dataset d'entraînement.
        checkpoint/pretrained_model/train_config.json → repo_id → meta/
     Retourne (Path meta | None, message, mode_ref) avec
-    mode_ref ∈ {"dataset", "legacy_possible", "bloquant"} (décision D1)."""
+    mode_ref ∈ {"dataset", "legacy_possible", "bloquant"} (décision D1).
+
+    Politique de traçabilité : un checkpoint NON traçable (train_config.json
+    absent/illisible, repo_id manquant, meta/ introuvable) est BLOQUANT. Le mode
+    LEGACY ne couvre QUE les datasets identifiés mais antérieurs au système de
+    références caméra (meta/ présent, 0 référence)."""
     cfg = checkpoint_path / "train_config.json"
     if not cfg.exists():
-        return None, f"train_config.json absent ({cfg})", "legacy_possible"
+        return None, f"train_config.json absent ({cfg})", "bloquant"
     try:
         with open(cfg, 'r') as f:
             data = json.load(f)
     except Exception as e:
-        return None, f"train_config.json illisible ({e})", "legacy_possible"
+        return None, f"train_config.json illisible ({e})", "bloquant"
     repo_id = (data.get("dataset", {}) or {}).get("repo_id")
     if not repo_id:
-        return None, "repo_id absent de train_config.json", "legacy_possible"
+        return None, "repo_id absent de train_config.json", "bloquant"
     meta = Path.home() / ".cache" / "huggingface" / "lerobot" / repo_id / "meta"
     if not meta.exists():
-        return None, f"meta/ du dataset introuvable ({meta})", "legacy_possible"
+        return None, f"meta/ du dataset introuvable ({meta})", "bloquant"
     # Présence RÉELLE des deux références (pas seulement du dossier meta/) :
     #   les deux → mode dataset ; aucune → LEGACY possible (ancien dataset) ;
     #   une seule → état incohérent → blocage (décision D1).
@@ -838,6 +895,17 @@ def connexion_follower():
     follower_port = ports[0]
     print(f"\n✅ Port détecté : {follower_port}")
 
+    # Calibration OBLIGATOIRE et VALIDE chargée AVANT toute activation du couple :
+    # absente, corrompue ou invalide -> on refuse ICI, alors qu'aucun servo n'est
+    # encore sous tension (jamais de bras laissé rigide sur calibration illisible).
+    # Sans elle, le déploiement retomberait sur des positions brutes 0-4095
+    # (risque de butées) et les pourcentages repos seraient faux.
+    calib = charger_calibration('follower')
+    if not calibration_complete(calib):
+        print("❌ Calibration Follower absente, incomplète ou invalide — refaire la Phase 3.")
+        return None, None, None
+    print("✅ Calibration Follower chargée")
+
     port_handler   = PortHandler(follower_port)
     packet_handler = PacketHandler(1.0)
 
@@ -850,21 +918,9 @@ def connexion_follower():
         port_handler.closePort()
         return None, None, None
 
-    # Activer le couple sur tous les servos
+    # Activer le couple sur tous les servos (calibration déjà validée ci-dessus)
     for i in range(1, 7):
         packet_handler.write1ByteTxRx(port_handler, i, 40, 1)
-
-    # Calibration OBLIGATOIRE et VALIDE : sans elle, le déploiement retomberait sur
-    # des positions brutes 0-4095 (risque de butées) et les pourcentages repos
-    # seraient faux. On refuse plutôt que de continuer en mode dégradé.
-    calib = charger_calibration('follower')
-    if not calibration_complete(calib):
-        print("❌ Calibration Follower absente, incomplète ou invalide — refaire la Phase 3.")
-        for i in range(1, 7):
-            packet_handler.write1ByteTxRx(port_handler, i, 40, 0)
-        port_handler.closePort()
-        return None, None, None
-    print("✅ Calibration Follower chargée")
 
     print("✅ Bras Follower connecté et prêt")
     return port_handler, packet_handler, calib
@@ -1002,10 +1058,14 @@ def boucle_inference(policy, cam_top, cam_follower_cam, port_handler, packet_han
 
     en_pause        = False
     modele_actif    = True    # le modèle agit ; R le désactive (retour repos), Entrée le réactive
+    repos_confirme  = True    # le bras est au repos au démarrage (garanti par main)
     step            = 0
     derniere_action = None
     premiere_action = True
     frequence       = 1.0 / CONFIG['fps']
+
+    echecs_consecutifs = 0    # itérations consécutives avec ≥1 écriture servo en échec
+    clips_total        = 0    # nb d'actions modèle bornées à la plage calibrée [min,max]
 
     # Cache des dernières frames valides (évite un KeyError si une caméra saute une image)
     cache_frame_top = None
@@ -1087,6 +1147,7 @@ def boucle_inference(policy, cam_top, cam_follower_cam, port_handler, packet_han
                 premiere_action = True
                 en_pause        = False   # repart d'un état propre (annule une éventuelle pause)
                 modele_actif    = False   # modèle désactivé jusqu'au prochain Entrée
+                repos_confirme  = ok_repos  # le bras est-il réellement au repos ?
                 if ok_repos:
                     print("\n✅ Retour au repos — modèle DÉSACTIVÉ.")
                 else:
@@ -1094,9 +1155,19 @@ def boucle_inference(policy, cam_top, cam_follower_cam, port_handler, packet_han
                 print("   Replacez la pièce, puis appuyez sur Entrée pour relancer un essai.")
             elif cmd == 'ENTER':
                 if not modele_actif:
-                    modele_actif    = True
-                    premiere_action = True   # redémarrage en douceur (interpolation 1 s)
-                    print("\n▶️  Modèle RÉACTIVÉ — nouvel essai en cours.")
+                    # Invariant : un nouvel essai DOIT partir du repos. Si le dernier
+                    # retour repos a échoué, on le retente ; réactivation uniquement
+                    # si le bras est confirmé au repos.
+                    if not repos_confirme:
+                        print("\n🔁 Retour repos non confirmé — nouvelle tentative avant relance...")
+                        repos_confirme = aller_position_repos(packet_handler, port_handler, calib)
+                    if repos_confirme:
+                        modele_actif    = True
+                        premiere_action = True   # redémarrage en douceur (interpolation 1 s)
+                        print("\n▶️  Modèle RÉACTIVÉ — nouvel essai en cours.")
+                    else:
+                        print("\n❌ Relance refusée : le bras n'est pas confirmé en position repos.")
+                        print("   Réessayez (Entrée) ou quittez (Q).")
 
             if en_pause:
                 time.sleep(frequence)
@@ -1135,6 +1206,8 @@ def boucle_inference(policy, cam_top, cam_follower_cam, port_handler, packet_han
             action_np       = action.cpu().numpy().flatten()
             derniere_action = action_np
 
+            echec_iteration = False   # ≥1 écriture servo en échec sur cette itération
+
             if premiere_action:
                 # Interpolation fluide sur 1 seconde pour éviter un "coup de fouet" initial
                 positions_depart, ok = lire_positions(packet_handler, port_handler)
@@ -1153,13 +1226,41 @@ def boucle_inference(policy, cam_top, cam_follower_cam, port_handler, packet_han
                             depart  = float(positions_depart[servo_id])
                             cible   = float(action_np[i])
                             new_pos = int(depart + (cible - depart) * smooth)
-                            ecrire_position(packet_handler, port_handler, servo_id, new_pos)
+                            if not ecrire_position(packet_handler, port_handler,
+                                                   servo_id, new_pos, calib):
+                                echec_iteration = True
                     time.sleep(duree_interp / steps_interp)
                 premiere_action = False
             else:
                 for i, servo_id in enumerate(range(1, 7)):
                     if i < len(action_np):
-                        ecrire_position(packet_handler, port_handler, servo_id, action_np[i])
+                        # Comptage agrégé des clips : la cible du modèle sort-elle
+                        # de la plage calibrée du servo ? (diagnostic, sans spam)
+                        cible_modele = int(action_np[i])
+                        info_cal = calib.get(f'servo_{servo_id}', {})
+                        mn, mx = info_cal.get('min'), info_cal.get('max')
+                        if (isinstance(mn, (int, float)) and isinstance(mx, (int, float))
+                                and mn < mx and not (mn <= cible_modele <= mx)):
+                            clips_total += 1
+                        if not ecrire_position(packet_handler, port_handler,
+                                               servo_id, action_np[i], calib):
+                            echec_iteration = True
+
+            # Panne d'écriture persistante : 3 itérations d'inférence consécutives
+            # avec ≥1 écriture en échec -> arrêt sûr (un échec isolé ne déclenche
+            # rien). Le compteur ne bouge que sur les itérations qui écrivent
+            # réellement (pause / modèle inactif / lecture douteuse font 'continue').
+            if echec_iteration:
+                echecs_consecutifs += 1
+            else:
+                echecs_consecutifs = 0
+            if echecs_consecutifs >= 3:
+                print("\n🛑 ARRÊT SÛR — écritures servo en échec sur 3 itérations "
+                      "consécutives (panne de communication). Coupure du couple.")
+                for sid in range(1, 7):
+                    packet_handler.write1ByteTxRx(port_handler, sid, 40, 0)
+                urgence = True
+                break
 
             step += 1
 
@@ -1180,6 +1281,8 @@ def boucle_inference(policy, cam_top, cam_follower_cam, port_handler, packet_han
         if CV2_AVAILABLE:
             cv2.destroyAllWindows()
         print(f"\n📊 Étapes d'inférence exécutées : {step}")
+        if clips_total:
+            print(f"   ⚠️  Actions bornées à la plage calibrée (clips) : {clips_total}")
 
 
 # ============================================
@@ -1195,6 +1298,15 @@ def main():
 ║     Service Écoles-Médias (SEM) - DIP Genève                        ║
 ╚══════════════════════════════════════════════════════════════════════╝
     """)
+
+    # OpenCV est indispensable au déploiement (caméras, masque, conversion
+    # image→tenseur, cv2.fillPoly/bitwise_and). Sans lui, le script planterait
+    # plus loin ; on échoue proprement ICI, avant tout engagement des servos.
+    if not CV2_AVAILABLE:
+        print("\n❌ OpenCV indisponible — déploiement impossible.")
+        print("   Requis pour les caméras, le masque et les images du modèle.")
+        print("   → Activez l'environnement lerobot (conda activate lerobot).")
+        sys.exit(1)
 
     print(f"🖥️  Device     : {DEVICE}")
     print(f"📂 Modèles    : {TRAIN_OUTPUT_DIR}")
@@ -1228,8 +1340,10 @@ def main():
     meta_dataset, msg_ref, mode_ref = resoudre_meta_dataset(checkpoint_path)
     print(f"\n📂 {msg_ref}")
     if mode_ref == "bloquant":
-        print("\n❌ Dataset incohérent : une seule des deux références caméra")
-        print("   est présente. Impossible de contrôler de façon fiable.")
+        print("\n❌ Déploiement bloqué : la cause ci-dessus empêche un contrôle")
+        print("   caméra fiable — checkpoint non traçable (train_config/repo_id/meta)")
+        print("   ou références du dataset incohérentes. Le mode LEGACY ne couvre")
+        print("   pas ce cas.")
         print("   → Reconsolide le dataset (script 9) ou choisis un autre modèle.")
         sys.exit(1)
     dossier_reference = meta_dataset       # None → LEGACY
@@ -1384,6 +1498,11 @@ def main():
             print("\n❌ Verrouillage caméra incomplet — déploiement annulé")
             print("   (les réglages doivent être garantis comme à l'entraînement).")
             _abort_cameras(1)
+
+        # Stabilisation déterministe : laisse le temps aux caméras d'appliquer les
+        # réglages verrouillés et aux threads de rafraîchir vers des frames POST-
+        # verrouillage avant que la première action du modèle ne les lise.
+        time.sleep(0.5)
 
     # 8. Boucle d'inférence, sous protection CTRL+C (le robot est déjà
     #    connecté et au repos depuis l'étape 4).
