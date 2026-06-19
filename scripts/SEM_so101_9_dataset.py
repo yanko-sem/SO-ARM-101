@@ -6,19 +6,19 @@ Service Écoles-Médias (SEM) - DIP Genève
 PRÉPARATION COMPLÈTE DU DATASET POUR L'ENTRAÎNEMENT
 ====================================================
 
-Prépare, en un seul geste, le dataset destiné à l'entraînement (script 11) :
+Prépare, en un seul geste, le dataset destiné à l'entraînement (script 10) :
   1. Analyse + validation des données source (script 8) — fail-closed.
   2. Consolidation des 5 positions dans un dossier TEMPORAIRE.
   3. Finalisation : info.json complet, tasks.jsonl, episodes.jsonl, episodes_stats.jsonl,
      traçabilité caméra, conversion H.264 (navigateur), vérification frames vidéo/parquet.
   4. Bascule ATOMIQUE vers le dataset final UNIQUEMENT si les étapes critiques réussissent.
-  5. Visualisation LeRobot optionnelle (le script 10 fait la visualisation seule).
+  5. Visualisation LeRobot optionnelle — désormais intégrée ici (ancienne étape de visualisation séparée).
 
 Entrée : ~/.cache/huggingface/lerobot/local/so101_pick_place/position_X_*/
 Sortie : ~/.cache/huggingface/lerobot/local/so101_pick_place_consolidated/
 
 Auteur: Service Écoles-Médias (SEM)
-Version: 2.0 (fusion 9+10 — préparation complète du dataset)
+Version: 2.1 (préparation complète du dataset + visualisation intégrée)
 """
 
 import os
@@ -37,14 +37,18 @@ from datetime import datetime
 # la référence et le journal sont copiés dans le meta/ du dataset, qui devient leur
 # exemplaire de vérité. Import protégé et NON bloquant : consolider un dataset doit
 # rester possible sans le module (traçabilité incomplète signalée à la place ; le
-# script 12 possède un mode LEGACY pour les datasets sans références).
+# script 11 possède un mode LEGACY pour les datasets sans références).
 try:
     from SEM_so101_camera_reference import copier_reference_vers_meta
     from SEM_so101_camera_reference import LOG_FILE as CAMERA_REF_LOG
+    from SEM_so101_camera_reference import CALIB_DIR as CAMERA_REF_CALIB_DIR
     CAMERA_REF_AVAILABLE = True
 except Exception:
     copier_reference_vers_meta = None
     CAMERA_REF_LOG = None
+    # Fallback : même module cassé, on garde le chemin de calibration pour détecter
+    # d'éventuelles références SOURCE locales (échec d'import ≠ vrai legacy).
+    CAMERA_REF_CALIB_DIR = Path(os.path.expanduser("~/lerobot/calibration"))
     CAMERA_REF_AVAILABLE = False
 
 # Auto-activation de l'environnement lerobot si nécessaire
@@ -92,6 +96,8 @@ TMP_BASE = Path(os.path.expanduser(
 
 LEROBOT_DIR = Path(os.path.expanduser("~/lerobot"))
 FPS = 30
+VIDEO_WIDTH = 640
+VIDEO_HEIGHT = 360
 
 # Colonnes de DONNÉES obligatoires dans les parquets source. Les colonnes de
 # métadonnées (timestamp, frame_index, episode_index, index, task_index) sont
@@ -216,11 +222,21 @@ def verifier_videos(inventaire):
 # CONSOLIDATION (vers un dossier de destination)
 # ============================================
 
+def compter_references_camera_locales():
+    """Nombre de références caméra SOURCE présentes localement (0, 1 ou 2) dans
+    ~/lerobot/calibration. Distingue un VRAI dataset legacy (aucune source) d'un
+    échec d'import/copie (sources présentes mais non copiées dans meta/)."""
+    return sum(
+        1 for cam in (CAM_TOP, CAM_FOLLOWER)
+        if (CAMERA_REF_CALIB_DIR / f"camera_reference_{cam}.json").exists()
+    )
+
+
 def consolider(inventaire, dest_base):
     """Fusionne toutes les positions dans dest_base (dossier TEMPORAIRE).
     Fail-closed : si une vidéo source attendue est absente au moment de la copie,
     la consolidation est annulée (return (False, ref_status)). Retourne
-    (True, ref_status) sinon, avec ref_status dans {"copiee","absente","echec"}."""
+    (True, ref_status) sinon, avec ref_status dans {"copiee","partielle","absente","echec"}."""
     data_out = dest_base / "data" / "chunk-000"
     video_top_out = dest_base / "videos" / "chunk-000" / f"observation.images.{CAM_TOP}"
     video_fol_out = dest_base / "videos" / "chunk-000" / f"observation.images.{CAM_FOLLOWER}"
@@ -364,8 +380,8 @@ def consolider(inventaire, dest_base):
         json.dump(trace, f, indent=2)
 
     # 8. Traçabilité « Référence visuelle caméra » — statut fondé sur la PRÉSENCE
-    #    RÉELLE des fichiers dans meta/ (le script 12 y cherche des fichiers réels,
-    #    pas un code de retour). Non bloquant : le script 12 a un mode LEGACY.
+    #    RÉELLE des fichiers dans meta/ (le script 11 y cherche des fichiers réels,
+    #    pas un code de retour). Non bloquant : le script 11 a un mode LEGACY.
     ref_status = "absente"
     if CAMERA_REF_AVAILABLE:
         print("\n📷 Traçabilité caméra → meta/ ...")
@@ -379,8 +395,17 @@ def consolider(inventaire, dest_base):
         attendus = [meta_out / f"camera_reference_{CAM_TOP}.json",
                     meta_out / f"camera_reference_{CAM_FOLLOWER}.json"]
         presents = sum(1 for p in attendus if p.exists())
-        ref_status = ("copiee" if presents == 2 else "partielle" if presents == 1
-                      else "echec" if ref_echec else "absente")
+        # Distingue un VRAI legacy (aucune source) d'un ÉCHEC de copie (sources
+        # présentes mais absentes de meta/).
+        sources_locales = compter_references_camera_locales()
+        if presents == 2:
+            ref_status = "copiee"
+        elif presents == 1:
+            ref_status = "partielle"
+        elif ref_echec or sources_locales > 0:
+            ref_status = "echec"      # sources présentes mais 0 copiée → panne (pas legacy)
+        else:
+            ref_status = "absente"    # aucune source locale → vrai dataset legacy
         if ref_status == "copiee":
             print("   ✅ Références caméra présentes dans meta/ (2/2).")
         elif ref_status == "partielle":
@@ -396,8 +421,15 @@ def consolider(inventaire, dest_base):
         else:
             print("   ℹ️  Aucun journal de passages 🟠 (normal si tout était 🟢).")
     else:
-        print("\n⚠️  Module SEM_so101_camera_reference indisponible — référence caméra")
-        print("   NON copiée dans le meta/ (traçabilité incomplète ; mode LEGACY au script 12).")
+        print("\n⚠️  Module SEM_so101_camera_reference indisponible.")
+        if compter_references_camera_locales() > 0:
+            ref_status = "echec"
+            print("   Mais des références caméra locales existent — non copiées dans meta/ :")
+            print("   échec d'import/copie → préparation BLOQUANTE (pas un vrai legacy).")
+        else:
+            ref_status = "absente"
+            print("   Aucune référence locale détectée — dataset traité en LEGACY")
+            print("   après confirmation (mode LEGACY au script 11).")
 
     return True, ref_status
 
@@ -619,10 +651,10 @@ def convertir_videos_h264(dataset_path):
 
 
 def verifier_frames_video(dataset_path):
-    """Vérifie que chaque vidéo contient autant de frames que son parquet.
-    Retourne (etat, detail) avec etat dans {"ok", "incoherences", "non_verifie"} :
-    « non vérifié » (ffprobe absent) n'est PAS « OK » — distinction explicite."""
-    print("\n🔍 Vérification frames vidéo vs parquet...")
+    """Vérifie que chaque vidéo a la bonne résolution (640×360) ET autant de frames
+    que son parquet. Retourne (etat, detail) avec etat dans {"ok", "incoherences",
+    "non_verifie"} : « non vérifié » (ffprobe absent) n'est PAS « OK »."""
+    print("\n🔍 Vérification résolution + frames vidéo vs parquet...")
 
     try:
         r = subprocess.run(["ffprobe", "-version"], capture_output=True)
@@ -645,6 +677,20 @@ def verifier_frames_video(dataset_path):
         except (ValueError, FileNotFoundError):
             return None
 
+    def dimensions_video(video_path):
+        """Retourne (largeur, hauteur) via ffprobe, ou None si illisible."""
+        try:
+            r = subprocess.run(
+                ["ffprobe", "-v", "error", "-select_streams", "v:0",
+                 "-show_entries", "stream=width,height",
+                 "-of", "csv=s=x:p=0", str(video_path)],
+                capture_output=True, text=True
+            )
+            w, h = r.stdout.strip().split('x')
+            return int(w), int(h)
+        except (ValueError, FileNotFoundError):
+            return None
+
     parquets = sorted((dataset_path / "data" / "chunk-000").glob("*.parquet"))
     incoherences = 0
     non_comptees = 0
@@ -658,6 +704,13 @@ def verifier_frames_video(dataset_path):
                 print(f"  ❌ Épisode {ep_idx:3d} ({cam}) : vidéo manquante")
                 incoherences += 1
                 continue
+            dims = dimensions_video(vid)
+            if dims is None:
+                print(f"  ⚠️  Épisode {ep_idx:3d} ({cam}) : dimensions vidéo non vérifiables")
+                non_comptees += 1
+            elif dims != (VIDEO_WIDTH, VIDEO_HEIGHT):
+                print(f"  ❌ Épisode {ep_idx:3d} ({cam}) : résolution {dims[0]}×{dims[1]} ≠ {VIDEO_WIDTH}×{VIDEO_HEIGHT} attendue")
+                incoherences += 1
             n_video = compter_frames(vid)
             if n_video is None:
                 print(f"  ⚠️  Épisode {ep_idx:3d} ({cam}) : comptage de frames impossible")
@@ -672,7 +725,7 @@ def verifier_frames_video(dataset_path):
     if non_comptees > 0:
         print(f"  ⚠️  {non_comptees} vidéo(s) non comptée(s) — vérification incomplète.")
         return "non_verifie", non_comptees
-    print(f"  ✅ Frames vidéo = lignes parquet pour tous les épisodes ({len(parquets)})")
+    print(f"  ✅ Résolution 640×360 et frames = parquet pour tous les épisodes ({len(parquets)})")
     return "ok", 0
 
 
@@ -759,18 +812,18 @@ def afficher_rapport_final(ref_status, h264_status, frames_status):
     """Rapport à états DISTINCTS : on ne déclare jamais « tout prêt » d'un bloc."""
     map_ref = {
         "copiee": "✅ présentes dans meta/ (2/2)",
-        "partielle": "⚠️  INCOMPLÈTES dans meta/ (1/2) — le script 12 BLOQUERA le déploiement",
-        "absente": "⚠️  absentes (traçabilité incomplète — mode LEGACY au script 12)",
+        "partielle": "⚠️  INCOMPLÈTES dans meta/ (1/2) — le script 11 BLOQUERA le déploiement",
+        "absente": "⚠️  absentes (traçabilité incomplète — mode LEGACY au script 11)",
         "echec":  "❌ copie échouée (traçabilité incomplète)",
     }
     map_h264 = {
         "ok": "✅ vidéos en H.264 (visualisation navigateur OK)",
         "non_fait": "⚠️  non faite (ffmpeg absent) — vidéos encore en mp4v, visualisation navigateur indisponible",
-        "echec": "❌ échec partiel — relancez le script pour réessayer",
+        "echec": "❌ conversion échouée — vidéos conservées en mp4v, relance possible",
     }
     map_frames = {
         "ok": "✅ frames vidéo = lignes parquet (vérifié)",
-        "non_verifie": "⚠️  NON vérifiée (ffprobe absent ou comptage impossible)",
+        "non_verifie": "⚠️  NON vérifiée (ffprobe absent, dimensions illisibles ou comptage impossible)",
         "incoherences": "❌ incohérences détectées",
     }
     print("\n" + "=" * 60)
@@ -782,9 +835,9 @@ def afficher_rapport_final(ref_status, h264_status, frames_status):
     print(f"  • Vérification frames vidéo/parquet : {map_frames.get(frames_status, frames_status)}")
     print("-" * 60)
     print(f"  📂 Dataset final : {OUTPUT_BASE}")
-    print("  ℹ️  Métadonnées complètes pour l'entraînement (script 11).")
+    print("  ℹ️  Métadonnées complètes pour l'entraînement (script 10).")
     print("     La lecture vidéo dépend de votre backend LeRobot : un essai avec le")
-    print("     script 11 confirme la compatibilité (mp4v vs H.264).")
+    print("     script 10 confirme la compatibilité (mp4v vs H.264).")
     print("=" * 60)
 
 
@@ -911,15 +964,32 @@ def preparer_dataset():
         print("\n❌ Consolidation annulée — dataset final inchangé.")
         return False
 
-    # Référence caméra PARTIELLE = état incohérent (1 caméra sur 2), que le script 12
-    # refuse au déploiement. On n'installe pas un dataset déjà condamné. ('absente'
-    # reste tolérée : mode LEGACY cohérent.)
-    if ref_status == "partielle":
+    # Politique fail-closed sur la référence caméra :
+    #   - 'partielle' (1/2) = état incohérent → bloqué (le script 11 le refuserait).
+    #   - 'echec' = exception de copie, OU sources locales présentes mais aucune
+    #     référence copiée (module cassé / copie ratée — pas un legacy) → bloqué.
+    #   - 'absente' (0/2) = aucune référence : toléré pour les datasets LEGACY, mais
+    #     JAMAIS en silence → confirmation explicite exigée.
+    if ref_status in ("partielle", "echec"):
         nettoyer_tmp()
-        print("\n❌ Références caméra partielles (1/2) — état incohérent, refusé au déploiement"
-              " par le script 12. Préparation annulée (dataset final inchangé).")
-        print("   → Complétez la référence des DEUX caméras, ou retirez la référence partielle.")
+        if ref_status == "partielle":
+            print("\n❌ Références caméra partielles (1/2) — état incohérent, refusé au déploiement"
+                  " par le script 11. Préparation annulée (dataset final inchangé).")
+            print("   → Complétez la référence des DEUX caméras, ou retirez la référence partielle.")
+        else:
+            print("\n❌ Référence caméra en échec (copie impossible, ou module indisponible"
+                  " malgré des sources locales) — préparation annulée (dataset final inchangé).")
+            print("   → Vérifie le module SEM_so101_camera_reference et ~/lerobot/calibration/, puis relance.")
         return False
+
+    if ref_status == "absente":
+        print("\n⚠️  Aucune référence caméra (0/2) dans meta/.")
+        print("   Le script 8 étant fail-closed, un dataset NEUF devrait en avoir une.")
+        print("   Poursuivre installe un dataset LEGACY (déployable uniquement en mode LEGACY au script 11).")
+        if input("   Confirmer la préparation SANS référence caméra ? [O/N] : ").strip().upper() != 'O':
+            nettoyer_tmp()
+            print("   Préparation annulée (dataset final inchangé).")
+            return False
 
     # Finalisation (sur le dossier temporaire).
     completer_info_json(TMP_BASE)
@@ -958,8 +1028,24 @@ def preparer_dataset():
     return True
 
 
+def verifier_moteur_parquet():
+    """Préflight : pandas a besoin d'un moteur Parquet (pyarrow ou fastparquet)
+    pour lire/écrire les .parquet. Vérifié explicitement au démarrage pour éviter
+    un échec obscur en pleine préparation."""
+    for moteur in ("pyarrow", "fastparquet"):
+        try:
+            __import__(moteur)
+            return
+        except ImportError:
+            continue
+    print("\n❌ Moteur Parquet manquant : pandas ne peut ni lire ni écrire les .parquet.")
+    print("   → Installe pyarrow (recommandé) :  pip install pyarrow")
+    sys.exit(1)
+
+
 def main():
     clear_screen()
+    verifier_moteur_parquet()
     print("""
 ╔══════════════════════════════════════════════════════════╗
 ║     SEM — PRÉPARATION DATASET SO-ARM 101                 ║
@@ -996,7 +1082,7 @@ def main():
     else:
         print("\n✅ Préparation terminée.")
         print("🚀 Prochaine étape :")
-        print("   python SEM_so101_11_train.py")
+        print("   python SEM_so101_10_train.py")
 
 
 if __name__ == "__main__":
