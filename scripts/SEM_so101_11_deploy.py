@@ -83,18 +83,23 @@ except ImportError:
 # Import protégé : si le module est absent, mal placé ou cassé, on le signalera plus bas
 # par un message clair + arrêt propre, au lieu d'un traceback illisible au démarrage.
 try:
-    from SEM_so101_8_camera_config import verrouiller_camera
+    from SEM_so101_camera_config import verrouiller_camera
     CAMERA_LOCK_AVAILABLE = True
     CAMERA_LOCK_IMPORT_ERROR = None
 except Exception:
     try:
-        from SEM_8_camera_config import verrouiller_camera
+        from SEM_so101_8_camera_config import verrouiller_camera
         CAMERA_LOCK_AVAILABLE = True
         CAMERA_LOCK_IMPORT_ERROR = None
-    except Exception as e:
-        verrouiller_camera = None
-        CAMERA_LOCK_AVAILABLE = False
-        CAMERA_LOCK_IMPORT_ERROR = e
+    except Exception:
+        try:
+            from SEM_8_camera_config import verrouiller_camera
+            CAMERA_LOCK_AVAILABLE = True
+            CAMERA_LOCK_IMPORT_ERROR = None
+        except Exception as e:
+            verrouiller_camera = None
+            CAMERA_LOCK_AVAILABLE = False
+            CAMERA_LOCK_IMPORT_ERROR = e
 
 # Module de référence visuelle (étape 6) : contrôle des deux caméras au
 # démarrage du déploiement, CONTRE les références copiées dans le meta/ du
@@ -131,10 +136,10 @@ CALIB_DIR = Path.home() / "lerobot" / "calibration"
 CAM_TOP      = "cam_top"
 CAM_FOLLOWER = "cam_follower"
 
-# Position repos — fichier externe partagé entre tous les scripts (cohérence 7/8/12)
+# Position repos — fichier externe partagé entre tous les scripts (cohérence 7/8/11)
 REPOS_FILE = Path.home() / "lerobot" / "calibration" / "repos_position.json"
 
-# Masque de zone utile — fichier externe créé par le script 7 (cohérence 7/8/12)
+# Masque de zone utile — fichier externe créé par le script 7 (cohérence 7/8/11)
 MASK_FILE = Path.home() / "lerobot" / "calibration" / "camera_mask.json"
 
 # Amplitude minimale exigée d'une calibration pour être exploitable (même seuil que 2/3/4/5/8)
@@ -1038,7 +1043,7 @@ def boucle_inference(policy, cam_top, cam_follower_cam, port_handler, packet_han
 
             # Masque appliqué à la globale → la même frame masquée part en affichage ET en inférence.
             # Critique pour C1 (cohérence entraînement↔déploiement) : si le 8 a enregistré masqué,
-            # le 12 doit masquer aussi avant que la politique voie l'image.
+            # le 11 doit masquer aussi avant que la politique voie l'image.
             if frame_top is not None and _MASK_GLOBALE_IMG is not None:
                 frame_top = cv2.bitwise_and(frame_top, frame_top, mask=_MASK_GLOBALE_IMG)
 
