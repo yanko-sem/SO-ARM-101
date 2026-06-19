@@ -13,7 +13,7 @@ Matériel cible : Quadro RTX 4000 (8 Go VRAM)
 Dataset : so101_pick_place_consolidated (50 épisodes, 2 caméras)
 
 Auteur: Service Écoles-Médias (SEM)
-Version: 1.0
+Version: 1.1
 """
 
 import os
@@ -120,31 +120,61 @@ def verifier_prerequis():
     # 2. Dataset
     info_file = DATASET_PATH / "meta" / "info.json"
     if info_file.exists():
-        with open(info_file) as f:
-            info = json.load(f)
-        episodes = info.get('total_episodes', 0)
-        frames = info.get('total_frames', 0)
-        print(f"  ✅ Dataset : {episodes} épisodes, {frames} frames")
+        # Lecture fail-closed : un info.json corrompu doit produire une erreur
+        # propre dans la liste, jamais un traceback Python.
+        info = None
+        try:
+            with open(info_file) as f:
+                info = json.load(f)
+        except Exception as e:
+            erreurs.append(f"info.json illisible : {e}")
 
-        # Afficher les features réellement détectées (caméras, état, action)
-        # pour confirmer d'un coup d'œil la cohérence du dataset.
-        features = info.get('features', {})
-        cameras = sorted(k for k in features if k.startswith("observation.images."))
-        print(f"  ✅ Caméras détectées : {len(cameras)}")
-        for cle_cam in cameras:
-            print(f"       • {cle_cam}  (shape {features[cle_cam].get('shape', '?')})")
+        if info is not None:
+            episodes = info.get('total_episodes', 0)
+            frames = info.get('total_frames', 0)
+            print(f"  ✅ Dataset : {episodes} épisodes, {frames} frames")
 
-        # Vérification bloquante : les deux caméras attendues doivent être présentes
-        # (noms définis dans le script 8 : cam_top + cam_follower).
-        for cle_attendue in ("observation.images.cam_top", "observation.images.cam_follower"):
-            if cle_attendue not in features:
-                erreurs.append(f"Caméra attendue manquante : {cle_attendue}")
+            # Préflight : un dataset déclaré vide ne doit pas lancer l'entraînement.
+            if episodes <= 0 or frames <= 0:
+                erreurs.append(
+                    f"Dataset vide : total_episodes={episodes}, total_frames={frames}"
+                )
 
-        for cle in ("observation.state", "action"):
-            if cle in features:
-                print(f"  ✅ {cle}  (shape {features[cle].get('shape', '?')})")
-            else:
-                erreurs.append(f"Feature manquante dans le dataset : {cle}")
+            # Afficher les features réellement détectées (caméras, état, action)
+            # pour confirmer d'un coup d'œil la cohérence du dataset.
+            features = info.get('features', {})
+            cameras = sorted(k for k in features if k.startswith("observation.images."))
+            print(f"  ✅ Caméras détectées : {len(cameras)}")
+            for cle_cam in cameras:
+                print(f"       • {cle_cam}  (shape {features[cle_cam].get('shape', '?')})")
+
+            # Vérification bloquante : les deux caméras attendues doivent être présentes
+            # (noms définis dans le script 8 : cam_top + cam_follower).
+            for cle_attendue in ("observation.images.cam_top", "observation.images.cam_follower"):
+                if cle_attendue not in features:
+                    erreurs.append(f"Caméra attendue manquante : {cle_attendue}")
+
+            for cle in ("observation.state", "action"):
+                if cle in features:
+                    print(f"  ✅ {cle}  (shape {features[cle].get('shape', '?')})")
+                else:
+                    erreurs.append(f"Feature manquante dans le dataset : {cle}")
+
+        # Préflight de structure sur disque (garde-fou runtime, indépendant du
+        # contenu d'info.json) : au moins un parquet et les deux dossiers vidéo
+        # attendus. Le script 9 reste responsable de la validation lourde
+        # (frames, durées, résolution) ; ici on échoue proprement si le dataset
+        # a été déplacé, amputé ou mal reconstruit depuis la consolidation.
+        if not list((DATASET_PATH / "data").glob("**/*.parquet")):
+            erreurs.append("Aucun fichier parquet trouvé dans le dataset consolidé")
+
+        videos_root = DATASET_PATH / "videos"
+        for cam in ("cam_top", "cam_follower"):
+            cle_cam = f"observation.images.{cam}"
+            # Tolérant à la numérotation des chunks (videos/chunk-XXX/<cle>)
+            # comme à une disposition à plat éventuelle (videos/<cle>).
+            if not list(videos_root.glob(f"*/{cle_cam}")) and not (videos_root / cle_cam).exists():
+                erreurs.append(f"Dossier vidéo manquant : {cle_cam}")
     else:
         erreurs.append(f"Dataset introuvable : {DATASET_PATH}")
 
@@ -166,12 +196,24 @@ def verifier_prerequis():
     if torch.cuda.is_available():
         print(f"  ✅ CUDA : {torch.version.cuda}")
 
-    # 6. Espace disque
-    free_space = shutil.disk_usage(str(LEROBOT_DIR)).free / (1024**3)
-    if free_space < 5:
-        erreurs.append(f"Espace disque insuffisant : {free_space:.1f} Go (minimum 5 Go)")
+    # 6. PyAV — requis car la commande impose --dataset.video_backend=pyav.
+    # Sans ce contrôle, l'échec n'apparaîtrait que tardivement dans LeRobot.
+    try:
+        import av
+        print(f"  ✅ PyAV : {av.__version__}")
+    except ImportError:
+        erreurs.append("PyAV manquant — requis car --dataset.video_backend=pyav")
+
+    # 7. Espace disque (fail-closed : ~/lerobot doit exister avant disk_usage,
+    # sinon shutil.disk_usage lèverait FileNotFoundError au lieu d'un message).
+    if not LEROBOT_DIR.exists():
+        erreurs.append(f"Dossier LeRobot introuvable : {LEROBOT_DIR}")
     else:
-        print(f"  ✅ Espace disque : {free_space:.1f} Go disponibles")
+        free_space = shutil.disk_usage(str(LEROBOT_DIR)).free / (1024**3)
+        if free_space < 5:
+            erreurs.append(f"Espace disque insuffisant : {free_space:.1f} Go (minimum 5 Go)")
+        else:
+            print(f"  ✅ Espace disque : {free_space:.1f} Go disponibles")
 
     return erreurs
 
@@ -267,6 +309,11 @@ def checkpoint_pour_reprise(checkpoints):
         if (cp / "pretrained_model" / "train_config.json").exists()
     ]
     if checkpoints_valides:
+        # Tri par valeur entière (et non alphabétique) : sinon "50000" passerait
+        # après "200000" et la reprise repartirait d'un checkpoint plus ancien.
+        checkpoints_valides.sort(
+            key=lambda cp: int(cp.name) if cp.name.isdigit() else -1
+        )
         return checkpoints_valides[-1]
     return None
 
@@ -389,7 +436,6 @@ def afficher_checkpoints():
             print(f"     • {cp.name} ({size_mb:.0f} MB)")
 
         print(f"\n  🚀 Pour déployer le modèle :")
-        last = checkpoints[-1]
         print(f"     python SEM_so101_11_deploy.py")
     else:
         print("   Aucun checkpoint trouvé")
@@ -398,7 +444,9 @@ def afficher_checkpoints():
 
 def steps_du_checkpoint(checkpoint):
     """Retourne le nombre de steps atteint par un checkpoint.
-    Résout 'last' (lien symbolique) vers le dossier réel (ex. 200000)."""
+    Résout 'last' (lien symbolique) vers le dossier réel (ex. 200000).
+    Si 'last' est un VRAI dossier (pas un lien), retombe sur le plus grand
+    checkpoint numérique voisin."""
     nom = checkpoint.name
     if nom.isdigit():
         return int(nom)
@@ -408,6 +456,17 @@ def steps_du_checkpoint(checkpoint):
             return int(cible)
     except Exception:
         pass
+    if nom == "last":
+        try:
+            numeriques = [
+                int(cp.name)
+                for cp in checkpoint.parent.iterdir()
+                if cp.is_dir() and cp.name.isdigit()
+            ]
+            if numeriques:
+                return max(numeriques)
+        except Exception:
+            pass
     return None
 
 
