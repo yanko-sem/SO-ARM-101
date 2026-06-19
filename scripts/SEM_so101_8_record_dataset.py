@@ -26,15 +26,49 @@ from pathlib import Path
 # Module de configuration caméra (verrouillage + capture des réglages).
 # Import protégé : si le module est absent, mal placé ou cassé, on le signalera par un
 # message clair + arrêt propre plus bas, au lieu d'un traceback illisible au démarrage.
+CAMERA_CONFIG_NOM = "SEM_so101_camera_config.py"
 try:
-    from SEM_8_camera_config import verrouiller_camera, capturer_reglages_camera
+    from SEM_so101_camera_config import (verrouiller_camera, capturer_reglages_camera,
+                                         charger_reglages_camera)
     CAMERA_LOCK_AVAILABLE = True
     CAMERA_LOCK_IMPORT_ERROR = None
+except Exception:
+    try:
+        from SEM_so101_8_camera_config import (verrouiller_camera, capturer_reglages_camera,
+                                               charger_reglages_camera)
+        CAMERA_LOCK_AVAILABLE = True
+        CAMERA_LOCK_IMPORT_ERROR = None
+        CAMERA_CONFIG_NOM = "SEM_so101_8_camera_config.py (transition)"
+    except Exception:
+        try:
+            from SEM_8_camera_config import (verrouiller_camera, capturer_reglages_camera,
+                                             charger_reglages_camera)
+            CAMERA_LOCK_AVAILABLE = True
+            CAMERA_LOCK_IMPORT_ERROR = None
+            CAMERA_CONFIG_NOM = "SEM_8_camera_config.py (ancien nom)"
+        except Exception as e:
+            verrouiller_camera = None
+            capturer_reglages_camera = None
+            charger_reglages_camera = None
+            CAMERA_LOCK_AVAILABLE = False
+            CAMERA_LOCK_IMPORT_ERROR = e
+
+# Module de référence visuelle caméra (étape 5) : contrôle de conformité de
+# l'image avec la référence du dataset, au démarrage et avant chaque bloc.
+# Décision validée (Q1) : sans ce module, on N'ENREGISTRE PAS (fail closed),
+# même logique que le module de configuration caméra ci-dessus.
+try:
+    from SEM_so101_camera_reference import (controle_camera_avant_enregistrement,
+                                            menu_reference)
+    import SEM_so101_camera_reference as camref
+    CAMERA_REF_AVAILABLE = True
+    CAMERA_REF_IMPORT_ERROR = None
 except Exception as e:
-    verrouiller_camera = None
-    capturer_reglages_camera = None
-    CAMERA_LOCK_AVAILABLE = False
-    CAMERA_LOCK_IMPORT_ERROR = e
+    controle_camera_avant_enregistrement = None
+    menu_reference = None
+    camref = None
+    CAMERA_REF_AVAILABLE = False
+    CAMERA_REF_IMPORT_ERROR = e
 
 # Supprimer les messages d'erreur OpenCV
 os.environ["OPENCV_LOG_LEVEL"] = "FATAL"
@@ -106,6 +140,7 @@ CAM_FOLLOWER = "cam_follower"
 # Variables globales
 stop_threads = False
 pause_teleop = False
+keyboard_pause = False
 cmd_queue = queue.Queue()
 
 # Références caméras pour l'affichage dans le thread principal
@@ -176,12 +211,17 @@ class ThreadedCamera:
             print(f"❌ Impossible d'ouvrir {self.name} (index {self.camera_index})")
             return False
 
+        # Forcer le format MJPG aide souvent sur Linux pour les hautes
+        # résolutions ; surtout, il UNIFIE l'acquisition entre l'enregistrement,
+        # le déploiement et le module de référence (mêmes conditions caméra).
+        self.camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
         self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
         self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
         self.camera.set(cv2.CAP_PROP_FPS, self.fps)
 
         # Warmup : lire 5 frames pour vider le buffer matériel (les premières sont souvent
-        # corrompues) et garder la dernière valide. Aligné sur le connect() du script 12.
+        # corrompues) et garder la dernière valide. Acquisition (MJPG + warmup)
+        # alignée sur le script de déploiement.
         for _ in range(5):
             ret, frame = self.camera.read()
             if ret:
@@ -209,7 +249,6 @@ class ThreadedCamera:
                 if ret:
                     with self.frame_lock:
                         self.current_frame = frame
-            time.sleep(0.001)
 
     def async_read(self):
         with self.frame_lock:
@@ -218,7 +257,7 @@ class ThreadedCamera:
     def disconnect(self):
         if self.thread is not None:
             self.stop_event.set()
-            self.thread.join(timeout=1.0)
+            self.thread.join(timeout=2.0)
             self.thread = None
             self.stop_event = None
 
@@ -579,7 +618,7 @@ def aller_a_position_2robots(lk, lp, fk, fp, cl, cf, cibles_pct, duree=2.0):
 
     Phase 0 (par robot) : si servo 4 > 2700 et robot pas en repos, lever le bras
     (servo 2 -> min(actuel, 1027)) pour dégager la pince du sol. La levée se fait
-    EN PARALLÈLE sur les deux robots (cohérent avec les scripts 8/12). 2700 et 1027
+    EN PARALLÈLE sur les deux robots (cohérent avec les scripts 8/11). 2700 et 1027
     sont des réglages empiriques de l'installation, identiques aux scripts 4 et 5."""
     # Activer tous les servos
     for i in range(1, 7):
@@ -673,9 +712,9 @@ def test_connexion_fluide(packet, port, robot_name, calib):
 
     print("     → Centre...")
     mouvement_fluide(packet, port, 6, pos_actuelle, centre, 1.0)
-    print("     → Fermé (45°)...")
+    print("     → Pince fermée...")
     mouvement_fluide(packet, port, 6, centre, pos_25, 0.8)
-    print("     → Ouvert (90°)...")
+    print("     → Pince ouverte...")
     mouvement_fluide(packet, port, 6, pos_25, pos_75, 1.2)
     print("     → Centre...")
     mouvement_fluide(packet, port, 6, pos_75, centre, 0.8)
@@ -820,7 +859,7 @@ def position_repos_parallele(lk, lp, fk, fp, cl, cf):
     if aller_a_position_2robots(lk, lp, fk, fp, cl, cf, repos_pct, duree=2.0) is None:
         print("⚠️  Retour repos incomplet (lecture servo) — vérifiez la posture des robots.")
         return False
-    print("✅ Position repos atteinte (robot replié)")
+    print("✅ Position repos atteinte")
     return True
 
 def mapper_position(pos_leader, servo_id, calib_leader, calib_follower, servos_miroir):
@@ -850,7 +889,7 @@ def choisir_mode():
             return "face", "FACE À FACE"
         print("❌ Choix invalide : tapez C ou F")
 
-# Fichier externe du masque de zone utile (cree par le script 7, partage avec le 12)
+# Fichier externe du masque de zone utile (cree par le script 7, partage avec le 11)
 MASK_FILE = os.path.expanduser("~/lerobot/calibration/camera_mask.json")
 
 
@@ -1216,6 +1255,13 @@ def teleoperation_thread(lk, lp, fk, fp, calib_l, calib_f, servos_miroir, record
 # ============================================
 
 def keyboard_thread():
+    """Lecture clavier caractère-par-caractère pour les menus d'enregistrement.
+
+    PAUSE (keyboard_pause=True) : le thread restaure le terminal en mode
+    normal et CESSE de lire stdin, pour que les input() classiques (contrôle
+    caméra, menu de référence, confirmations) reçoivent les touches sans
+    concurrence. À la reprise, le mode caractère est rétabli. Sans ce
+    mécanisme, deux lecteurs se partagent stdin et se volent les touches."""
     global stop_threads, cmd_queue
     try:
         import select
@@ -1225,20 +1271,52 @@ def keyboard_thread():
         try:
             tty.setcbreak(sys.stdin.fileno())
             while not stop_threads:
+                if keyboard_pause:
+                    # Rendre le terminal aux input() pendant la pause
+                    termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+                    while keyboard_pause and not stop_threads:
+                        time.sleep(0.1)
+                    if stop_threads:
+                        break
+                    tty.setcbreak(sys.stdin.fileno())
+                    continue
                 if select.select([sys.stdin], [], [], 0.1)[0]:
                     ch = sys.stdin.read(1).upper()
                     if ch in ['D', 'T', 'A', 'S', 'Q', '1', '2', '3', '4', '5', '6', 'R', 'O']:
                         cmd_queue.put(ch)
         finally:
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
-    except Exception:
+    except:
         while not stop_threads:
             try:
+                if keyboard_pause:
+                    time.sleep(0.1)
+                    continue
                 cmd = input().strip().upper()
                 if cmd:
                     cmd_queue.put(cmd[0])
-            except Exception:
+            except:
                 pass
+
+
+def suspendre_clavier():
+    """Pause du thread clavier avant des input() interactifs (laisse 0,3 s
+    au thread pour restaurer le terminal)."""
+    global keyboard_pause
+    keyboard_pause = True
+    time.sleep(0.3)
+
+
+def reprendre_clavier():
+    """Reprise du thread clavier après les input() ; purge les touches
+    tapées entre-temps pour éviter des commandes fantômes au menu."""
+    global keyboard_pause
+    while True:
+        try:
+            cmd_queue.get_nowait()
+        except queue.Empty:
+            break
+    keyboard_pause = False
 
 def get_command():
     try:
@@ -1279,7 +1357,7 @@ def afficher_instructions():
 ║  CONTRÔLES PENDANT L'ENREGISTREMENT :                                ║
 ║                                                                      ║
 ║    D = Démarrer (retour repos automatique avant enregistrement)      ║
-║    T = Terminer (retour repos automatique enregistré + sauvegarde)   ║
+║    T = Terminer + sauvegarder (retour repos hors enregistrement)     ║
 ║    A = Annuler l'épisode en cours                                    ║
 ║    S = Stopper la session                                            ║
 ║                                                                      ║
@@ -1311,7 +1389,7 @@ def afficher_menu_principal(recorder):
 
     print(f"""
 ╔══════════════════════════════════════════════════════════════════════╗
-║           ENREGISTREMENT DATASET SO-ARM 101 - Phase 8                ║
+║           ENREGISTREMENT DATASET SO-ARM 101 - Phase 7                ║
 ║           Service Écoles-Médias (SEM) - DIP Genève                   ║
 ╠══════════════════════════════════════════════════════════════════════╣
 ║                                                                      ║
@@ -1580,13 +1658,164 @@ def session_enregistrement(recorder, position_id, num_episodes, lk, lp, fk, fp, 
 # PROGRAMME PRINCIPAL
 # ============================================
 
+def etat_camera(nom_cam):
+    """Réglages enregistrés + date de la référence active d'une caméra,
+    pour le récapitulatif avant/après les menus. Lecture seule."""
+    regl = {}
+    try:
+        if charger_reglages_camera is not None:
+            regl = charger_reglages_camera(nom_cam) or {}
+    except Exception:
+        regl = {}
+    date_ref = "AUCUNE"
+    try:
+        if camref is not None:
+            camref.selectionner_profil(nom_cam)
+            if camref.REF_FILE.exists():
+                with open(camref.REF_FILE, 'r') as f:
+                    date_ref = json.load(f).get("date", "illisible")
+    except Exception:
+        date_ref = "?"
+    return regl, date_ref
+
+
+def afficher_recap_cameras(avant, apres):
+    """Récapitulatif AVANT / APRÈS les deux menus de référence
+    (spec multi-caméra §5, point 5) : pour chaque caméra, date de la
+    référence et réglages, avec mise en évidence de ce qui a changé."""
+    print("\n" + "=" * 60)
+    print("📋 RÉCAPITULATIF CAMÉRAS — avant → après les menus")
+    print("=" * 60)
+    for nom_cam, lib in ((CAM_TOP, "GLOBALE"), (CAM_FOLLOWER, "PINCE")):
+        regl_av, ref_av = avant[nom_cam]
+        regl_ap, ref_ap = apres[nom_cam]
+        print(f"\n  {lib} ({nom_cam})")
+        marque_ref = "   ← modifiée" if ref_av != ref_ap else ""
+        print(f"    Référence : {ref_av}  →  {ref_ap}{marque_ref}")
+        cles = sorted(set(regl_av) | set(regl_ap))
+        if not cles:
+            print("    Réglages  : (aucun)")
+            continue
+        for k in cles:
+            va = regl_av.get(k, "—")
+            vp = regl_ap.get(k, "—")
+            marque = "   ← modifié" if va != vp else ""
+            print(f"    {k:32s} {va} → {vp}{marque}")
+    print()
+
+
+def controle_camera_bloc(pos, cam_top, cam_top_index, cam_follower,
+                         cam_follower_index, lk, lp, fk, fp, calib_l, calib_f):
+    """Contrôle caméra avant un bloc d'enregistrement (spec multi-caméra
+    §5 ; décision Q2 : appliqué au bloc complet ET au test rapide).
+
+    Les DEUX caméras sont contrôlées, l'une après l'autre (jamais en
+    parallèle — règle d'architecture du module) ; l'enregistrement n'est
+    autorisé que si LES DEUX sont conformes.
+
+    Séquence (le module mesure avec SA propre capture, caméras du script
+    LIBÉRÉES) :
+      1. robots au repos, maintenus (scène de référence) ;
+      2. les deux caméras du script libérées ;
+      3. contrôle GLOBALE puis contrôle PINCE — autorisation = ET ;
+      4. reconnexion des deux + vérification résolution + verrouillage
+         (un recalibrage a pu changer les réglages) ;
+      5. reprise de la téléopération.
+    Retourne True si l'enregistrement du bloc est autorisé."""
+    global pause_teleop
+    clear_screen()
+    print(f"\n📷 Contrôle des deux caméras avant le bloc (position {pos})...")
+
+    # Le contrôle (et le menu [M]) utilisent input() : suspension du thread
+    # clavier pour qu'il ne vole pas les touches (terminal rendu au mode
+    # normal), reprise + purge à la fin.
+    suspendre_clavier()
+    try:
+
+        # 1) Robots au repos — même séquence que l'option [6] du menu
+        pause_teleop = True
+        time.sleep(0.1)
+        for i in range(1, 7):
+            lk.write1ByteTxRx(lp, i, 40, 1)
+            fk.write1ByteTxRx(fp, i, 40, 1)
+        if not position_repos_parallele(lk, lp, fk, fp, calib_l, calib_f):
+            # Retour repos échoué → scène non standardisée : on ANNULE le contrôle
+            # (fail-safe). On restaure l'état téléop normal (Leader libéré,
+            # Follower actif) avant de rendre la main au menu.
+            print("\n❌ Position repos impossible — contrôle caméra annulé (scène non standardisée).")
+            for i in range(1, 7):
+                lk.write1ByteTxRx(lp, i, 40, 0)
+                fk.write1ByteTxRx(fp, i, 40, 1)
+            pause_teleop = False
+            return False
+
+        # 2) Libération des DEUX caméras (le module ouvre les siennes)
+        if cam_top is not None:
+            cam_top.disconnect()
+        if cam_follower is not None:
+            cam_follower.disconnect()
+
+        # 3) Contrôles séquentiels — autorisation = LES DEUX conformes (ET).
+        #    Toute exception = bloc annulé, jamais de crash. Si la première
+        #    caméra annule, la seconde n'est pas contrôlée (inutile).
+        autorise = True
+        for nom_cam, idx_cam, lib in ((CAM_TOP, cam_top_index, "GLOBALE"),
+                                      (CAM_FOLLOWER, cam_follower_index, "PINCE")):
+            if not autorise:
+                break
+            try:
+                res = controle_camera_avant_enregistrement(
+                    idx_cam, nom_camera=nom_cam,
+                    contexte=f"bloc position {pos} — {lib}")
+                if not bool(res.get("autorise")):
+                    autorise = False
+            except Exception as e:
+                print(f"\n⚠️  Contrôle {lib} interrompu ({e}) — bloc annulé.")
+                autorise = False
+
+        # 4) Reconnexion des deux (mêmes instances, références préservées) +
+        #    mêmes vérifications qu'au démarrage + verrouillage
+        def _reconnecter(cam, idx_cam, nom_cam, lib):
+            nonlocal autorise
+            if cam is None:
+                return
+            if not cam.connect() or not cam.is_connected:
+                print(f"\n❌ Caméra {lib} non reconnectée — arrêt.")
+                sys.exit(1)
+            frame_test = cam.async_read()
+            if frame_test is not None and frame_test.shape[:2] != (CONFIG['camera_height'], CONFIG['camera_width']):
+                print(f"\n❌ Résolution caméra {lib} incorrecte : {frame_test.shape[:2]}")
+                print(f"   Attendu : {(CONFIG['camera_height'], CONFIG['camera_width'])}")
+                sys.exit(1)
+            if not verrouiller_camera(f"/dev/video{idx_cam}", nom_cam):
+                print(f"\n❌ Verrouillage {lib} incomplet — bloc annulé (fail closed).")
+                autorise = False
+
+        _reconnecter(cam_top, cam_top_index, CAM_TOP, "GLOBALE")
+        _reconnecter(cam_follower, cam_follower_index, CAM_FOLLOWER, "PINCE")
+
+        # 5) Reprise téléopération : libérer Leader, garder Follower actif
+        for i in range(1, 7):
+            lk.write1ByteTxRx(lp, i, 40, 0)
+            fk.write1ByteTxRx(fp, i, 40, 1)
+        pause_teleop = False
+
+    finally:
+        # Quoi qu'il arrive (exception comprise) : terminal restauré.
+        reprendre_clavier()
+    if not autorise:
+        print("\n⛔ Bloc annulé (contrôle caméra non concluant).")
+        time.sleep(2)
+    return autorise
+
+
 def main():
     global stop_threads, cmd_queue, _display_cam_top, _display_cam_follower, pause_teleop
     clear_screen()
     print("""
 ╔══════════════════════════════════════════════════════════════════════╗
 ║     SEM - ENREGISTREMENT DATASET SO-ARM 101                          ║
-║     Phase 8 : Apprentissage par Imitation (2 caméras)                ║
+║     Phase 7 : Apprentissage par Imitation (2 caméras)                ║
 ║     Service Écoles-Médias - DIP Genève                               ║
 ╚══════════════════════════════════════════════════════════════════════╝
 
@@ -1611,30 +1840,30 @@ Format de sortie : LeRobotDataset v2.1 (2 caméras: top + follower)
         print("❌ Calibration Follower absente, incomplète ou invalide — refaire la Phase 3.")
         return
 
-    cam_top_index, cam_follower_index = identification_cameras()
-    if cam_top_index is None or cam_follower_index is None:
-        print("\n❌ Enregistrement annulé : les deux caméras (globale + pince) sont requises.")
-        sys.exit(1)
-
     # Garde-fou : le module de configuration caméra doit être disponible.
     # Sans lui, impossible de régler puis verrouiller les caméras → on arrête (fail closed)
     # plutôt que d'enregistrer en auto-exposition, incohérent avec le déploiement.
     if not CAMERA_LOCK_AVAILABLE:
-        print("\n❌ Module de configuration caméra (SEM_8_camera_config.py) indisponible.")
+        print("\n❌ Module de configuration caméra (SEM_so101_camera_config.py) indisponible.")
         print(f"   Erreur : {CAMERA_LOCK_IMPORT_ERROR}")
         print("   → Impossible de régler puis verrouiller les caméras.")
         print("   → Enregistrement annulé pour éviter des images en mode auto (incohérence avec le déploiement).")
-        print("   → Vérifiez que SEM_8_camera_config.py est dans le même dossier que ce script.")
+        print("   → Vérifiez que SEM_so101_camera_config.py est dans le même dossier que ce script.")
         sys.exit(1)
 
-    # Réglages caméra (exposition / balance des blancs) — un réglage par caméra
-    if cam_top_index is not None:
-        capturer_reglages_camera(f"/dev/video{cam_top_index}", CAM_TOP, titre="GLOBALE (cam_top)   [1/2]")
-    if cam_follower_index is not None:
-        capturer_reglages_camera(f"/dev/video{cam_follower_index}", CAM_FOLLOWER, titre="PINCE (cam_follower)   [2/2]")
+    # Garde-fou étape 5 (décision Q1, fail closed) : sans le module de
+    # référence, on n'enregistre PAS. Vérifié ICI (tôt) ; le contrôle de
+    # conformité lui-même est fait plus bas, robots au repos.
+    if not CAMERA_REF_AVAILABLE:
+        print("\n❌ Module de référence caméra (SEM_so101_camera_reference.py) indisponible.")
+        print(f"   Erreur : {CAMERA_REF_IMPORT_ERROR}")
+        print("   → Impossible de contrôler la conformité de l'image avec la référence du dataset.")
+        print("   → Enregistrement annulé. Vérifiez que SEM_so101_camera_reference.py est")
+        print("     dans le même dossier que ce script.")
+        sys.exit(1)
 
     # Chargement + VALIDATION STRICTE du masque globale (créé par le script 7, partagé
-    # avec le 12). OBLIGATOIRE : sans masque valide, l'enregistrement ne correspondrait
+    # avec le 11). OBLIGATOIRE : sans masque valide, l'enregistrement ne correspondrait
     # pas au cadrage de la Phase 6 → fail-closed (on arrête et on renvoie au script 7).
     global _MASK_GLOBALE_IMG
     mask_pts = charger_masque_globale()
@@ -1650,7 +1879,7 @@ Format de sortie : LeRobotDataset v2.1 (2 caméras: top + follower)
     )
     print(f"\n✅ Masque globale actif ({len(mask_pts)} points)")
 
-    input("\n✅ Caméras identifiées. Appuyez sur ENTRÉE pour continuer avec les robots...")
+    input("\n✅ Masque chargé. Appuyez sur ENTRÉE pour passer à l'identification des robots...")
 
     ok, lp, lk, fp, fk = identification_guidee(calib_l, calib_f)
     if not ok:
@@ -1677,6 +1906,43 @@ Format de sortie : LeRobotDataset v2.1 (2 caméras: top + follower)
         if not position_repos_parallele(lk, lp, fk, fp, calib_l, calib_f):
             print("❌ Position repos impossible au démarrage — arrêt.")
             return
+
+        # Identification des CAMÉRAS APRÈS le repos (ordre validé _old1 /
+        # déploiement) : la scène — surtout la vue PINCE (cam_follower), qui
+        # dépend de la pose du bras — est garantie dans la posture standard.
+        cam_top_index, cam_follower_index = identification_cameras()
+        if cam_top_index is None or cam_follower_index is None:
+            print("\n❌ Enregistrement annulé : les deux caméras (globale + pince) sont requises.")
+            sys.exit(1)
+
+        # ORDRE VALIDÉ (étape 5) : robots MAINTENUS au repos (couples actifs
+        # depuis position_repos_parallele) PENDANT la préparation des références
+        # caméra — la vue de la PINCE dépend de la pose du bras. Les caméras du
+        # script ne sont pas encore connectées : le module ouvre les siennes.
+        # Le thread clavier n'est pas encore lancé → les input() des menus
+        # fonctionnent directement (pas de suspension nécessaire ici).
+        # Menus de référence (spec multi-caméra §5) : zones, mesure,
+        # création/remplacement de la référence, diagnostic, recalibrage et
+        # réglage initial [R] si besoin — pour LES DEUX caméras, l'une après
+        # l'autre. Sortie de chaque menu = [S].
+        etats_avant = {nom: etat_camera(nom) for nom in (CAM_TOP, CAM_FOLLOWER)}
+        for nom_cam, idx_cam, lib in ((CAM_TOP, cam_top_index, "GLOBALE"),
+                                      (CAM_FOLLOWER, cam_follower_index, "PINCE")):
+            print(f"\n🛠️  MENU DE RÉFÉRENCE — {lib} : prépare ou vérifie sa référence,")
+            print("   puis [S] pour passer à l'étape suivante.")
+            try:
+                menu_reference(idx_cam, nom_cam)
+            except Exception as e:
+                print(f"\n⚠️  Menu de référence {lib} interrompu ({e}).")
+                print("   Le contrôle avant chaque bloc vérifiera de toute façon")
+                print("   la conformité avant tout enregistrement.")
+                if input("   [Entrée] continuer, [Q] arrêter : ").strip().upper() == 'Q':
+                    print("\n❌ Arrêt demandé.")
+                    sys.exit(1)
+        etats_apres = {nom: etat_camera(nom) for nom in (CAM_TOP, CAM_FOLLOWER)}
+        afficher_recap_cameras(etats_avant, etats_apres)
+
+        input("\n✅ Caméras prêtes. Appuyez sur ENTRÉE pour libérer le Leader et lancer la téléopération...")
 
         for i in range(1, 7):
             lk.write1ByteTxRx(lp, i, 40, 0)
@@ -1710,7 +1976,7 @@ Format de sortie : LeRobotDataset v2.1 (2 caméras: top + follower)
                     print(f"   Attendu : {(CONFIG['camera_height'], CONFIG['camera_width'])}")
                     sys.exit(1)
 
-            # Verrouillage matériel APRÈS connexion + contrôle du résultat (comme le script 10)
+            # Verrouillage matériel APRÈS connexion + contrôle du résultat (cohérent avec le déploiement)
             ok_lock = True
             if cam_top_index is not None:
                 ok_lock &= verrouiller_camera(f"/dev/video{cam_top_index}", CAM_TOP)
@@ -1757,7 +2023,9 @@ Format de sortie : LeRobotDataset v2.1 (2 caméras: top + follower)
                 break
 
             if choix == '1':
+                suspendre_clavier()
                 afficher_instructions()
+                reprendre_clavier()
 
             elif choix == '2':
                 print("\n🧪 Test rapide - Choisissez une position (1-5): ", end="", flush=True)
@@ -1769,7 +2037,8 @@ Format de sortie : LeRobotDataset v2.1 (2 caméras: top + follower)
                     refresh_display()
 
                 if pos:
-                    session_enregistrement(recorder, pos, 2, lk, lp, fk, fp, calib_l, calib_f, cam_top=cam_top, cam_follower=cam_follower)
+                    if controle_camera_bloc(pos, cam_top, cam_top_index, cam_follower, cam_follower_index, lk, lp, fk, fp, calib_l, calib_f):
+                        session_enregistrement(recorder, pos, 2, lk, lp, fk, fp, calib_l, calib_f, cam_top=cam_top, cam_follower=cam_follower)
 
             elif choix == '3':
                 print("\n📹 Choisissez une position (1-5): ", end="", flush=True)
@@ -1787,7 +2056,7 @@ Format de sortie : LeRobotDataset v2.1 (2 caméras: top + follower)
                     if remaining <= 0:
                         print(f"\n✅ Position {pos} déjà complète!")
                         time.sleep(2)
-                    else:
+                    elif controle_camera_bloc(pos, cam_top, cam_top_index, cam_follower, cam_follower_index, lk, lp, fk, fp, calib_l, calib_f):
                         done = session_enregistrement(recorder, pos, remaining, lk, lp, fk, fp, calib_l, calib_f, cam_top=cam_top, cam_follower=cam_follower)
                         if done > 0:
                             print(f"\n✅ {done} épisodes enregistrés pour la position {pos}!")
@@ -1805,7 +2074,9 @@ Format de sortie : LeRobotDataset v2.1 (2 caméras: top + follower)
                     else:
                         print(f"  Position {pos_id} ({POSITIONS[pos_id]['nom']}): Pas encore de données")
                 print(f"\n💡 Pour visualiser: python lerobot/scripts/visualize_dataset_html.py")
+                suspendre_clavier()
                 input("\nAppuyez sur ENTRÉE pour revenir au menu...")
+                reprendre_clavier()
 
             elif choix == '5':
                 menu_effacer_donnees(recorder)
