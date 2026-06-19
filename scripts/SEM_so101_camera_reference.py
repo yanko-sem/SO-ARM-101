@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Script SEM_camera_reference.py
+Module SEM_so101_camera_reference.py
 Service Écoles-Médias (SEM) - DIP Genève
 
 RÉFÉRENCE VISUELLE CAMÉRA — OUTIL & MODULE (v7, multi-caméra)
@@ -17,7 +17,7 @@ Double rôle (décision validée) :
                              identifiée, sortie [S] Étape suivante
        controle_camera_deploiement(idx, nom_camera, dossier_reference,
                              contexte) → contrôle contre la référence du
-                             DATASET (étape 6, script 12) — lecture seule
+                             DATASET (étape 6, script 11) — lecture seule
      MULTI-CAMÉRA (spec validée) : nom_camera ∈ {"cam_top", "cam_follower"} ;
      chaque caméra a son PROFIL (zones, critères, sentinelle couleur) et son
      jeu de fichiers ; le code de mesure/évaluation est unique.
@@ -74,7 +74,7 @@ Garanties (v4) :
     mesurer dans les mêmes conditions que le pipeline.
   - Option [7] (recalibrage) : peut modifier camera_settings.json,
     UNIQUEMENT après action explicite de l'utilisateur via guvcview, en
-    utilisant le mécanisme existant de SEM_8_camera_config.py. Elle peut
+    utilisant le mécanisme existant de SEM_so101_camera_config.py. Elle peut
     aussi ajouter reglages_recalibres + date_recalibrage dans la référence.
   - RÉGLAGE INITIAL : si la caméra n'a AUCUN réglage enregistré (première
     mise en service), le menu propose à son démarrage de les créer
@@ -108,7 +108,7 @@ porté par des variables de module ; les contrôles des deux caméras doivent
 rester SÉQUENTIELS (jamais deux en parallèle).
 
 Usage :
-    python SEM_camera_reference.py
+    python SEM_so101_camera_reference.py
 
 Auteur: Service Écoles-Médias (SEM)
 Version: 8.0 (multi-caméra + déploiement étape 6 + étapes 1-4 + API étape 5 du plan « Référence visuelle caméra »)
@@ -126,27 +126,33 @@ import shutil
 import cv2
 import numpy as np
 
-cv2.setNumThreads(1)   # cohérence avec les scripts 8 et 12
+cv2.setNumThreads(1)   # cohérence avec les scripts 8 et 11
 
 # Module partagé du pipeline (mécanisme de verrouillage caméra).
 # Import tolérant, aligné sur le script 8 (except Exception : un module
 # présent mais cassé ne doit pas produire un traceback au démarrage).
-NOM_MODULE_CONFIG = "SEM_so101_8_camera_config"
+NOM_MODULE_CONFIG = "SEM_so101_camera_config"
 try:
-    from SEM_so101_8_camera_config import (verrouiller_camera,
-                                           charger_reglages_camera,
-                                           capturer_reglages_camera)
-except Exception:
-    try:
-        from SEM_8_camera_config import (verrouiller_camera,
+    from SEM_so101_camera_config import (verrouiller_camera,
                                          charger_reglages_camera,
                                          capturer_reglages_camera)
-        NOM_MODULE_CONFIG = "SEM_8_camera_config (ancien nom, renommage en attente)"
+except Exception:
+    try:
+        from SEM_so101_8_camera_config import (verrouiller_camera,
+                                               charger_reglages_camera,
+                                               capturer_reglages_camera)
+        NOM_MODULE_CONFIG = "SEM_so101_8_camera_config (transition)"
     except Exception:
-        verrouiller_camera = None
-        charger_reglages_camera = None
-        capturer_reglages_camera = None
-        NOM_MODULE_CONFIG = "SEM_so101_8_camera_config (INTROUVABLE)"
+        try:
+            from SEM_8_camera_config import (verrouiller_camera,
+                                             charger_reglages_camera,
+                                             capturer_reglages_camera)
+            NOM_MODULE_CONFIG = "SEM_8_camera_config (ancien nom)"
+        except Exception:
+            verrouiller_camera = None
+            charger_reglages_camera = None
+            capturer_reglages_camera = None
+            NOM_MODULE_CONFIG = "SEM_so101_camera_config (INTROUVABLE)"
 
 # ============================================
 # CONSTANTES
@@ -156,10 +162,10 @@ LARGEUR, HAUTEUR = 640, 360          # résolution du pipeline (16:9)
 FPS = 30                             # fps du pipeline (script 8, CONFIG['fps'])
 ECHELLE_AFFICHAGE = 2                # fenêtres affichées en 1280x720
 
-# Alignement caméra : cet outil s'aligne sur le SCRIPT 8 (enregistrement),
-# car la référence sert d'abord à homogénéiser le dataset. Le script 12
-# force en plus le codec MJPG — divergence 8↔12 déjà instruite et classée
-# sans suite ; à resurveiller lors de l'intégration au script 12 (étape 6).
+# Alignement caméra : acquisition UNIFIÉE (codec MJPG + 640x360) entre cet
+# outil, l'enregistrement (script 8) et le déploiement. La référence doit être
+# créée et contrôlée dans EXACTEMENT les mêmes conditions caméra que le dataset
+# et l'inférence, sinon le score de conformité serait biaisé.
 
 CALIB_DIR = Path.home() / "lerobot" / "calibration"
 MASK_FILE = CALIB_DIR / "camera_mask.json"
@@ -354,6 +360,10 @@ def ouvrir_camera(idx, warmup=5):
     if not cap.isOpened():
         print(f"   ❌ Impossible d'ouvrir la caméra {idx}.")
         return None
+    # MJPG : acquisition UNIFIÉE avec l'enregistrement (script 8) et le
+    # déploiement — la référence doit être créée/contrôlée dans EXACTEMENT
+    # les mêmes conditions caméra que le dataset et l'inférence.
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, LARGEUR)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, HAUTEUR)
     cap.set(cv2.CAP_PROP_FPS, FPS)   # même demande que le script 8
@@ -453,7 +463,7 @@ def identifier_camera():
 def appliquer_reglages_pipeline(idx):
     """Applique les réglages existants de camera_settings.json à la caméra
     confirmée (verrouiller_camera, signature : device puis nom logique —
-    identique aux scripts 8 et 12). Application non destructive de réglages
+    identique aux scripts 8 et 11). Application non destructive de réglages
     déjà validés : aucun réglage n'est créé ni sauvegardé ici.
 
     Retourne True si tous les contrôles sont confirmés, False sinon
@@ -2014,9 +2024,10 @@ def recalibrage_guide(idx, mask_pts, mask_img, zones, verrouille, ecrire_referen
         if rep == "A":
             # guvcview a besoin d'un accès exclusif au device : aucune
             # caméra OpenCV n'est ouverte ici (les mesures libèrent la
-            # leur). capturer_reglages_camera retourne TOUJOURS un dict
-            # (jamais None) : on détecte une annulation/échec en comparant
-            # les réglages avant et après.
+            # leur). capturer_reglages_camera retourne le dict capturé, ou
+            # None si l'utilisateur annule (cas fichier corrompu) : le garde
+            # « if not apres » ci-dessous couvre None comme un dict vide. On
+            # compare ensuite avant/après pour détecter une absence d'ajustement.
             avant = charger_reglages_camera(NOM_CAMERA) if charger_reglages_camera else None
             apres = capturer_reglages_camera(device, NOM_CAMERA, forcer=True,
                                              titre=f"RECALIBRAGE — {PROFIL['libelle']}")
@@ -2286,12 +2297,12 @@ def _controle_une_passe(idx, nom_camera, contexte=""):
 
 def controle_camera_deploiement(idx, nom_camera, dossier_reference=None,
                                 contexte="déploiement"):
-    """API publique (étape 6) — appelée par le SCRIPT 12 au démarrage du
+    """API publique (étape 6) — appelée par le SCRIPT 11 au démarrage du
     déploiement, pour UNE caméra, contre la référence du DATASET.
 
     dossier_reference : le meta/ du dataset d'entraînement (résolution via
-    train_config.json, faite par le script 12). None = références locales
-    (mode LEGACY explicite, décision D1 — le script 12 journalise).
+    train_config.json, faite par le script 11). None = références locales
+    (mode LEGACY explicite, décision D1 — le script 11 journalise).
 
     Différences avec le contrôle d'enregistrement (spec étape 6) :
       - zones et masque lus DANS la référence elle-même (autosuffisante),
@@ -2299,7 +2310,7 @@ def controle_camera_deploiement(idx, nom_camera, dossier_reference=None,
       - garde des réglages ASSOUPLIE (D2) : divergence = information, le
         verdict MESURÉ décide ; le verrouillage matériel doit réussir ;
       - pas de [M] ni de check-list (le robot est déjà au repos, piloté
-        par le script 12) ; recalibrage [R] sans écriture dans la
+        par le script 11) ; recalibrage [R] sans écriture dans la
         référence (D3) ;
       - politique : 🟢 auto ; 🟠 [Entrée]/[R]/[Q] ; 🔴 [R]/[Q] ;
         instable [E]/[Q].
