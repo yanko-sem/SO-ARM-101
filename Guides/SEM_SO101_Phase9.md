@@ -2,12 +2,16 @@
 
 ## Phase 9 : Entraînement du modèle d'apprentissage par imitation
 
-Service Écoles-Médias (SEM) — DIP Genève
+Service Écoles-Médias (SEM)
 
-### ✅ Prérequis
+### 🧩 Scripts utilisés
+
+`SEM_so101_10_train.py` — lanceur d'entraînement ACT autour du script officiel `lerobot/scripts/train.py` : vérification du GPU et du dataset, choix du profil d'entraînement, lancement, reprise, prolongation, gestion des checkpoints et protection contre la veille.
+
+### 📋 Prérequis
 
 - Phases 1 à 8 complétées
-- Dataset consolidé et validé (≥ 50 épisodes)
+- Dataset consolidé et validé : ≥ 50 épisodes recommandé pour un entraînement complet ; un dataset réduit est possible pour un test technique
 - GPU NVIDIA avec au moins 8 Go de VRAM
 - Environnement lerobot activé
 
@@ -63,14 +67,14 @@ L'entraînement permet de :
 > **💡 Note :** L'entraînement nécessite un GPU NVIDIA. Sans GPU, l'entraînement serait des dizaines de fois plus lent et n'est pas recommandé.
 
 
-### 🚀 Étape 1 : Lancement de l'entraînement (Script 11)
+### 🚀 Étape 1 : Lancement de l'entraînement (Script 10)
 
 **Lancement**
 
 ```bash
 conda activate lerobot
 cd ~/lerobot/Scripts_SEM/scripts
-python SEM_so101_11_train.py
+python SEM_so101_10_train.py
 ```
 
 **Vérification des prérequis**
@@ -159,7 +163,7 @@ L'entraînement peut être interrompu à tout moment avec **Ctrl+C**. Les checkp
 
 **Reprise automatique**
 
-Si vous relancez le script 11 après une interruption :
+Si vous relancez le script 10 après une interruption :
 
 1. Le script détecte l'entraînement précédent
 2. Il propose : **R** (Reprendre), **P** (Prolonger), **N** (Nouveau), **V** (Voir checkpoints), **Q** (Quitter)
@@ -209,7 +213,7 @@ Les checkpoints sont stockés dans :
 ```
 
 
-> **💡 Tirer parti des checkpoints intermédiaires :** Tous les checkpoints sont conservés (par exemple 10k, 50k, 100k pour un profil Standard). Vous pouvez en déployer plusieurs en Phase 10 — par exemple 10k, 50k et 100k — pour observer concrètement la progression de l'apprentissage : un modèle peu entraîné (10k) est souvent saccadé ou incomplet, alors qu'un modèle plus entraîné (100k) est plus fluide. Le choix du checkpoint à déployer se fait dans le script 12.
+> **💡 Tirer parti des checkpoints intermédiaires :** Tous les checkpoints sont conservés (par exemple 10k, 50k, 100k pour un profil Standard). Vous pouvez en déployer plusieurs en Phase 10 — par exemple 10k, 50k et 100k — pour observer concrètement la progression de l'apprentissage : un modèle peu entraîné (10k) est souvent saccadé ou incomplet, alors qu'un modèle plus entraîné (100k) est plus fluide. Le choix du checkpoint à déployer se fait dans le script 11.
 
 
 ### 📈 Étape 4 : Évaluation de la qualité
@@ -233,7 +237,7 @@ Les checkpoints sont stockés dans :
 | "CUDA non disponible" | Driver NVIDIA non chargé | `nvidia-smi`, réinstaller le driver si nécessaire |
 | "CUDA out of memory" | VRAM insuffisante | Fermer les applications lourdes (Chrome, etc.) |
 | "Dataset introuvable" | Script 9 non exécuté | Lancer d'abord le script 9 |
-| "episodes_stats.jsonl manquant" | Script 10 non exécuté | Lancer le script 10 (il le génère automatiquement) |
+| "episodes_stats.jsonl manquant" | Script 9 non exécuté ou préparation incomplète | Relancer la Phase 8 : `python SEM_so101_9_dataset.py` |
 | Dossier d'entraînement déjà présent | Entraînement précédent | Le script propose Reprendre / Nouveau / Voir ; l'ancien n'est supprimé qu'après confirmation finale |
 | Loss ne descend pas | Données de mauvaise qualité | Vérifier les épisodes, réenregistrer si nécessaire |
 | Entraînement très lent | GPU non utilisé | Vérifier `nvidia-smi`, GPU-Util doit être > 90% |
@@ -257,7 +261,7 @@ Les checkpoints sont stockés dans :
 # Lancer l'entraînement
 conda activate lerobot
 cd ~/lerobot/Scripts_SEM/scripts
-python SEM_so101_11_train.py
+python SEM_so101_10_train.py
 
 # Surveiller le GPU (dans un autre terminal)
 nvidia-smi -l 5
@@ -267,7 +271,7 @@ ls ~/lerobot/outputs/train/act_so101_pick_place/checkpoints/
 ```
 
 
-### ✅ Notes finales
+### 📝 Notes finales
 
 **✅ Phase 9 terminée quand :**
 
@@ -278,6 +282,3 @@ ls ~/lerobot/outputs/train/act_so101_pick_place/checkpoints/
 - Le GPU a fonctionné à > 90% d'utilisation pendant l'entraînement
 
 > **🚀 Objectif atteint :** Votre modèle ACT est entraîné ! Il a appris à associer les images des caméras aux mouvements des moteurs. Passez à la Phase 10 pour déployer le modèle et voir votre robot agir de manière autonome.
-
-Service Écoles-Médias — DIP Genève
-Guide Phase 9 — Version 1.2
