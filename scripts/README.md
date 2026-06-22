@@ -329,7 +329,7 @@ Entraînement de la politique ACT sur le dataset consolidé.
 Fonctions principales :
 
 - vérification des prérequis avant lancement ;
-- vérification CUDA ;
+- détection du GPU / CUDA, avec bascule automatique sur CPU si absent (avertissement non bloquant) ;
 - vérification PyAV, requis par `--dataset.video_backend=pyav` ;
 - vérification de la présence du dataset consolidé ;
 - vérification de `info.json`, `episodes_stats.jsonl`, parquets et dossiers vidéo ;
