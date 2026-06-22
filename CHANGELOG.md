@@ -4,7 +4,24 @@ Toutes les modifications importantes du projet seront documentées dans ce fichi
 
 Le format s’inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le projet utilise une logique de versionnement stable à partir de la version `v1.0.0`.
 
-## [1.2] - 2026-06-19
+## [1.3.0] - 2026-06-22
+
+Compatibilité CPU de l'entraînement et réalignement complet de la documentation sur la nouvelle numérotation des scripts (**8** enregistrement → **9** consolidation + visualisation → **10** entraînement → **11** déploiement).
+
+### Modifié
+
+- **Entraînement compatible CPU** (script 10) : en l'absence de GPU CUDA, le script n'échoue plus — il affiche un avertissement non bloquant et bascule automatiquement sur le **CPU** (`--policy.device=cpu`, `--policy.use_amp=false`). Sur GPU, le comportement est inchangé (`cuda` + AMP). L'entraînement reste possible sur une machine sans GPU, au prix d'une lenteur nettement accrue.
+- **Commentaires internes** (script 7) réalignés sur la nouvelle numérotation : références neutres aux scripts d'enregistrement et de déploiement, à la place des anciennes mentions « scripts 8 et 12 ».
+
+### Corrigé
+
+- **Message d'import du module caméra** (scripts 8 et 11) : en cas d'absence du module de configuration caméra, l'erreur affiche désormais le **nom canonique** `SEM_so101_camera_config.py`, et non l'exception du dernier repli de la cascade d'imports.
+
+### Documentation
+
+- **Réalignement complet sur la numérotation 8 → 11** des guides des phases 7 à 10, de `README_guides.md`, `README_scripts.md` et du `README.md` global : suppression des références aux scripts périmés (`SEM_so101_10_visualize_dataset.py`, `SEM_so101_11_train.py`, `SEM_so101_12_deploy.py`, `SEM_so101_8_camera_config.py`) et harmonisation de la formulation GPU/CPU (« GPU fortement recommandé — CPU possible mais beaucoup plus lent »). Ceci clôt le point « à réaligner — en cours » de la version 1.2.
+
+## [1.2.0] - 2026-06-19
 
 Durcissement de sécurité et de robustesse de la chaîne enregistrement → entraînement → déploiement, et renumérotation des scripts. Les versions internes passent à : script 9 `2.1`, script 10 `1.1`, script 11 `1.1`, module de configuration caméra `5.1`.
 
@@ -38,7 +55,7 @@ Durcissement de sécurité et de robustesse de la chaîne enregistrement → ent
 - CHANGELOG mis à jour (présente entrée).
 - Guides de phase et README à réaligner sur la nouvelle numérotation (scripts 10 et 11) — en cours.
 
-## [1.1] - 2026-06-15
+## [1.1.0] - 2026-06-15
 
 ### Ajouté
 
@@ -65,7 +82,7 @@ Durcissement de sécurité et de robustesse de la chaîne enregistrement → ent
 - Guides des phases 7, 8 et 10 mis à jour (flux bi-caméra, référence visuelle, traçabilité).
 - README mis à jour : global (FR/EN), guides et scripts.
 
-## [1.0] - 2026-06-04
+## [1.0.0] - 2026-06-04
 
 ### Ajouté
 
