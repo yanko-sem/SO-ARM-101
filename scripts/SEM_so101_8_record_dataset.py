@@ -32,7 +32,7 @@ try:
                                          charger_reglages_camera)
     CAMERA_LOCK_AVAILABLE = True
     CAMERA_LOCK_IMPORT_ERROR = None
-except Exception:
+except Exception as _e_config_canonique:
     try:
         from SEM_so101_8_camera_config import (verrouiller_camera, capturer_reglages_camera,
                                                charger_reglages_camera)
@@ -51,7 +51,7 @@ except Exception:
             capturer_reglages_camera = None
             charger_reglages_camera = None
             CAMERA_LOCK_AVAILABLE = False
-            CAMERA_LOCK_IMPORT_ERROR = e
+            CAMERA_LOCK_IMPORT_ERROR = _e_config_canonique
 
 # Module de référence visuelle caméra (étape 5) : contrôle de conformité de
 # l'image avec la référence du dataset, au démarrage et avant chaque bloc.
