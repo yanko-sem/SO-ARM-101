@@ -2,17 +2,19 @@
 
 ## Phase 6 : Visualisation temps réel
 
-Service Écoles-Médias (SEM) — DIP Genève
+Service Écoles-Médias (SEM)
 
-### ✅ Prérequis
+### 🧩 Scripts utilisés
+
+`SEM_so101_7_teleoperation_camera.py` — téléopération Leader → Follower avec caméra Globale, identification visuelle de la caméra, création du masque de zone utile, affichage vidéo masqué en temps réel et commande `M` pour refaire le masque.
+
+### 📋 Prérequis
 
 - Phases 1 à 5 complétées
 - Calibrations Leader et Follower **complètes et valides** (Phase 3)
 - Configuration de téléopération du mode choisi **créée en Phase 5** (script 5)
 - Support de la caméra Globale installé
 - Caméra Globale branchée
-
-> **Note :** Cette phase utilise le script `SEM_so101_7_teleoperation_camera.py`, qui ajoute la caméra Globale et le masque de zone utile à la téléopération validée en Phase 5.
 
 > **⚠️ Important :** le script 7 **refuse de démarrer** si une calibration est absente/invalide, si aucune caméra n'est détectée, ou si la configuration du mode choisi n'existe pas.
 
@@ -245,7 +247,7 @@ Une fois le masque défini et les robots positionnés, la fenêtre vidéo s'ouvr
 - La fenêtre affiche le flux en temps réel de la caméra, masqué selon la zone définie
 - La caméra Globale est celle que vous avez **identifiée au lancement** (confirmation, ou choix `G`/`P`) ; l'aperçu permet de vérifier le cadrage
 
-> **💡 Note :** Comme les deux caméras du projet sont identiques, le script ne choisit pas tout seul : il vous fait **identifier la Globale** au lancement (confirmation si une seule caméra, sinon choix `G`/`P`/`Q` en regardant chaque flux). En cas d'erreur, relancez le script et reprenez l'identification. Pour simplifier, ne laissez branchée que la Caméra Globale.
+> **💡 Note :** En cas d'erreur d'identification de la caméra Globale, relancez le script. Pour simplifier, ne laissez branchée que la Caméra Globale.
 
 
 ### 📊 Étape 5 : Tests de validation
@@ -323,7 +325,7 @@ Cette phase prépare l'enregistrement de trajectoires (Phase 7). Quelques points
 > **💡 Astuce :** Prenez une photo de votre configuration finale (caméra, éclairage, plateau). Vous devrez la reproduire à l'identique pour que le modèle fonctionne après l'entraînement.
 
 
-### ✅ Notes finales
+### 📝 Notes finales
 
 **✅ Phase 6 terminée quand :**
 
@@ -345,6 +347,3 @@ Cette phase prépare l'enregistrement de trajectoires (Phase 7). Quelques points
 | `~/lerobot/Scripts_SEM/scripts/SEM_so101_7_teleoperation_camera.py` | Script de téléopération avec visualisation caméra | Phase 6 |
 | `~/lerobot/calibration/camera_mask.json` | Masque de zone utile (polygone 5 points du plateau) | Phase 6 / script 7 |
 | `~/lerobot/outputs/images_from_opencv_cameras/` | Dossier contenant les images test de la caméra | Test caméra (optionnel) |
-
-Service Écoles-Médias — DIP Genève
-Guide Phase 6 — Version 2.1
