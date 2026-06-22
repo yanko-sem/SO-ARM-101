@@ -2,6 +2,10 @@
 
 ## Phase 1 : Installation Complète de l'Environnement
 
+### 🧩 Scripts utilisés
+
+*Aucun script SEM.* Cette phase installe et configure l'environnement : conda, fork LeRobot, dépôt SEM, pilotes, permissions USB/caméra et outils vidéo. Les scripts SEM interviennent à partir des phases suivantes.
+
 ### 📋 Prérequis
 
 - Ubuntu 22.04 ou 24.04
@@ -28,7 +32,7 @@ conda remove --name lerobot --all -y
 > - le dépôt cloné `~/lerobot`, **y compris `~/lerobot/calibration/`** : calibrations des bras, `camera_settings.json`, `repos_position.json`, `camera_mask.json` et les certificats VR ;
 > - le cache `~/.cache/huggingface/lerobot`, **y compris les datasets enregistrés** (ex. `local/so101_pick_place/`).
 >
-> À n'utiliser que pour une réinstallation complète, sur un poste ne contenant aucune donnée à conserver. **Sauvegarde `~/lerobot/calibration/` et tes datasets avant de continuer.**
+> À n'utiliser que pour une réinstallation complète, sur un poste ne contenant aucune donnée à conserver. **Sauvegardez `~/lerobot/calibration/` et vos datasets avant de continuer.**
 
 ```bash
 # Supprimer le dépôt cloné (inclut ~/lerobot/calibration/ : calibrations, réglages caméra, certificats VR)
@@ -57,7 +61,7 @@ sudo apt update
 sudo apt install git wget -y
 ```
 
-**Vérification de Miniconda**
+**Vérifier si Miniconda est déjà présent**
 
 ```bash
 conda --version
@@ -117,7 +121,7 @@ cd ~/lerobot
 git branch
 ```
 
-> **Note :** Il s'agit d'un **fork** de LeRobot (et non du dépôt officiel `huggingface/lerobot`), figé sur l'ancienne structure de l'API : `lerobot.common.*` et les scripts exécutables `lerobot/scripts/*.py`. Cette structure est **requise** par les scripts SEM 10, 11 et 12. Le dépôt officiel actuel a refactorisé cette API (`lerobot.*` + commandes CLI) ; l'utiliser nécessiterait de réécrire ces scripts.
+> **Note :** Il s'agit d'un **fork** de LeRobot (et non du dépôt officiel `huggingface/lerobot`), figé sur l'ancienne structure de l'API : `lerobot.common.*` et les scripts exécutables `lerobot/scripts/*.py`. Cette structure est **requise** par les scripts SEM 9, 10 et 11. Le dépôt officiel actuel a refactorisé cette API (`lerobot.*` + commandes CLI) ; l'utiliser nécessiterait de réécrire ces scripts.
 
 **Dépôt SEM (scripts + guides)**
 
@@ -171,7 +175,7 @@ pip install dynamixel-sdk
 
 > **Note :** L'installation peut prendre 5-10 minutes selon votre connexion
 
-> **Pourquoi `dynamixel-sdk` ?** Les servos sont des Feetech STS3215, mais les scripts SEM (1 à 8 et 12) communiquent avec eux via le SDK Dynamixel (`from dynamixel_sdk import *`). L'extra `[feetech]` n'installe que le SDK Feetech ; le SDK Dynamixel doit donc être ajouté séparément, sinon les scripts échouent à l'import.
+> **Pourquoi `dynamixel-sdk` ?** Les servos sont des Feetech STS3215, mais les scripts SEM (1 à 8 et 11) communiquent avec eux via le SDK Dynamixel (`from dynamixel_sdk import *`). L'extra `[feetech]` n'installe que le SDK Feetech ; le SDK Dynamixel doit donc être ajouté séparément, sinon les scripts échouent à l'import.
 
 
 ### 🔌 Étape 6 : Permissions USB et caméras
@@ -199,7 +203,7 @@ Les mots `dialout` et `video` doivent apparaître dans la liste.
 
 ### 📷 Étape 7 : Installation des outils caméra (v4l-utils + guvcview)
 
-Pourquoi cette installation ? Les scripts SEM des phases suivantes verrouillent l'exposition, la balance des blancs et le gain des caméras, afin que les images soient identiques entre l'enregistrement du dataset (script 8) et le déploiement du modèle (script 12). Ce verrouillage s'appuie sur `v4l2-ctl` (paquet `v4l-utils`), et le réglage de l'image en direct se fait avec `guvcview`. Sans ces outils, le script 8 ne pourra ni régler ni verrouiller les caméras.
+Pourquoi cette installation ? Les scripts SEM des phases suivantes verrouillent l'exposition, la balance des blancs et le gain des caméras, afin que les images soient identiques entre l'enregistrement du dataset (script 8) et le déploiement du modèle (script 11). Ce verrouillage s'appuie sur `v4l2-ctl` (paquet `v4l-utils`), et le réglage de l'image en direct se fait avec `guvcview`. Sans ces outils, le script 8 ne pourra ni régler ni verrouiller les caméras.
 
 ```bash
 sudo apt update
@@ -224,7 +228,7 @@ lspci | grep -i nvidia
 
 **Si un GPU est détecté - Nettoyer les anciennes installations (réinstallation propre uniquement)**
 
-> ⚠️ Ces commandes désinstallent **tous** les pilotes NVIDIA et CUDA présents. Ne les exécuter **que** si tu repars d'une installation propre. Sur un poste dont les pilotes NVIDIA fonctionnent déjà (`nvidia-smi` répond), **saute ce bloc** et passe directement à l'installation.
+> ⚠️ Ces commandes désinstallent **tous** les pilotes NVIDIA et CUDA présents. Ne les exécuter **que** si vous repartez d'une installation propre. Sur un poste dont les pilotes NVIDIA fonctionnent déjà (`nvidia-smi` répond), **sautez ce bloc** et passez directement à l'installation.
 
 ```bash
 sudo apt remove --purge nvidia-* -y
@@ -242,11 +246,11 @@ sudo add-apt-repository ppa:graphics-drivers/ppa -y
 sudo apt update
 # Voir les drivers disponibles
 ubuntu-drivers devices
-# Installer automatiquement le driver recommandé
+# Installer automatiquement le pilote recommandé (voie principale)
 sudo ubuntu-drivers autoinstall
-# OU installer une version spécifique
-sudo apt install nvidia-driver-550 -y
 ```
+
+> **Note :** N'installez une version précise (`sudo apt install nvidia-driver-XXX -y`) que si elle est explicitement recommandée par `ubuntu-drivers devices` ou par l'administrateur du poste.
 
 > **Important :** Redémarrage nécessaire après l'installation des drivers
 
@@ -302,13 +306,12 @@ python -c "import torch; \
 **Test des dépendances du projet**
 
 ```bash
-# Bibliothèques de base
-python -c "import torch; print('torch', torch.__version__)"
+# Bibliothèques de base (torch déjà vérifié ci-dessus)
 python -c "import cv2; print('cv2', cv2.__version__)"
 python -c "import numpy; print('numpy', numpy.__version__)"
 # SDK des servos (détection/configuration des moteurs — script 1)
 python -c "from dynamixel_sdk import *; print('dynamixel_sdk OK')"
-# Politique ACT (importée par le script 12 de déploiement)
+# Politique ACT (importée par le script 11 de déploiement)
 python -c "from lerobot.common.policies.act.modeling_act import ACTPolicy; print('ACTPolicy OK')"
 ```
 
@@ -354,9 +357,7 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 
 ### 📝 Notes importantes
 
-1. **Dépôts :** LeRobot (fork validé, pas le dépôt officiel) → https://github.com/ZhuYaoHui1998/lerobot.git (dans `~/lerobot`) ; scripts SEM → https://github.com/yanko-sem/SO-ARM-101.git (cloné dans `~/lerobot/Scripts_SEM`)
-2. **Ordre d'installation :** Toujours installer ffmpeg AVANT pip install
-3. **GPU :** Non obligatoire sauf pour l'entraînement
-4. **Environnement :** Toujours activer avec `conda activate lerobot`
-5. **Permissions USB :** Chaque utilisateur doit être dans les groupes `dialout` et `video`
-6. **Outils caméra :** `v4l-utils` (verrouillage via `v4l2-ctl`) et `guvcview` (réglage en direct) sont nécessaires aux scripts 8 et 12 pour figer l'exposition, la balance des blancs et le gain des caméras
+1. **Environnement :** activez `conda activate lerobot` à chaque nouvelle session de terminal.
+2. **Ordre d'installation :** installez toujours ffmpeg via conda **avant** le `pip install`.
+3. **Permissions :** les groupes `dialout` et `video` sont à refaire **pour chaque compte utilisateur** (enseignant, élèves).
+4. **Dépôt LeRobot :** utilisez le fork validé (`ZhuYaoHui1998/lerobot`), **jamais** le dépôt officiel `huggingface/lerobot` — son API refactorisée casserait les scripts SEM 9, 10 et 11.
