@@ -9,7 +9,7 @@ ENTRAÎNEMENT DU MODÈLE ACT POUR SO-ARM 101
 Ce script lance l'entraînement d'une politique ACT
 (Action Chunking with Transformers) sur le dataset consolidé.
 
-Matériel cible : Quadro RTX 4000 (8 Go VRAM)
+Matériel de référence : Quadro RTX 4000 (8 Go VRAM). CPU possible, mais beaucoup plus lent.
 Dataset : so101_pick_place_consolidated (50 épisodes, 2 caméras)
 
 Auteur: Service Écoles-Médias (SEM)
@@ -52,7 +52,8 @@ TRAIN_SCRIPT = LEROBOT_DIR / "lerobot" / "scripts" / "train.py"
 
 OUTPUT_DIR = LEROBOT_DIR / "outputs" / "train" / "act_so101_pick_place"
 
-# Paramètres d'entraînement optimisés pour Quadro RTX 4000 (8 Go VRAM)
+# Paramètres d'entraînement optimisés pour la machine GPU de référence (Quadro
+# RTX 4000, 8 Go VRAM) ; utilisables aussi sur CPU, avec des temps beaucoup plus longs.
 TRAINING_CONFIGS = {
     "standard": {
         "nom": "Standard (recommandé)",
@@ -109,13 +110,18 @@ def verifier_prerequis():
     print("\n🔍 Vérification des prérequis...")
     erreurs = []
 
-    # 1. CUDA
+    # 1. CUDA — GPU fortement recommandé mais NON obligatoire. Sans CUDA,
+    #    l'entraînement tourne sur CPU (beaucoup plus lent). LeRobot bascule
+    #    lui-même device/AMP si besoin ; le script transmet déjà device=cpu
+    #    et use_amp=false plus bas.
     if torch.cuda.is_available():
         gpu_name = torch.cuda.get_device_name(0)
         vram = torch.cuda.get_device_properties(0).total_memory / (1024**3)
         print(f"  ✅ GPU : {gpu_name} ({vram:.1f} Go VRAM)")
     else:
-        erreurs.append("CUDA non disponible — entraînement GPU impossible")
+        print("  ⚠️  Pas de GPU CUDA détecté — l'entraînement utilisera le CPU.")
+        print("      C'est possible, mais BEAUCOUP plus lent. GPU NVIDIA fortement recommandé.")
+        print("      (Les durées indiquées dans les profils sont des estimations sur GPU.)")
 
     # 2. Dataset
     info_file = DATASET_PATH / "meta" / "info.json"
@@ -336,8 +342,8 @@ def lancer_entrainement(config_key, effacer_ancien=False):
         "--dataset.repo_id=local/so101_pick_place_consolidated",
         "--dataset.video_backend=pyav",
         f"--policy.type=act",
-        f"--policy.device=cuda",
-        f"--policy.use_amp=true",
+        f"--policy.device={'cuda' if torch.cuda.is_available() else 'cpu'}",
+        f"--policy.use_amp={'true' if torch.cuda.is_available() else 'false'}",
         f"--policy.chunk_size={config['chunk_size']}",
         f"--policy.n_action_steps={config['n_action_steps']}",
         f"--output_dir={OUTPUT_DIR}",
@@ -354,7 +360,12 @@ def lancer_entrainement(config_key, effacer_ancien=False):
     print(f"   {' '.join(cmd[1:])}")
 
     # Confirmation
-    print(f"\n⏱️  Durée estimée : {config['description'].split('—')[1].strip()}")
+    duree_ref = config['description'].split('—')[1].strip()
+    if torch.cuda.is_available():
+        print(f"\n⏱️  Durée estimée : {duree_ref}")
+    else:
+        print(f"\n⏱️  Durée estimée (sur GPU de référence) : {duree_ref}")
+        print("   Sur CPU : non estimée, probablement beaucoup plus longue.")
     print(f"   L'entraînement peut être interrompu avec Ctrl+C")
     print(f"   Les checkpoints sont sauvegardés régulièrement\n")
 
