@@ -4,6 +4,10 @@
 
 Développé par : Service Écoles-Médias (SEM)
 
+### 🧩 Scripts utilisés
+
+`SEM_so101_1_configure.py` — attribution des IDs (1 à 6), test de mouvement, centrage à 2048 et blocage des servos pour le montage.
+
 ### 📋 Prérequis
 
 - Phase 1 complétée (LeRobot et `dynamixel-sdk` installés, permissions USB configurées)
@@ -15,8 +19,6 @@ Développé par : Service Écoles-Médias (SEM)
 - 12 servos Feetech STS3215
 - Câbles 3-pins fournis
 
-> **Note :** Cette phase utilise le script `SEM_so101_1_configure.py`.
-
 
 ### 🔍 Vue d'ensemble de la Phase 2
 
@@ -26,7 +28,7 @@ Cette phase consiste à :
 2. Tester le mouvement de chaque servo
 3. Centrer chaque servo en position 2048
 4. Monter les servos sur la structure
-5. Recentrer si nécessaire après montage (option `B`, sans rejouer le test de mouvement)
+5. Recentrer si nécessaire après montage avec l'option `B`
 
 
 ### 🛠️ Étape 1 : Préparation de l'environnement
@@ -65,7 +67,7 @@ Le script effectue automatiquement les opérations suivantes :
 2. **Attribution de l'ID** — il lit d'abord l'ID actuel du servo connecté, puis écrit le numéro voulu (1 à 6) dans l'EEPROM du servo ; l'ID y est conservé même après coupure d'alimentation
 3. **Test de mouvement** — il fait bouger le servo vers trois positions (MIN → MAX → CENTRE) pour vérifier son bon fonctionnement
 4. **Centrage et blocage** — il positionne le servo à 2048 (position neutre) et l'y maintient bloqué, couple actif, pour le montage
-5. **Configuration groupée** — l'option `T` enchaîne automatiquement la configuration des six servos
+5. **Configuration groupée** — l'option `T` guide la configuration des six servos l'un après l'autre, avec une invite avant chaque branchement
 6. **Blocage / libération** — les options `B` et `L` bloquent ou libèrent le servo connecté (utiliser `L` pour relâcher le couple après le montage)
 
 > **Note technique (Feetech STS3215) :** l'ID est stocké dans le registre EEPROM **5** (et non au registre 3 des conventions AX/MX). L'EEPROM étant verrouillée, le script la déverrouille, écrit l'ID, la reverrouille, puis vérifie que le servo répond à son nouvel ID — automatiquement, sans action manuelle.
@@ -87,7 +89,7 @@ Le script effectue automatiquement les opérations suivantes :
 python SEM_so101_1_configure.py
 ```
 
-Le script affiche un menu : choisissez le numéro d'un servo (1 à 6), `T` pour les configurer tous, `B` ou `L` pour bloquer ou libérer le servo connecté, `D` pour relancer la détection du port USB, ou `Q` pour quitter.
+Le script affiche un menu interactif : les numéros 1 à 6 configurent chaque servo ; les options `T`, `B`, `L`, `D` et `Q` sont détaillées à l'**Étape 4**.
 
 > ### ℹ️ Messages affichés pendant l'attribution d'un ID — faut-il s'inquiéter ?
 >
@@ -130,7 +132,7 @@ Procédure pour chaque servo :
 4. **Montage sur la structure :**
    - Monter le palonnier en position alignée
    - Fixer le servo sur le bras
-   - Si la position bouge pendant le montage, utilisez l'option `B` du menu pour replacer le servo au centre (sans rejouer le test de mouvement)
+   - Si la position bouge pendant le montage, utilisez l'option `B` pour recentrer le servo
 
 **B. Configuration du bras FOLLOWER**
 
@@ -162,7 +164,7 @@ Au-delà de la configuration d'un servo (touches 1 à 6), le menu propose :
 | :--- | :--- | :--- |
 | Port USB non détecté | Adaptateur non branché, mauvais port USB, permissions insuffisantes | Vérifier le branchement, essayer un autre port USB, vérifier le groupe `dialout` (voir Phase 1, Étape 6) |
 | Servo ne bouge pas | Alimentation non connectée, câble 3-pins mal branché, servo défectueux | Vérifier l'alimentation (LED allumée), reconnecter le câble 3-pins, tester avec un autre servo |
-| Position incorrecte après montage | Normal — le montage fait bouger le servo, palonnier mal positionné | Utiliser l'option `B` pour recentrer (sans rejouer le test de mouvement) ; démonter/remonter le palonnier si besoin |
+| Position incorrecte après montage | Normal — le montage fait bouger le servo, palonnier mal positionné | Utiliser l'option `B` pour recentrer ; démonter/remonter le palonnier si besoin |
 | Mauvais servo configuré | Plusieurs servos branchés en même temps — le script configure le premier qui répond | Débrancher tous les servos sauf celui à configurer, puis relancer |
 | ID déjà utilisé | Servo déjà configuré, mauvais servo branché | Utiliser `B` ou `L` pour afficher l'ID du servo branché, brancher le bon servo |
 | L'ID n'a pas changé après tentative | Écriture EEPROM non confirmée, coupure pendant l'écriture, alimentation instable | Débrancher/rebrancher le servo, vérifier l'alimentation, relancer la configuration |
@@ -172,13 +174,9 @@ Au-delà de la configuration d'un servo (touches 1 à 6), le menu propose :
 
 > **⚠️ Règles essentielles :**
 
-1. **Un servo à la fois :** Ne JAMAIS connecter plusieurs servos non configurés
-2. **Position 2048 :** Toujours configurer avant montage
-3. **Recentrage :** après montage, utilisez l'option `B` pour replacer le servo au centre (pas une reconfiguration complète)
-4. **Alimentation :**
-   - Leader : TOUJOURS 5V
-   - Follower : 5V (Standard) ou 12V (Pro)
-5. **Ordre :** Configurer → Tester → Monter → (Recentrer avec `B` si besoin)
+1. **Un seul servo et un seul adaptateur à la fois** — ne jamais connecter plusieurs servos non configurés.
+2. **Alimentation :** Leader toujours 5V ; Follower 5V (Standard) ou 12V (Pro).
+3. **Ordre de travail :** Configurer → Tester → Monter → Recentrer avec `B` si nécessaire.
 
 
 ### 🚀 Commandes rapides de référence
