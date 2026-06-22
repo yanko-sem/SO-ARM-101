@@ -112,6 +112,7 @@ Capture de démonstrations pour l'apprentissage par imitation.
 
 **Scripts utilisés :**
 - `SEM_so101_8_record_dataset.py` — Enregistrement
+- `SEM_so101_camera_config.py` — Réglage et verrouillage des caméras
 - `SEM_so101_camera_reference.py` — Référence visuelle (contrôle des 2 caméras)
 
 
@@ -127,8 +128,8 @@ Préparation du dataset pour l'entraînement.
 - Visualisation interactive dans le navigateur via l'outil LeRobot
 
 **Scripts utilisés :**
-- `SEM_so101_9_dataset.py` — Consolidation du dataset
-- `SEM_so101_10_visualize_dataset.py` — Vérification et visualisation
+- `SEM_so101_9_dataset.py` — Préparation complète (consolidation, métadonnées, conversion H.264, vérification, visualisation)
+- `SEM_so101_camera_reference.py` — Copie des références visuelles dans le `meta/`
 
 **Fichiers générés :**
 - `~/.cache/huggingface/lerobot/local/so101_pick_place_consolidated/`
@@ -139,13 +140,13 @@ Préparation du dataset pour l'entraînement.
 Formation du modèle d'intelligence artificielle sur les démonstrations.
 
 - Modèle ACT (Action Chunking with Transformers), entre 50 et 80 millions de paramètres selon la configuration
-- 3 profils d'entraînement : Rapide (30min), Standard (4-6h), Intensif (8-12h)
+- 4 profils d'entraînement : Rapide (~30min), Intermédiaire (~2-3h), Standard (~4-6h), Intensif (~8-12h)
 - Optimisé pour GPU NVIDIA (Quadro RTX 4000, batch size 4)
 - Sauvegarde de checkpoints régulière
 - Reprise d'entraînement interrompu
 
 **Script utilisé :**
-- `SEM_so101_11_train.py`
+- `SEM_so101_10_train.py`
 
 **Fichiers générés :**
 - `~/lerobot/outputs/train/act_so101_pick_place/checkpoints/`
@@ -163,7 +164,8 @@ Inférence autonome : le modèle ACT pilote le robot sans opérateur.
 - Arrêt d'urgence (CTRL+C)
 
 **Scripts utilisés :**
-- `SEM_so101_12_deploy.py` — Déploiement
+- `SEM_so101_11_deploy.py` — Déploiement
+- `SEM_so101_camera_config.py` — Réglage et verrouillage des caméras
 - `SEM_so101_camera_reference.py` — Contrôle des 2 caméras
 
 
@@ -215,4 +217,4 @@ Phase 10 (Déploiement autonome)
 ---
 
 Service Écoles-Médias — DIP Genève
-Dernière mise à jour : 15.06.2026
+Dernière mise à jour : 22.06.2026
