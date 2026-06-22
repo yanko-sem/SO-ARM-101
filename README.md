@@ -105,7 +105,7 @@ La tâche de référence est volontairement simple et pédagogique : **prendre u
 - 12× Servos Feetech STS3215
 - 2× Caméras USB (`cam_top` + `cam_follower`)
 - 1× PC avec Ubuntu 22.04 ou 24.04
-- (Optionnel) GPU NVIDIA pour accélérer l'entraînement
+- GPU NVIDIA fortement recommandé pour l'entraînement (≥ 8 Go VRAM) — CPU possible mais beaucoup plus lent
 
 ### Configuration des Servos
 
@@ -146,9 +146,8 @@ python SEM_so101_8_record_dataset.py
 
 # Consolider, vérifier, entraîner, déployer
 python SEM_so101_9_dataset.py
-python SEM_so101_10_visualize_dataset.py
-python SEM_so101_11_train.py
-python SEM_so101_12_deploy.py
+python SEM_so101_10_train.py
+python SEM_so101_11_deploy.py
 ```
 
 Pour une installation complète et sûre, suivez les guides détaillés dans le dossier `Guides/`.
@@ -157,7 +156,7 @@ Pour une installation complète et sûre, suivez les guides détaillés dans le 
 
 ## 📚 Guide d'Utilisation par Phase
 
-> **Note :** les phases pédagogiques regroupent parfois plusieurs scripts. Les numéros de phase ne correspondent donc pas toujours aux numéros des fichiers Python (par exemple, la Phase 8 utilise les scripts 9 et 10).
+> **Note :** les phases pédagogiques regroupent parfois plusieurs scripts. Les numéros de phase ne correspondent donc pas toujours aux numéros des fichiers Python (par exemple, la Phase 5 utilise les scripts 5 et 6).
 
 ### Phase 1 : Installation LeRobot
 
@@ -236,12 +235,10 @@ python SEM_so101_8_record_dataset.py
 ### Phase 8 : Consolidation et Visualisation
 
 ```bash
-# Script 9 — fusionner les 5 positions en un dataset unifié
-python SEM_so101_9_dataset.py
-
-# Script 10 — vérifier le dataset, générer les statistiques,
+# Script 9 — fusionner les 5 positions en un dataset unifié,
+# vérifier le dataset, générer les statistiques,
 # convertir les vidéos en H.264 et visualiser dans le navigateur
-python SEM_so101_10_visualize_dataset.py
+python SEM_so101_9_dataset.py
 
 # Dataset consolidé et vérifié, prêt pour l'entraînement
 ```
@@ -250,18 +247,18 @@ python SEM_so101_10_visualize_dataset.py
 
 ```bash
 # Lancer l'entraînement
-python SEM_so101_11_train.py
+python SEM_so101_10_train.py
 
 # Le script utilise le dataset consolidé
 # Reprise d'entraînement possible depuis un checkpoint existant
-# Entraînement CPU possible, GPU NVIDIA recommandé
+# GPU NVIDIA fortement recommandé (≥ 8 Go VRAM) ; CPU possible mais beaucoup plus lent
 ```
 
 ### Phase 10 : Déploiement autonome
 
 ```bash
 # Déployer le modèle ACT entraîné
-python SEM_so101_12_deploy.py
+python SEM_so101_11_deploy.py
 
 # Le Follower agit de manière autonome à partir des deux caméras
 # Masque réappliqué + contrôle des deux caméras vs les références du dataset
@@ -292,11 +289,10 @@ python SEM_so101_12_deploy.py
 ├── README.md
 └── scripts
     ├── __pycache__
-    ├── SEM_so101_8_camera_config.py
+    ├── SEM_so101_camera_config.py
     ├── SEM_so101_camera_reference.py
-    ├── SEM_so101_10_visualize_dataset.py
-    ├── SEM_so101_11_train.py
-    ├── SEM_so101_12_deploy.py
+    ├── SEM_so101_10_train.py
+    ├── SEM_so101_11_deploy.py
     ├── SEM_so101_1_configure.py
     ├── SEM_so101_2_calibrate.py
     ├── SEM_so101_3_monitor.py
@@ -442,4 +438,4 @@ Cette œuvre est mise à disposition selon les termes de la Licence Creative Com
   Service Écoles-Médias (SEM) — Département de l’Instruction Publique (DIP), Genève
 </p>
 
-**Dernière mise à jour : 15.06.2026**
+**Dernière mise à jour : 22.06.2026**
