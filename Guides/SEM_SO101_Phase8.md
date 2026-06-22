@@ -2,9 +2,14 @@
 
 ## Phase 8 : Préparation du dataset pour l'entraînement
 
-Service Écoles-Médias (SEM) — DIP Genève
+Service Écoles-Médias (SEM)
 
-### ✅ Prérequis
+### 🧩 Scripts utilisés
+
+- `SEM_so101_9_dataset.py` — préparation complète du dataset : validation des sources, consolidation, métadonnées, statistiques, conversion H.264, vérification frames/parquet, visualisation et rapport final.
+- `SEM_so101_camera_reference.py` — copie des références visuelles des deux caméras dans le `meta/` du dataset consolidé.
+
+### 📋 Prérequis
 
 - Phases 1 à 7 complétées
 - Dataset complet recommandé : ≥ 50 épisodes (10 par position × 5 positions)
@@ -17,11 +22,6 @@ Service Écoles-Médias (SEM) — DIP Genève
   nécessaires pour la conversion vidéo H.264 (visualisation navigateur) et la
   vérification des frames
 
-> **Note :** Cette phase utilise le script `SEM_so101_9_dataset.py`, qui prépare
-> le dataset de bout en bout (consolidation, métadonnées, conversion vidéo,
-> vérifications) **et** offre la visualisation dans le navigateur. Il remplace à
-> lui seul les anciens scripts 9 (consolidation) et 10 (visualisation).
-
 
 ### 🎯 Objectif de cette phase
 
@@ -29,7 +29,8 @@ Service Écoles-Médias (SEM) — DIP Genève
 les données dans 5 dossiers séparés (un par position). L'entraînement du modèle
 ACT a besoin d'un dataset **unique et unifié**, avec des métadonnées complètes.
 Cette phase fusionne les données, génère ces métadonnées et vérifie la qualité
-avant de lancer l'entraînement.
+avant de lancer l'entraînement. Le script 9 réunit la consolidation et la
+visualisation, auparavant réparties dans deux scripts séparés.
 
 Cette phase permet de :
 
@@ -75,6 +76,9 @@ Cette phase permet de :
     ├── episodes.jsonl             (index des épisodes)
     ├── episodes_stats.jsonl       (statistiques par épisode)
     ├── consolidation_trace.json   (traçabilité de la préparation)
+    ├── camera_reference_cam_top.json       (si références caméra copiées)
+    ├── camera_reference_cam_follower.json   (si références caméra copiées)
+    ├── camera_reference_log.jsonl           (si passages 🟠 confirmés)
     └── .h264_converted            (présent seulement si la conversion H.264 a réussi)
 ```
 
@@ -170,33 +174,36 @@ positions ayant des épisodes) :
 > « cube » dans ces libellés (hérités du script 8).
 
 
-### 📷 Traçabilité « Référence visuelle caméra » (optionnelle)
+### 📷 Traçabilité « Référence visuelle caméra »
 
-Le script 9 sait copier dans le `meta/` du dataset les **références visuelles des
-deux caméras** (conditions d'éclairage au moment de l'enregistrement), via le
-module `SEM_so101_camera_reference`. Le `meta/` devient alors l'**exemplaire de
-vérité** des conditions visuelles, auquel le déploiement (Phase 10) peut se
-rattacher pour vérifier que les caméras voient la même chose qu'à l'entraînement.
+Le script 9 copie dans le `meta/` du dataset les **références visuelles des deux
+caméras** (conditions d'éclairage et de cadrage au moment de l'enregistrement),
+via le module `SEM_so101_camera_reference`. Le `meta/` devient l'**exemplaire de
+vérité** des conditions visuelles, auquel le déploiement (Phase 10) se rattache
+pour vérifier que les caméras voient la même chose qu'à l'entraînement.
 
-> **ℹ️ État dans le pipeline actuel.** Ce système de référence visuelle est un
-> **sous-projet distinct**, pas encore branché sur l'enregistrement : le script 8
-> utilise `SEM_8_camera_config` (réglage + verrouillage) et ne crée **pas** ces
-> références. Tant que le sous-projet n'est pas actif, le script 9 rapporte
-> **« références caméra : absentes »** et **poursuit normalement** — le dataset
-> reste pleinement valide, et le déploiement fonctionne en mode LEGACY (sans
-> vérification de référence).
+> **ℹ️ Cas normal.** Depuis la Phase 7, le script 8 est *fail-closed* : il
+> **crée et exige** les références des deux caméras (menus de référence +
+> contrôle avant chaque bloc, via `SEM_so101_camera_reference`). Un dataset
+> enregistré normalement contient donc ces références, et le script 9 les
+> **copie (2/2)**. Le cas « absente » correspond à un **dataset ancien
+> (legacy)** ou à des références retirées — ce n'est pas le cas attendu pour un
+> enregistrement récent.
 
 Comportement du script 9 selon la situation :
 
 | Situation | Statut rapporté | Conséquence |
 | :--- | :--- | :--- |
-| 2 références présentes | ✅ copiées (2/2) | Traçabilité complète |
-| 1 seule référence | ⚠️ partielle (1/2) | **Préparation refusée** (état incohérent, rejeté au déploiement) |
-| Aucune référence (cas actuel) | ⚠️ absente | Préparation poursuivie (mode LEGACY au déploiement) |
+| 2 références présentes (cas normal) | ✅ copiées (2/2) | Traçabilité complète |
+| 1 seule référence | ⚠️ partielle (1/2) | **Préparation refusée** (état incohérent, rejeté au déploiement par le script 11) |
+| Aucune référence locale | ⚠️ absente | Le script **prévient** et **demande [O/N]** ; si confirmé, dataset installé en mode LEGACY (déployable seulement en mode LEGACY) |
+| Sources locales présentes mais non copiées, ou module indisponible alors que des références locales existent | ❌ échec | **Préparation refusée** : corriger `SEM_so101_camera_reference.py` ou les fichiers de `~/lerobot/calibration/` |
 
-Si des références sont copiées, le `meta/` contient en plus les fichiers
-`camera_reference_cam_top.json`, `camera_reference_cam_follower.json` et, le cas
-échéant, le journal des écarts `camera_reference_log.jsonl`.
+Quand les références sont copiées, le `meta/` contient en plus
+`camera_reference_cam_top.json` et `camera_reference_cam_follower.json`, avec
+leurs images témoins `_raw.png` / `_masked.png`. Si des écarts 🟠 ont été
+confirmés pendant les contrôles caméra, le journal `camera_reference_log.jsonl`
+est également copié.
 
 
 ### 🔍 Étape 2 : Visualisation dans le navigateur
@@ -232,7 +239,7 @@ Pour arrêter le serveur : **Ctrl+C** dans le terminal.
 > préparation (option **[P]**).
 
 
-### ✅ Étape 3 : Validation du dataset
+### 🧪 Étape 3 : Validation du dataset
 
 Avant de passer à l'entraînement, vérifiez les points suivants.
 
@@ -266,6 +273,10 @@ Avant de passer à l'entraînement, vérifiez les points suivants.
 | Vidéos noires dans le navigateur | Vidéos encore en mp4v | Installer `ffmpeg` et relancer la préparation |
 | Le navigateur ne s'ouvre pas | Serveur lent à répondre | Ouvrir `http://127.0.0.1:9090` manuellement |
 | « Incohérences frames/parquet » | Vidéos/parquets désynchronisés | Réenregistrer les épisodes signalés, puis relancer |
+| Références caméra partielles (1/2) | Référence d'une seule caméra présente | Compléter la référence des deux caméras (Phase 7) ou retirer la partielle, puis relancer |
+| « Aucune référence caméra (0/2) » | Dataset legacy, ou références non créées en Phase 7 | Confirmer **[O/N]** pour un dataset LEGACY, ou créer les références (Phase 7) puis relancer |
+| « Référence caméra en échec » | Sources présentes mais non copiées, ou module cassé | Vérifier `SEM_so101_camera_reference.py` et `~/lerobot/calibration/`, puis relancer |
+| Module `SEM_so101_camera_reference.py` indisponible | Module absent du dossier des scripts | Placer le module dans le dossier des scripts |
 
 
 ### 📝 Récapitulatif des fichiers
@@ -289,7 +300,7 @@ python SEM_so101_9_dataset.py
 ```
 
 
-### ✅ Notes finales
+### 📝 Notes finales
 
 **✅ Phase 8 terminée quand :**
 
@@ -298,11 +309,9 @@ python SEM_so101_9_dataset.py
   `episodes.jsonl`, `episodes_stats.jsonl`)
 - Les vidéos sont converties en H.264
 - La vérification frames ↔ parquet est passée
+- Les références caméra sont copiées dans le `meta/`, ou le mode LEGACY a été explicitement confirmé
 - La visualisation dans le navigateur fonctionne et les données sont cohérentes
 
 > **🚀 Objectif atteint :** Votre dataset est préparé, vérifié et prêt pour
 > l'entraînement du modèle ACT ! Passez à la Phase 9 pour entraîner le robot à
 > reproduire vos gestes de manière autonome.
-
-Service Écoles-Médias — DIP Genève
-Guide Phase 8 — Version 2.0 (préparation complète par le script 9 ; ex-scripts 9+10 fusionnés)
