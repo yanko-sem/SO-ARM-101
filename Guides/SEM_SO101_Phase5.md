@@ -2,9 +2,14 @@
 
 ## Phase 5 : Téléopération Leader-Follower
 
-Service Écoles-Médias (SEM) — DIP Genève
+Service Écoles-Médias (SEM)
 
-### ✅ Prérequis
+### 🧩 Scripts utilisés
+
+- `SEM_so101_5_config_teleoperation.py` — configuration des modes COPIE/MIROIR par servo, identification guidée Leader/Follower et sauvegarde des fichiers de téléopération.
+- `SEM_so101_6_teleoperation.py` — téléopération temps réel Leader → Follower, chargement de la configuration, bascule de mode et sortie sécurisée.
+
+### 📋 Prérequis
 
 - Phase 1 complétée (LeRobot et `dynamixel-sdk` installés)
 - Phase 2 complétée (Servos configurés avec IDs 1-6)
@@ -12,8 +17,6 @@ Service Écoles-Médias (SEM) — DIP Genève
 - Phase 4 complétée (Tests de contrôle validés)
 - Scripts SEM installés depuis GitHub
 - Environnement lerobot activé
-
-> **Note :** Cette phase utilise deux scripts : `SEM_so101_5_config_teleoperation.py` (configuration COPIE/MIROIR par servo) puis `SEM_so101_6_teleoperation.py` (téléopération temps réel).
 
 
 ### 🎯 Objectif de la téléopération
@@ -218,7 +221,7 @@ Le script exécute dans l'ordre :
 
 1. Centrage parallèle des deux robots (mouvement fluide)
 2. Position repos parallèle (position de repos définie en Phase 3)
-3. Compte à rebours de 3 secondes pour prendre le Leader en main
+3. Pause de 3 secondes pour prendre le Leader en main
 
 > **Note :** La position repos utilisée ici (et lors de la séquence de fin) est celle définie en Phase 3 (`repos_position.json`), avec repli **annoncé** sur une valeur par défaut si le fichier manque **ou est invalide**.
 
@@ -332,8 +335,7 @@ Dans les deux cas, une fois les servos libérés, les bras **ne sont plus mainte
 2. **Ports USB :** Utilisez des ports USB directs sur la carte mère, évitez les hubs
 3. **Alimentations :** Vérifiez que les deux alimentations sont stables
 4. **Mouvements doux :** Commencez par des mouvements lents pour tester
-5. **Sortie de sécurité :** Quittez avec `Q` (retour repos puis libération). En cas de besoin d'arrêt rapide, `CTRL+C` libère immédiatement, **sans** retour repos.
-6. **Pause régulière :** Faites des pauses toutes les 10 minutes pour éviter la surchauffe
+5. **Pause régulière :** Faites des pauses toutes les 10 minutes pour éviter la surchauffe
 
 
 ### 📝 Comprendre les fichiers de configuration
@@ -365,7 +367,7 @@ python SEM_so101_6_teleoperation.py
 - `CTRL+C` — Libération immédiate, sans retour repos
 
 
-### ✅ Notes finales
+### 📝 Notes finales
 
 **✅ Phase 5 terminée quand :**
 
@@ -378,6 +380,3 @@ python SEM_so101_6_teleoperation.py
 - Vous maîtrisez la sortie normale (`Q`, retour repos) et l'interruption immédiate (`CTRL+C`, sans repos)
 
 > **🚀 Objectif atteint :** Votre système de téléopération est maintenant opérationnel ! Les robots peuvent travailler ensemble pour l'enregistrement de trajectoires et l'apprentissage par imitation qui seront couverts dans les phases suivantes.
-
-Service Écoles-Médias — DIP Genève
-Guide Phase 5 — Version 2.1
