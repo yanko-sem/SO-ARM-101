@@ -12,7 +12,7 @@ Service Écoles-Médias (SEM)
 
 - Phases 1 à 8 complétées
 - Dataset consolidé et validé : ≥ 50 épisodes recommandé pour un entraînement complet ; un dataset réduit est possible pour un test technique
-- GPU NVIDIA avec au moins 8 Go de VRAM
+- GPU NVIDIA fortement recommandé (≥ 8 Go de VRAM) — l'entraînement est possible sur CPU, mais beaucoup plus lent
 - Environnement lerobot activé
 
 
@@ -64,7 +64,7 @@ L'entraînement permet de :
 | RAM | 32 Go | Mémoire système |
 | Stockage | ≥ 5 Go libres | Checkpoints et logs |
 
-> **💡 Note :** L'entraînement nécessite un GPU NVIDIA. Sans GPU, l'entraînement serait des dizaines de fois plus lent et n'est pas recommandé.
+> **💡 Note :** Un **GPU NVIDIA est fortement recommandé**. Sans GPU, le script bascule automatiquement sur le **CPU** : l'entraînement reste possible mais **beaucoup plus lent** (les durées des profils sont des estimations sur GPU).
 
 
 ### 🚀 Étape 1 : Lancement de l'entraînement (Script 10)
@@ -92,9 +92,13 @@ Le script vérifie automatiquement :
   ✅ Espace disque : 111 Go disponibles
 ```
 
+> **Sans GPU** : à la place de la ligne « ✅ GPU », un avertissement s'affiche
+> (« Pas de GPU CUDA détecté — l'entraînement utilisera le CPU… ») et
+> l'entraînement se poursuit sur CPU.
+
 **Choix du profil d'entraînement**
 
-Quatre profils sont proposés, adaptés au GPU Quadro RTX 4000 :
+Quatre profils sont proposés. Les durées indiquées sont des **estimations sur le GPU de référence** (Quadro RTX 4000) ; sur CPU, elles sont **bien plus longues** :
 
 | Profil | Steps | Batch size | Durée estimée | Usage |
 | :--- | :--- | :--- | :--- | :--- |
@@ -234,7 +238,7 @@ Les checkpoints sont stockés dans :
 
 | Problème | Cause possible | Solution |
 | :--- | :--- | :--- |
-| "CUDA non disponible" | Driver NVIDIA non chargé | `nvidia-smi`, réinstaller le driver si nécessaire |
+| « Pas de GPU CUDA détecté » (avertissement, non bloquant) | Pas de GPU, ou driver non chargé | L'entraînement continue sur CPU ; pour utiliser le GPU, vérifier le driver (`nvidia-smi`) |
 | "CUDA out of memory" | VRAM insuffisante | Fermer les applications lourdes (Chrome, etc.) |
 | "Dataset introuvable" | Script 9 non exécuté | Lancer d'abord le script 9 |
 | "episodes_stats.jsonl manquant" | Script 9 non exécuté ou préparation incomplète | Relancer la Phase 8 : `python SEM_so101_9_dataset.py` |
@@ -279,6 +283,6 @@ ls ~/lerobot/outputs/train/act_so101_pick_place/checkpoints/
 - L'entraînement Standard (100k steps) est complété
 - La loss finale est inférieure à 1.0
 - Les checkpoints sont sauvegardés dans le dossier de sortie
-- Le GPU a fonctionné à > 90% d'utilisation pendant l'entraînement
+- Sur GPU : utilisation restée élevée (> 90%) pendant l'entraînement (critère non applicable en mode CPU)
 
 > **🚀 Objectif atteint :** Votre modèle ACT est entraîné ! Il a appris à associer les images des caméras aux mouvements des moteurs. Passez à la Phase 10 pour déployer le modèle et voir votre robot agir de manière autonome.
