@@ -88,7 +88,7 @@ try:
     from SEM_so101_camera_config import verrouiller_camera
     CAMERA_LOCK_AVAILABLE = True
     CAMERA_LOCK_IMPORT_ERROR = None
-except Exception:
+except Exception as _e_config_canonique:
     try:
         from SEM_so101_8_camera_config import verrouiller_camera
         CAMERA_LOCK_AVAILABLE = True
@@ -101,7 +101,7 @@ except Exception:
         except Exception as e:
             verrouiller_camera = None
             CAMERA_LOCK_AVAILABLE = False
-            CAMERA_LOCK_IMPORT_ERROR = e
+            CAMERA_LOCK_IMPORT_ERROR = _e_config_canonique
 
 # Module de référence visuelle (étape 6) : contrôle des deux caméras au
 # démarrage du déploiement, CONTRE les références copiées dans le meta/ du
