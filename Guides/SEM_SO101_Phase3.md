@@ -4,6 +4,11 @@
 
 Service Écoles-Médias (SEM)
 
+### 🧩 Scripts utilisés
+
+- `SEM_so101_2_calibrate.py` — calibration des limites MIN/MAX de chaque servo (un fichier de calibration par bras).
+- `SEM_so101_3_monitor.py` — monitoring temps réel des positions et définition de la position de repos partagée.
+
 ### 📋 Prérequis
 
 - Phase 1 complétée (LeRobot et `dynamixel-sdk` installés)
@@ -11,8 +16,6 @@ Service Écoles-Médias (SEM)
 - Bras monté mécaniquement
 - Scripts SEM installés depuis GitHub
 - Environnement lerobot activé
-
-> **Note :** Cette phase utilise deux scripts : `SEM_so101_2_calibrate.py` (calibration des limites min/max des servos) et `SEM_so101_3_monitor.py` (monitoring temps réel et définition de la position de repos).
 
 
 ### 🎯 Objectif de la calibration
@@ -36,8 +39,8 @@ La calibration permet de :
 conda activate lerobot
 # Se placer dans le dossier des scripts
 cd ~/lerobot/Scripts_SEM/scripts
-# Vérifier que le script est présent
-ls SEM_so101_2_calibrate.py
+# Vérifier que les deux scripts de la phase sont présents
+ls SEM_so101_2_calibrate.py SEM_so101_3_monitor.py
 ```
 
 **Vérification du matériel**
@@ -332,7 +335,6 @@ Les calibrations sont stockées dans :
 2. **Testez les limites :** Utilisez le script de contrôle (Phase 4) pour vérifier que les limites sont bien respectées
 3. **Soyez doux :** Ne forcez jamais les servos contre les butées
 4. **Amplitude normale :** Entre 1500 et 3500 pour la plupart des servos
-5. **Sauvegarde automatique :** Pas besoin de sauvegarder manuellement, c'est fait après chaque servo validé
 
 
 ### 🚀 Commandes de référence
@@ -341,14 +343,24 @@ Les calibrations sont stockées dans :
 # Les scripts sont installés en Phase 1 (dépôt SEM cloné dans ~/lerobot/Scripts_SEM)
 conda activate lerobot
 cd ~/lerobot/Scripts_SEM/scripts
+
+# Calibration des limites MIN/MAX (un fichier par bras)
 python SEM_so101_2_calibrate.py
+
+# Monitoring temps réel + définition de la position de repos
+python SEM_so101_3_monitor.py
 ```
 
-**Options du menu :**
+**Options du menu (calibration, script 2) :**
 - `T` — Calibrer tous les servos
 - `V` — Voir la calibration actuelle
 - `1-6` — Calibrer un servo spécifique
 - `Q` — Quitter (libère les servos et ferme le port)
+
+**Touches (monitoring/repos, script 3) :**
+- `C` — Capturer la position de repos (position physique actuelle)
+- `M` — Saisie manuelle des 6 valeurs (ticks)
+- `Ctrl+C` — Quitter (libère les servos et ferme le port)
 
 
 ### 📝 Notes finales
@@ -360,4 +372,4 @@ python SEM_so101_2_calibrate.py
 - Les amplitudes sont cohérentes (ni trop faibles, ni excessives)
 - Le centrage automatique fonctionne pour tous les servos
 
-> **🎯 Objectif atteint :** Votre robot est maintenant calibré, sa position de repos peut être définie, et il est prêt pour les tests de contrôle (Phase 4) puis la téléopération. Les scripts de contrôle et d'entraînement utiliseront automatiquement ces valeurs de calibration pour protéger votre matériel.
+> **🎯 Objectif atteint :** Votre robot est maintenant calibré, sa position de repos peut être définie, et il est prêt pour les tests de contrôle (Phase 4) puis la téléopération. Les scripts de contrôle, téléopération, enregistrement et déploiement utiliseront automatiquement ces valeurs de calibration pour protéger votre matériel.
