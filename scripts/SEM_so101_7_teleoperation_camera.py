@@ -47,7 +47,7 @@ MIN_AMPLITUDE = 500
 # Fichier externe centralisant la position repos (partage entre tous les scripts)
 REPOS_FILE = os.path.expanduser("~/lerobot/calibration/repos_position.json")
 
-# Masque de zone utile (polygone 5 points du plateau), partage avec les scripts 8 et 12
+# Masque de zone utile (polygone 5 points du plateau), partage avec les scripts d'enregistrement et de déploiement
 MASK_FILE = os.path.expanduser("~/lerobot/calibration/camera_mask.json")
 
 def clear_screen():
@@ -288,7 +288,7 @@ def aller_a_position_2robots(lk, lp, fk, fp, cl, cf, cibles_pct, duree=2.0):
 
     Phase 0 (par robot) : si servo 4 > 2700 et robot pas en repos, lever le bras
     (servo 2 -> min(actuel, 1027)) pour dégager la pince du sol. La levée se fait
-    EN PARALLÈLE sur les deux robots (cohérent avec les scripts 8/12). 2700 et 1027
+    EN PARALLÈLE sur les deux robots (cohérent avec les scripts d'enregistrement et de déploiement). 2700 et 1027
     sont des réglages empiriques de l'installation, identiques aux scripts 4 et 5."""
     # Activer tous les servos
     for i in range(1, 7):
