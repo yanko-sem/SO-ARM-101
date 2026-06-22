@@ -36,7 +36,7 @@ Developed by the **Service Écoles-Médias (SEM)**, part of Geneva's **Departmen
 - 🛠️ **DIY and turnkey**: from software setup to autonomous deployment.
 - 🤖 **Hands-on AI**: imitation learning, dataset, training, and inference on a real robot.
 - 📷 **Two cameras**: a global view plus a gripper-mounted camera view.
-- 🔁 **Reproducible**: scripts, guides, calibration, masks, camera settings, and checkpoints.
+- 🔁 **Reproducible**: scripts, guides, calibration, masks, **camera visual references**, and checkpoints.
 - 🚀 **Modern**: built on LeRobot, PyTorch, the Dynamixel SDK, and ACT.
 
 ---
@@ -105,7 +105,7 @@ The reference task is deliberately simple and educational: **pick up a hexagonal
 - 12× Feetech STS3215 servos
 - 2× USB cameras (`cam_top` + `cam_follower`)
 - 1× PC running Ubuntu 22.04 or 24.04
-- (Optional) NVIDIA GPU to accelerate training
+- NVIDIA GPU strongly recommended for training (≥ 8 GB VRAM) — CPU possible but much slower
 
 ### Servo Configuration
 
@@ -146,9 +146,8 @@ python SEM_so101_8_record_dataset.py
 
 # Consolidate, verify, train, deploy
 python SEM_so101_9_dataset.py
-python SEM_so101_10_visualize_dataset.py
-python SEM_so101_11_train.py
-python SEM_so101_12_deploy.py
+python SEM_so101_10_train.py
+python SEM_so101_11_deploy.py
 ```
 
 For a complete and safe installation, follow the detailed guides in the `Guides/` folder.
@@ -157,7 +156,7 @@ For a complete and safe installation, follow the detailed guides in the `Guides/
 
 ## 📚 Phase-by-Phase Usage Guide
 
-> **Note:** the educational phases sometimes group several scripts. Phase numbers therefore do not always match the Python file numbers (for example, Phase 8 uses scripts 9 and 10).
+> **Note:** the educational phases sometimes group several scripts. Phase numbers therefore do not always match the Python file numbers (for example, Phase 5 uses scripts 5 and 6).
 
 ### Phase 1: LeRobot Installation
 
@@ -228,18 +227,18 @@ python SEM_so101_8_record_dataset.py
 # Task: Pick up a hexagonal prism (labeled "cube" in the dataset) and place it in a box
 # 5 positions × 10 episodes = 50 demonstrations
 # Output format: LeRobotDataset v2.1
-# Camera settings are captured and locked to ensure training/deployment consistency
+# Visual reference for both cameras: reference menus at startup (global then
+# gripper) and a conformity check before each block, to ensure the dataset's
+# visual consistency (and consistency with deployment)
 ```
 
 ### Phase 8: Consolidation and Visualization
 
 ```bash
-# Script 9 — merge the 5 positions into a unified dataset
-python SEM_so101_9_dataset.py
-
-# Script 10 — verify the dataset, generate statistics,
+# Script 9 — merge the 5 positions into a unified dataset,
+# verify the dataset, generate statistics,
 # convert the videos to H.264, and visualize in the browser
-python SEM_so101_10_visualize_dataset.py
+python SEM_so101_9_dataset.py
 
 # Consolidated and verified dataset, ready for training
 ```
@@ -248,21 +247,22 @@ python SEM_so101_10_visualize_dataset.py
 
 ```bash
 # Launch training
-python SEM_so101_11_train.py
+python SEM_so101_10_train.py
 
 # The script uses the consolidated dataset
 # Training can be resumed from an existing checkpoint
-# CPU training is possible; an NVIDIA GPU is recommended
+# NVIDIA GPU strongly recommended (≥ 8 GB VRAM); CPU possible but much slower
 ```
 
 ### Phase 10: Autonomous Deployment
 
 ```bash
 # Deploy the trained ACT model
-python SEM_so101_12_deploy.py
+python SEM_so101_11_deploy.py
 
 # The Follower acts autonomously from the two cameras
-# The mask and camera settings are reapplied to stay consistent with the dataset
+# Mask reapplied + check of both cameras against the training dataset's
+# references (guided recalibration if the lighting has drifted)
 # Controls: P = pause, R = return to rest + stop model, Enter = restart, Q = quit
 ```
 
@@ -289,10 +289,10 @@ python SEM_so101_12_deploy.py
 ├── README.md
 └── scripts
     ├── __pycache__
-    ├── SEM_8_camera_config.py
-    ├── SEM_so101_10_visualize_dataset.py
-    ├── SEM_so101_11_train.py
-    ├── SEM_so101_12_deploy.py
+    ├── SEM_so101_camera_config.py
+    ├── SEM_so101_camera_reference.py
+    ├── SEM_so101_10_train.py
+    ├── SEM_so101_11_deploy.py
     ├── SEM_so101_1_configure.py
     ├── SEM_so101_2_calibrate.py
     ├── SEM_so101_3_monitor.py
@@ -305,7 +305,7 @@ python SEM_so101_12_deploy.py
     └── Version_26_05_26
 ```
 
-**Note:** The `~/lerobot/calibration/` folder is created automatically by the scripts. It notably contains `leader_calibration.json`, `follower_calibration.json`, `repos_position.json`, `camera_mask.json`, and `camera_settings.json`.
+**Note:** The `~/lerobot/calibration/` folder is created automatically by the scripts. It notably contains `leader_calibration.json`, `follower_calibration.json`, `repos_position.json`, `camera_mask.json`, `camera_settings.json`, and the **camera visual references** (`camera_reference_cam_top.json`, `camera_reference_cam_follower.json`, and their associated files).
 
 ---
 
@@ -317,6 +317,7 @@ The SEM scripts include several safeguards:
 
 - strict consistency between recording and deployment;
 - a shared mask for the global camera;
+- **per-camera visual reference with quantitative conformity scoring**: conformity check before each recording block and at deployment (image consistent with the dataset, guided recalibration if needed);
 - exposure / white-balance / gain locking;
 - verification of both camera streams;
 - monitoring of serial reads and writes during recording;
@@ -369,6 +370,7 @@ The SEM scripts include several safeguards:
 - Gripper camera: `cam_follower`
 - Locked settings: exposure, white balance, gain
 - Working-area mask applied to the global camera
+- Per-camera visual reference with quantitative conformity scoring (recording ↔ deployment conformity check, `SEM_so101_camera_reference.py` module)
 
 ---
 
@@ -435,4 +437,4 @@ This work is licensed under the Creative Commons Attribution-NonCommercial-Share
   Service Écoles-Médias (SEM) — Department of Public Instruction (DIP), Geneva
 </p>
 
-**Last updated: 4 June 2026**
+**Last updated: 22 June 2026**
