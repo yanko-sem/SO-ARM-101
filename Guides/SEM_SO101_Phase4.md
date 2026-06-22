@@ -4,6 +4,10 @@
 
 Service Écoles-Médias (SEM)
 
+### 🧩 Scripts utilisés
+
+`SEM_so101_4_control.py` — contrôle manuel et tests des servos : pilotage clavier, positions prédéfinies, limites de calibration et arrêt d'urgence.
+
 ### 📋 Prérequis
 
 - Phase 1 complétée (LeRobot et `dynamixel-sdk` installés)
@@ -11,8 +15,6 @@ Service Écoles-Médias (SEM)
 - Phase 3 complétée (calibration **complète et valide** — obligatoire au démarrage)
 - Scripts SEM installés depuis GitHub
 - Environnement lerobot activé
-
-> **Note :** Cette phase utilise le script `SEM_so101_4_control.py` (contrôle manuel et tests des servos).
 
 
 ### 🎯 Objectif des tests
@@ -71,7 +73,7 @@ Contrôler [L]eader ou [F]ollower?
 Choix [L/F]: _
 ```
 
-Tapez `L` ou `F` puis Entrée. Le choix est **explicite** : une entrée vide ou invalide est refusée et redemandée. Le script **refuse de démarrer** si la calibration est absente, incomplète ou invalide, ou si plusieurs robots sont détectés.
+Tapez `L` ou `F` puis Entrée. Le choix est **explicite** : une entrée vide ou invalide est refusée et redemandée. Si un prérequis critique manque, le script s'arrête avec un message clair.
 
 Avant tout mouvement, le script **avertit et demande confirmation** :
 
