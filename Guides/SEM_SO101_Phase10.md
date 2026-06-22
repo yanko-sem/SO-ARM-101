@@ -2,9 +2,15 @@
 
 ## Phase 10 : Déploiement du modèle ACT (inférence autonome)
 
-Service Écoles-Médias (SEM) — DIP Genève
+Service Écoles-Médias (SEM)
 
-### ✅ Prérequis
+### 🧩 Scripts utilisés
+
+- `SEM_so101_11_deploy.py` — déploiement autonome du modèle ACT : sélection du checkpoint, chargement du modèle, contrôle du Follower, lecture des deux caméras, inférence et sécurité.
+- `SEM_so101_camera_config.py` — verrouillage matériel des réglages caméra, pour conserver exposition, balance des blancs et gain cohérents avec l'enregistrement.
+- `SEM_so101_camera_reference.py` — contrôle des deux caméras contre les références visuelles du dataset d'entraînement, avec recalibrage guidé si nécessaire.
+
+### 📋 Prérequis
 
 - Phases 1 à 9 complétées
 - Un modèle ACT entraîné (checkpoint dans `~/lerobot/outputs/train/act_so101_pick_place/checkpoints/`)
@@ -13,7 +19,7 @@ Service Écoles-Médias (SEM) — DIP Genève
 - Fichiers de calibration présents : `camera_mask.json` (**obligatoire** —
   le déploiement s'arrête sans lui), `camera_settings.json`, `repos_position.json`
 - Modules dans le même dossier que le script (obligatoires) :
-  `SEM_so101_8_camera_config.py` (repli `SEM_8_camera_config.py`) et
+  `SEM_so101_camera_config.py` (réglage/verrouillage des caméras) et
   `SEM_so101_camera_reference.py` (contrôle des deux caméras)
 - Environnement lerobot activé, GPU NVIDIA
 
@@ -54,31 +60,38 @@ Deux points sont **critiques pour la cohérence entraînement ↔ déploiement**
 ```bash
 conda activate lerobot
 cd ~/lerobot/Scripts_SEM/scripts
-python SEM_so101_12_deploy.py
+python SEM_so101_11_deploy.py
 ```
 
 > **🔑 Ordre du démarrage (important).** Comme à l'enregistrement, la vue de
 > la caméra **pince** dépend de la position du bras. Le bras Follower est
 > donc **mis au repos AVANT** la préparation des caméras, et y reste maintenu
-> pendant le contrôle. Déroulé : **checkpoint → références du dataset →
-> masque → Follower au repos → caméras → contrôle des deux caméras →
-> inférence.**
+> pendant le contrôle. Déroulé : **checkpoint → modules caméra → chargement du
+> modèle → références du dataset → masque → Follower au repos →
+> identification caméras → contrôle des deux caméras →
+> connexion/verrouillage caméras → inférence.**
 
 Le script enchaîne :
 
 1. **Sélection du checkpoint** — la liste s'affiche ; `[Entrée]` utilise le
    dernier (`last`, recommandé), ou tapez un numéro.
-2. **Références du dataset** — le script remonte du checkpoint au dataset qui
+2. **Vérification des modules caméra** — les modules
+   `SEM_so101_camera_config` et `SEM_so101_camera_reference` sont
+   obligatoires ; le script s'arrête si l'un manque.
+3. **Chargement du modèle ACT** — le checkpoint sélectionné est chargé en
+   mémoire sur le GPU.
+4. **Références du dataset** — le script remonte du checkpoint au dataset qui
    a servi à l'entraînement et y cherche les références caméra (voir l'encadré
    « mode LEGACY » ci-dessous).
-3. **Masque de la Globale** — chargé depuis `camera_mask.json`. **Absent →
+5. **Masque de la Globale** — chargé depuis `camera_mask.json`. **Absent →
    le script s'arrête** (lancer le script 7 pour le créer).
-4. **Connexion du bras Follower** — « Branchez le bras FOLLOWER », puis
-   `[Entrée]` (le Leader reste débranché). Le bras est mis **au repos** et y
-   reste maintenu pendant tout le contrôle caméra.
-5. **Identification des caméras** — pour chaque caméra affichée, tapez **G**
-   (Globale) ou **P** (Pince) (**Q** pour annuler). Les deux sont requises.
-6. **Contrôle des deux caméras** (voir Étape 1 bis).
+6. **Connexion du bras Follower et mise au repos** — « Branchez le bras
+   FOLLOWER », puis `[Entrée]` (le Leader reste débranché). Le bras est mis
+   **au repos** et y reste maintenu pendant tout le contrôle caméra.
+7. **Identification des caméras** — pour chaque caméra affichée, tapez **G**
+   (Globale), **P** (Pince) ou **Q** pour passer cette caméra. Les deux
+   caméras doivent être identifiées ; sinon le déploiement s'arrête.
+8. **Contrôle des deux caméras** (voir Étape 1 bis).
 
 > **📂 Mode LEGACY (datasets anciens).** Si le dataset du modèle ne contient
 > pas de références caméra (modèle entraîné avant le système de référence
@@ -154,7 +167,7 @@ Appuyez sur `[Entrée]` pour démarrer. Une fenêtre affiche les deux caméras (
 
 Deux façons d'arrêter, au comportement **volontairement différent** :
 
-- **Q (arrêt normal)** : le bras **revient au repos**, puis le script affiche « Tenez le bras — désactivation du couple dans 3 secondes » avant de couper le couple. **Tenez le bras** pendant ce compte à rebours.
+- **Q (arrêt normal)** : le bras **revient au repos**, puis le script affiche « Tenez le bras — désactivation du couple dans 3 secondes » avant de couper le couple. **Tenez le bras** pendant ce délai de 3 secondes.
 - **CTRL+C (arrêt d'urgence)** : le couple est coupé **immédiatement**, **sans** retour au repos (le bras peut être en butée ou coincé). À utiliser si le robot fait un mouvement dangereux.
 
 > **⚠️ Sécurité :** Une fois le couple coupé, le bras retombe sous son propre poids. Soyez prêt à le retenir, surtout lors d'un arrêt d'urgence.
@@ -176,9 +189,9 @@ Si le comportement est mauvais :
 
 | Problème | Cause possible | Solution |
 | :--- | :--- | :--- |
-| Dossier de checkpoints introuvable | Entraînement non fait | Lancer le script 11 (Phase 9) |
+| Dossier de checkpoints introuvable | Entraînement non fait | Lancer le script 10 (Phase 9) |
 | Résolution caméra incorrecte | Caméra ≠ 640×360 | La résolution doit être identique à l'entraînement (640×360) |
-| Module caméra indisponible | `SEM_so101_8_camera_config.py` ou `SEM_so101_camera_reference.py` absent | Le placer dans le dossier des scripts (obligatoire) |
+| Module caméra indisponible | `SEM_so101_camera_config.py` ou `SEM_so101_camera_reference.py` absent | Le placer dans le dossier des scripts (obligatoire) |
 | Verrouillage caméra incomplet | v4l2 / caméra | Le script s'arrête (fail-closed) ; vérifier les caméras puis relancer |
 | Aucun port USB détecté | Branchement / permissions | Vérifier le câble et le groupe `dialout` |
 | « Masque globale introuvable » → arrêt | `camera_mask.json` manquant | Le créer (script 7, Phase 6) ; il est obligatoire au déploiement |
@@ -204,14 +217,14 @@ Si le comportement est mauvais :
 # Lancer le déploiement
 conda activate lerobot
 cd ~/lerobot/Scripts_SEM/scripts
-python SEM_so101_12_deploy.py
+python SEM_so101_11_deploy.py
 ```
 
 | Action | Touche |
 | :--- | :--- |
 | Choisir le checkpoint | numéro ou Entrée (dernier) |
 | Mode LEGACY (dataset ancien) | L (références locales) / Q |
-| Identifier les caméras | G (Globale) / P (Pince) |
+| Identifier les caméras | G (Globale) / P (Pince) / Q (passer) |
 | Recalibrer une caméra (🟠/🔴) | R (guidé jusqu'au 🟢) |
 | Pause / Reprendre | P |
 | Fin d'essai (retour repos) | R |
@@ -220,7 +233,7 @@ python SEM_so101_12_deploy.py
 | Arrêt d'urgence | CTRL+C |
 
 
-### ✅ Notes finales
+### 📝 Notes finales
 
 **✅ Phase 10 terminée quand :**
 
@@ -230,6 +243,3 @@ python SEM_so101_12_deploy.py
 - Vous pouvez enchaîner plusieurs essais (R / Entrée)
 
 > **🎉 Pipeline complet :** De la configuration matérielle (Phase 1) au robot autonome (Phase 10), votre chaîne d'apprentissage par imitation est opérationnelle. Le robot reproduit vos démonstrations sans opérateur.
-
-Service Écoles-Médias — DIP Genève
-Guide Phase 10 — Version 1.2 (déploiement bi-caméra + contrôle vs dataset)
