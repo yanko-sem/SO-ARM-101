@@ -229,16 +229,18 @@ def calibrer_servo(packetHandler, portHandler, servo_id, servo_name):
 
     # Réactiver le couple pour le recentrage. Si l'activation echoue, on NE jette PAS
     # la calibration (MIN/MAX sont valides) : on saute le recentrage en avertissant.
+    # Fail-closed : le servo n'est MAINTENU bloqué au centre que si le recentrage est
+    # CONFIRMÉ (facilite la suite). Sinon il est libéré — jamais bloqué dans une pose
+    # non maîtrisée, jamais d'annonce "au centre" trompeuse. Libération de tous les
+    # servos garantie à la sortie (bloc finally).
     if ecrire_1byte(packetHandler, portHandler, servo_id, 40, 1, "activation couple"):
         if centrage_doux(packetHandler, portHandler, servo_id, pos_min, pos_max):
-            print(f"✅ Servo {servo_id} centré")
+            print(f"🔒 Servo {servo_id} centré et maintenu bloqué (facilite la suite)")
         else:
-            print(f"⚠️ Servo {servo_id} : recentrage non confirmé (commande non acquittée)")
+            print(f"⚠️ Servo {servo_id} : recentrage non confirmé — servo libéré")
+            ecrire_1byte(packetHandler, portHandler, servo_id, 40, 0, "libération couple")
     else:
         print(f"⚠️ Servo {servo_id} : couple non réactivé, recentrage ignoré (calibration conservée)")
-
-    # Désactiver le servo
-    ecrire_1byte(packetHandler, portHandler, servo_id, 40, 0, "libération couple")
 
     return {
         "min": pos_min,
