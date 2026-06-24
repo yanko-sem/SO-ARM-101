@@ -49,6 +49,11 @@ SERVO_NAMES = {
 # calibration imparfaite presente sur disque.
 MIN_AMPLITUDE = 500
 
+# Marge de tolérance (en % de l'amplitude calibrée) pour accepter une position
+# de repos légèrement hors limites lors de la capture (touche C). Le pourcentage
+# enregistré reste borné à [0, 100] par ticks_vers_pct.
+MARGE_REPOS_PCT = 2.0
+
 def detect_port():
     """Détection du port du robot (fail-closed).
 
@@ -168,13 +173,16 @@ def ticks_vers_pct(positions, calibration):
     return repos_pct
 
 def verifier_limites(positions, calibration):
-    """Vérifie que chaque position est dans [min, max]. Retourne dict {servo: bool}."""
+    """Vérifie que chaque position est dans [min, max], avec une marge de tolérance
+    de MARGE_REPOS_PCT % de l'amplitude calibrée (pour accepter un léger dépassement
+    à la capture). Retourne dict {servo: bool}."""
     result = {}
     for i in range(1, 7):
         if calibration and f"servo_{i}" in calibration:
             min_v = calibration[f"servo_{i}"]['min']
             max_v = calibration[f"servo_{i}"]['max']
-            result[i] = (min_v <= positions[i] <= max_v)
+            marge = (max_v - min_v) * MARGE_REPOS_PCT / 100.0
+            result[i] = (min_v - marge <= positions[i] <= max_v + marge)
         else:
             result[i] = True
     return result
@@ -198,17 +206,14 @@ def capturer_repos_mode_A(packetHandler, portHandler, calibration, robot_type):
     print("="*60)
     print(f"\nRobot monitoré : {robot_type.upper()}")
 
-    # Verrou 1 : pas d'enregistrement de repos sans calibration complete et valide
+    # Verrou 1 : pas d'enregistrement de repos sans calibration complète et valide
     if not calibration_complete(calibration):
         print("\n❌ Calibration absente ou incomplète — impossible d'enregistrer un repos.")
         print("   Calibrez d'abord les 6 servos (Phase 3, script 2), puis recommencez.")
         input("\nAppuyez sur Entrée pour revenir au monitoring...")
         return
 
-    if robot_type != 'follower':
-        print("⚠️  Recommandation : capturer depuis le FOLLOWER (référence du déploiement).")
-
-    # Verrou 2 : toute lecture echouee annule la capture (ne JAMAIS remplacer par 0,
+    # Verrou 2 : toute lecture échouée annule la capture (ne JAMAIS remplacer par 0,
     # cela corromprait le repos central).
     positions = {}
     for i in range(1, 7):
@@ -228,82 +233,82 @@ def capturer_repos_mode_A(packetHandler, portHandler, calibration, robot_type):
     limites = verifier_limites(positions, calibration)
     afficher_recap_repos(positions, repos_pct, limites)
 
-    # Verrou 3 : un repos doit rester DANS les limites de calibration
+    # Verrou 3 : un repos doit rester DANS les limites de calibration (marge incluse)
     if not all(limites.values()):
-        print("\n❌ Une ou plusieurs positions sont HORS des limites de calibration.")
+        print("\n❌ Une ou plusieurs positions sont HORS des limites de calibration (marge incluse).")
         print("   Un repos doit rester dans la plage calibrée. Repositionnez le bras, puis recommencez.")
         input("\nAppuyez sur Entrée pour revenir au monitoring...")
         return
-
-    # Verrou 4 : confirmation renforcee si on n'est pas sur le Follower
-    if robot_type != 'follower':
-        print("\n⚠️  Vous n'êtes PAS sur le FOLLOWER.")
-        print("    La position de repos de référence devrait être capturée depuis le FOLLOWER.")
-        print("→ Tapez OUI (en toutes lettres) pour enregistrer malgré tout : ", end="", flush=True)
-        if input().strip().upper() != 'OUI':
-            print("\n❌ Annulé, aucune modification.")
-            input("\nAppuyez sur Entrée pour revenir au monitoring...")
-            return
 
     print("\n→ Enregistrer cette position comme repos ? [O/N] : ", end="", flush=True)
     confirm = input().strip().upper()
     if confirm == 'O':
         sauvegarder_repos(repos_pct)
-        print(f"\n✅ Position repos enregistrée dans :\n   {REPOS_FILE}")
+        print(f"\n✅ Position repos (référence Follower) enregistrée dans :\n   {REPOS_FILE}")
     else:
         print("\n❌ Annulé, aucune modification.")
     input("\nAppuyez sur Entrée pour revenir au monitoring...")
 
-def saisir_repos_mode_B(calibration, robot_type):
-    """Mode B : saisie manuelle des 6 valeurs (ticks bruts) comme position repos."""
+def saisir_repos_mode_B(calibration, robot_type, positions):
+    """Mode B : saisie manuelle des 6 valeurs (ticks bruts) comme position repos.
+
+    Affiche une table de référence (dernières positions monitorées + limites) pour
+    garder les repères sous les yeux pendant la saisie.
+    """
     clear_screen()
     print("="*60)
     print("⌨️  CAPTURE POSITION REPOS — touche M (saisie manuelle des ticks)")
     print("="*60)
     print(f"\nCalibration utilisée : {robot_type.upper()}")
 
-    # Verrou : pas d'enregistrement de repos sans calibration complete et valide
+    # Verrou : pas d'enregistrement de repos sans calibration complète et valide
     if not calibration_complete(calibration):
         print("\n❌ Calibration absente ou incomplète — impossible d'enregistrer un repos.")
         print("   Calibrez d'abord les 6 servos (Phase 3, script 2), puis recommencez.")
         input("\nAppuyez sur Entrée pour revenir au monitoring...")
         return
 
-    positions = {}
+    # Table de référence : dernières positions monitorées + limites (évite de devoir
+    # mémoriser le tableau de monitoring, effacé en entrant dans ce mode).
+    ref_pct = ticks_vers_pct(positions, calibration)
+    print("\n📋 Référence — dernières positions monitorées :")
+    print("┌───────────┬───────┬───────┬───────┬───────┬───────┐")
+    print("│ SERVO     │  POS  │   %   │  MIN  │ CENTRE│  MAX  │")
+    print("├───────────┼───────┼───────┼───────┼───────┼───────┤")
+    for i in range(1, 7):
+        nom = f"{i}:{SERVO_NAMES[i]}"
+        cal = calibration[f"servo_{i}"]
+        center = cal.get('center', 2048)
+        print(f"│ {nom:<9} │ {positions.get(i, 0):5} │ {ref_pct[i]:5.1f} │ {cal['min']:5} │ {center:5} │ {cal['max']:5} │")
+    print("└───────────┴───────┴───────┴───────┴───────┴───────┘")
+    print()
+
+    positions_saisie = {}
     for i in range(1, 7):
         min_v = calibration[f"servo_{i}"]['min']
         max_v = calibration[f"servo_{i}"]['max']
+        actuel = positions.get(i, 0)
         while True:
-            saisie = input(f"Servo {i} ({SERVO_NAMES[i]}) [min {min_v}, max {max_v}] : ").strip()
+            saisie = input(f"Servo {i} ({SERVO_NAMES[i]}) [min {min_v}, max {max_v}, actuel {actuel}] : ").strip()
             try:
                 tick = int(saisie)
                 if min_v <= tick <= max_v:
-                    positions[i] = tick
+                    positions_saisie[i] = tick
                     break
                 else:
                     print(f"   ⚠️  {tick} hors limites [{min_v}, {max_v}]. Réessayez.")
             except ValueError:
                 print("   ⚠️  Entrez un nombre entier. Réessayez.")
 
-    repos_pct = ticks_vers_pct(positions, calibration)
-    limites = verifier_limites(positions, calibration)
-    afficher_recap_repos(positions, repos_pct, limites)
-
-    # Confirmation renforcee si on n'est pas sur le Follower
-    if robot_type != 'follower':
-        print("\n⚠️  Vous n'êtes PAS sur le FOLLOWER.")
-        print("    La position de repos de référence devrait être capturée depuis le FOLLOWER.")
-        print("→ Tapez OUI (en toutes lettres) pour enregistrer malgré tout : ", end="", flush=True)
-        if input().strip().upper() != 'OUI':
-            print("\n❌ Annulé, aucune modification.")
-            input("\nAppuyez sur Entrée pour revenir au monitoring...")
-            return
+    repos_pct = ticks_vers_pct(positions_saisie, calibration)
+    limites = verifier_limites(positions_saisie, calibration)
+    afficher_recap_repos(positions_saisie, repos_pct, limites)
 
     print("\n→ Enregistrer cette position comme repos ? [O/N] : ", end="", flush=True)
     confirm = input().strip().upper()
     if confirm == 'O':
         sauvegarder_repos(repos_pct)
-        print(f"\n✅ Position repos enregistrée dans :\n   {REPOS_FILE}")
+        print(f"\n✅ Position repos (référence Follower) enregistrée dans :\n   {REPOS_FILE}")
     else:
         print("\n❌ Annulé, aucune modification.")
     input("\nAppuyez sur Entrée pour revenir au monitoring...")
@@ -319,7 +324,7 @@ def calculer_barre_progression(valeur, min_val, max_val, largeur=20):
     rempli = int(position * largeur)
     return "█" * rempli + "░" * (largeur - rempli)
 
-def afficher_tableau_temps_reel(positions, calibration, stats=None):
+def afficher_tableau_temps_reel(positions, calibration, stats=None, robot_type='follower'):
     """Affiche un tableau formaté avec les positions en temps réel"""
 
     # Clear complet à chaque fois
@@ -374,25 +379,30 @@ def afficher_tableau_temps_reel(positions, calibration, stats=None):
                 tick = 0
             parts.append(f"S{i}:{p:.1f}%({tick})")
         repos_str = "  ".join(parts)
-        etat_repos = f"✅ Repos enregistré : {repos_str}"
+        etat_repos = f"✅ Repos enregistré (référence Follower) : {repos_str}"
     else:
         etat_repos = "⚠️  AUCUNE position repos enregistrée pour l'instant"
 
     # Encadré dédié à la création/modification de la position repos
     print()
-    print("╔════════════════════════════════════════════════════════════════════╗")
-    print("║              📍  CRÉER / MODIFIER LA POSITION REPOS                  ║")
-    print("╠════════════════════════════════════════════════════════════════════╣")
-    print("║   Point de départ ET de retour commun à TOUS les scripts.          ║")
-    print("║   Un défaut est fourni ; personnalisez-le ci-dessous si besoin.    ║")
-    print("╠════════════════════════════════════════════════════════════════════╣")
-    print("║                                                                      ║")
-    print("║   [C]  CAPTURER la position physique actuelle du bras                ║")
-    print("║        (placez le bras à la main, puis pressez C)                    ║")
-    print("║                                                                      ║")
-    print("║   [M]  SAISIR manuellement les 6 valeurs (en ticks)                  ║")
-    print("║                                                                      ║")
-    print("╚════════════════════════════════════════════════════════════════════╝")
+    if robot_type == 'follower':
+        print("╔════════════════════════════════════════════════════════════════════╗")
+        print("║              📍  CRÉER / MODIFIER LA POSITION REPOS                  ║")
+        print("╠════════════════════════════════════════════════════════════════════╣")
+        print("║   Point de départ ET de retour commun à TOUS les scripts.          ║")
+        print("║   Un défaut est fourni ; personnalisez-le ci-dessous si besoin.    ║")
+        print("╠════════════════════════════════════════════════════════════════════╣")
+        print("║                                                                      ║")
+        print("║   [C]  CAPTURER la position physique actuelle du bras                ║")
+        print("║        (placez le bras à la main, puis pressez C)                    ║")
+        print("║                                                                      ║")
+        print("║   [M]  SAISIR manuellement les 6 valeurs (en ticks)                  ║")
+        print("║                                                                      ║")
+        print("╚════════════════════════════════════════════════════════════════════╝")
+    else:
+        print("ℹ️  Position de repos : disponible uniquement sur le FOLLOWER.")
+        print("   (Le Leader se manipule à la main ; le repos sert au déploiement")
+        print("    autonome et de point de retour commun.)")
     # État affiché hors du cadre (longueur variable, évite les soucis d'alignement)
     print(f"   {etat_repos}")
     print("   [Ctrl+C] Quitter le monitoring")
@@ -514,19 +524,26 @@ def main():
             }
 
             # Affichage
-            afficher_tableau_temps_reel(positions, calibration, stats)
+            afficher_tableau_temps_reel(positions, calibration, stats, robot_type)
 
             # Détection clavier non-bloquante (capture repos)
             if keyboard_actif and select.select([sys.stdin], [], [], 0)[0]:
                 touche = sys.stdin.read(1).upper()
-                if touche == 'C':
+                if touche in ('C', 'M') and robot_type != 'follower':
+                    termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_term_settings)
+                    print("\n❌ La position de repos se capture uniquement sur le FOLLOWER")
+                    print("   (référence du déploiement autonome et point de retour commun).")
+                    print("   Relancez le script en sélectionnant le Follower.")
+                    input("\nAppuyez sur Entrée pour revenir au monitoring...")
+                    tty.setcbreak(sys.stdin.fileno())
+                elif touche == 'C':
                     # Restaurer le terminal pour les input() de la capture
                     termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_term_settings)
                     capturer_repos_mode_A(packetHandler, portHandler, calibration, robot_type)
                     tty.setcbreak(sys.stdin.fileno())
                 elif touche == 'M':
                     termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_term_settings)
-                    saisir_repos_mode_B(calibration, robot_type)
+                    saisir_repos_mode_B(calibration, robot_type, positions)
                     tty.setcbreak(sys.stdin.fileno())
 
             # Pause pour limiter la charge CPU
