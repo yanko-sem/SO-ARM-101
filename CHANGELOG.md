@@ -4,6 +4,24 @@ Toutes les modifications importantes du projet seront documentées dans ce fichi
 
 Le format s’inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le projet utilise une logique de versionnement stable à partir de la version `v1.0.0`.
 
+## [1.4.0] - 2026-06-24
+
+Refonte de la calibration (script 2) en parcours guidé Follower → Leader, et inventaire de référence des fichiers de données du pipeline.
+
+### Modifié
+
+- **Refonte du script de calibration** (script 2) : architecture à deux niveaux. Menu principal affichant l'état des calibrations (Follower / Leader) et proposant `[1]` calibration complète guidée — **Follower d'abord (obligatoire, 6 servos), puis Leader (optionnel, recommandé)** — ou `[2]` recalibration d'un seul bras (maintenance, granularité libre). Confirmation de rôle explicite avant chaque bras (les deux SO-ARM 101 étant électriquement indiscernables). Un seul bras branché à la fois ; libération des 6 servos avant tout débranchement ; récapitulatif final à la sortie. Dans le sous-menu servo, l'option de sortie passe de `[Q]` à `[R] Retour au menu principal`.
+- **Maintien des servos au centre** (script 2) : après un recentrage **confirmé**, le servo reste bloqué au centre (facilite l'alignement des servos suivants) au lieu d'être libéré. Fail-closed : recentrage non confirmé → servo libéré (jamais bloqué dans une pose non maîtrisée). Libération de tous les servos garantie à la sortie.
+
+### Corrigé
+
+- **Message du flux « T »** (script 2) : en cas d'échec d'un servo pendant la calibration des six, le message précise désormais que seul *ce* servo n'est pas sauvegardé, et une ligne d'information rappelle que les servos déjà validés restent enregistrés.
+
+### Documentation
+
+- **Nouveau `README_fichiers.md`** : inventaire de référence des principaux fichiers lus/écrits par le pipeline hors scripts (calibrations, masque, réglages et références caméra, datasets bruts et consolidés, checkpoints, fichiers d'état), avec rôle, écrivain et lecteurs, établi à partir du code réel.
+- **Guide Phase 3 mis à jour** : nouveau menu de calibration (Follower d'abord, sous-menu servo `[R]`), confirmation de rôle, maintien des servos au centre, récapitulatif final, et clarification du comportement en cas d'échec partiel du Follower.
+
 ## [1.3.0] - 2026-06-22
 
 Compatibilité CPU de l'entraînement et réalignement complet de la documentation sur la nouvelle numérotation des scripts (**8** enregistrement → **9** consolidation + visualisation → **10** entraînement → **11** déploiement).
