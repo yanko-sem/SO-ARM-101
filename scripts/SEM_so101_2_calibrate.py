@@ -297,6 +297,24 @@ def afficher_tableau_calibration(calibration):
 
     print("="*80)
 
+def afficher_comparaison_calibration(anciennes, nouvelles):
+    """Tableau comparatif ancien → nouveau (MIN/CENTRE/MAX/Amplitude) par servo."""
+    def _paire(av, nv, champ):
+        a = str(av[champ]) if av else "—"
+        n = str(nv[champ]) if nv else "—"
+        return f"{a} → {n}"
+    print("\n" + "="*84)
+    print("COMPARAISON DE CALIBRATION  (ancien → nouveau)")
+    print("="*84)
+    print(f"{'ID':<4} {'Nom':<16} {'MIN':<14} {'CENTRE':<14} {'MAX':<14} {'Amplitude':<14}")
+    print("-"*84)
+    for i in range(1, 7):
+        key = f"servo_{i}"
+        av = anciennes.get(key)
+        nv = nouvelles.get(key)
+        print(f"{i:<4} {SERVO_NAMES[i]:<16} {_paire(av,nv,'min'):<14} {_paire(av,nv,'center'):<14} {_paire(av,nv,'max'):<14} {_paire(av,nv,'amplitude'):<14}")
+    print("="*84)
+
 def etat_calibration(robot_type):
     """État du fichier de calibration d'un bras : 'complet', 'incomplet' ou 'absent'."""
     cal = charger_calibration(robot_type)
@@ -463,44 +481,87 @@ def session_bras(robot_type):
     return servos_session
 
 def calibrer_bras_sequence(robot_type):
-    """Calibration séquentielle des 6 servos d'un bras (parcours complet [1], sans menu).
+    """Calibration complète d'un bras (mode [1], sans menu) — écriture différée.
 
-    Connexion + confirmation de rôle, puis calibration 1 -> 6 d'affilée (sauvegarde
-    après chaque servo), libération garantie. Retourne l'ensemble des IDs calibrés
-    dans cette session. En cas d'échec d'un servo, la séquence s'interrompt ; les
-    servos déjà validés restent sauvegardés.
+    Les 6 servos sont calibrés EN MÉMOIRE : le fichier de calibration n'est PAS
+    modifié pendant la séquence. Après les 6, un tableau ancien → nouveau est
+    affiché, puis :
+      [O] valider  -> écriture du fichier, avertissement, relâchement
+      [N] refaire  -> on recommence les 6 (fichier toujours intact)
+      [A] abandon  -> fichier intact (ancienne calibration conservée)
+    Toute interruption ou tout échec laisse l'ancienne calibration intacte.
+    Retourne True si la calibration a été validée et écrite, False sinon.
     """
     portHandler, packetHandler = connecter_robot(robot_type)
     if portHandler is None:
-        return set()
+        return False
 
-    servos_session = set()
+    valide = False
+    libere = False
     try:
-        calibration = charger_calibration(robot_type)
-        print("\n🔄 CALIBRATION DES 6 SERVOS")
-        for servo_id in range(1, 7):
-            result = calibrer_servo(packetHandler, portHandler,
-                                  servo_id, SERVO_NAMES[servo_id])
-            if result is None:
-                print(f"❌ Servo {servo_id} : calibration annulée, rien n'est sauvegardé pour ce servo. Séquence interrompue.")
-                print("ℹ️ Les servos déjà validés avant cet échec restent sauvegardés.")
-                break
+        anciennes = charger_calibration(robot_type)
 
-            calibration[f"servo_{servo_id}"] = result
-            servos_session.add(servo_id)
-            sauvegarder_calibration(calibration, robot_type)
-            print(f"💾 Servo {servo_id} sauvegardé!")
+        # Valeurs actuellement enregistrées (AVANT)
+        if anciennes:
+            print("\n📋 Calibration actuellement enregistrée pour ce bras :")
+            afficher_tableau_calibration(anciennes)
         else:
-            print("\n✅ CALIBRATION COMPLÈTE TERMINÉE")
+            print("\nℹ️  Aucune calibration enregistrée pour ce bras (première fois).")
 
-        afficher_tableau_calibration(calibration)
-    finally:
+        while True:
+            nouvelles = dict(anciennes)  # copie de travail (fichier non touché)
+            interrompu = False
+            print("\n🔄 CALIBRATION DES 6 SERVOS (en mémoire, non enregistrée pour l'instant)")
+            for servo_id in range(1, 7):
+                result = calibrer_servo(packetHandler, portHandler,
+                                      servo_id, SERVO_NAMES[servo_id])
+                if result is None:
+                    print(f"❌ Servo {servo_id} : calibration annulée. Séquence interrompue.")
+                    print("ℹ️ Rien n'est enregistré : l'ancienne calibration est conservée.")
+                    interrompu = True
+                    break
+                nouvelles[f"servo_{servo_id}"] = result
+                print(f"✅ Servo {servo_id} mesuré (en mémoire).")
+
+            if interrompu:
+                break  # bras non finalisé ; fichier intact
+
+            print("\n✅ MESURE DES 6 SERVOS TERMINÉE")
+            afficher_comparaison_calibration(anciennes, nouvelles)
+
+            while True:
+                print("\n[O] Valider et enregistrer  |  [N] Recommencer les 6 servos  |  [A] Abandonner (conserver l'ancienne)")
+                rep = input("Votre choix : ").strip().upper()
+                if rep in ("O", "N", "A"):
+                    break
+                print("❌ Choix invalide : tapez O, N ou A.")
+
+            if rep == 'O':
+                sauvegarder_calibration(nouvelles, robot_type)
+                print("💾 Calibration enregistrée.")
+                valide = True
+                break
+            if rep == 'A':
+                print("↩️  Abandon — l'ancienne calibration est conservée (aucune écriture).")
+                break
+            # rep == 'N'
+            print("↩️  On recommence la calibration des 6 servos (fichier inchangé).")
+
+        # Avertissement AVANT relâchement (anti-chute), puis relâchement
+        print("\n" + "="*60)
+        print("⚠️  Les servos vont être RELÂCHÉS : le bras ne tiendra plus seul.")
+        print("    Tenez le bras ou posez-le en position sûre.")
+        input("    Appuyez sur [ENTRÉE] pour relâcher les servos...")
         liberer_et_fermer(packetHandler, portHandler)
+        libere = True
+    finally:
+        if not libere:
+            liberer_et_fermer(packetHandler, portHandler)
 
-    return servos_session
+    return valide
 
 def flux_complet():
-    """Calibration complète des deux bras : Follower puis Leader enchaînés (6 servos chacun). Follower bloquant ; Leader incomplet = avertissement non fatal (Follower conservé)."""
+    """Calibration complète des deux bras : Follower puis Leader (écriture différée par bras, validée sur le tableau final). Follower bloquant ; Leader non finalisé = avertissement non fatal."""
     print("\n" + "="*60)
     print("ÉTAPE 1/2 — Calibration du FOLLOWER (obligatoire)")
     print("="*60)
@@ -508,16 +569,13 @@ def flux_complet():
     print("au déploiement autonome. Cette calibration est OBLIGATOIRE.")
     input("\n➡️  Branchez UNIQUEMENT le Follower, puis appuyez sur [ENTRÉE]...")
 
-    servos = calibrer_bras_sequence("FOLLOWER")
-    requis = {1, 2, 3, 4, 5, 6}
-    if not requis.issubset(servos):
-        manquants = sorted(requis - servos)
-        print(f"\n⚠️ FOLLOWER incomplet : servos non calibrés dans cette session : {manquants}")
-        print("   Le Leader ne sera pas proposé tant que le Follower n'est pas complet.")
-        print("   ↩️  Retour au menu principal.")
+    if not calibrer_bras_sequence("FOLLOWER"):
+        print("\n↩️  Calibration du Follower non finalisée (abandon ou interruption).")
+        print("   L'ancienne calibration, si elle existait, est conservée.")
+        print("   Retour au menu principal.")
         return
 
-    print("\n✅ Follower complet (les 6 servos calibrés dans cette session).")
+    print("\n✅ Follower validé et enregistré.")
 
     print("\n" + "="*60)
     print("ÉTAPE 2/2 — Calibration du LEADER (obligatoire pour la calibration complète)")
@@ -526,16 +584,13 @@ def flux_complet():
     print("à la téléopération et à l'enregistrement des démonstrations.")
     input("\n➡️  Débranchez le Follower. Branchez UNIQUEMENT le Leader. Puis [ENTRÉE]...")
 
-    servos_leader = calibrer_bras_sequence("LEADER")
-    if not requis.issubset(servos_leader):
-        manquants = sorted(requis - servos_leader)
-        print(f"\n⚠️ LEADER incomplet : servos non calibrés dans cette session : {manquants}")
-        print("   Le Follower (bras critique) reste complet et sauvegardé.")
+    if not calibrer_bras_sequence("LEADER"):
+        print("\n⚠️ Calibration du Leader non finalisée (abandon ou interruption).")
+        print("   Le Follower (bras critique) reste validé et enregistré.")
         print("   Relancez [1] pour refaire la séquence complète, ou utilisez [2] pour terminer uniquement le Leader.")
-        print("   ↩️  Retour au menu principal.")
         return
 
-    print("\n✅ Leader complet (les 6 servos calibrés dans cette session).")
+    print("\n✅ Leader validé et enregistré.")
     print("\n✅ Calibration complète Follower + Leader terminée.")
 
 def flux_un_seul_bras():
@@ -567,7 +622,8 @@ def main():
 ╚══════════════════════════════════════════════════════════╝
 
 Ce script calibre les limites de mouvement de chaque servo.
-IMPORTANT: La calibration est SAUVEGARDÉE après chaque servo!
+Mode [1] (complet) : les valeurs sont enregistrées après validation du tableau final.
+Mode [2] (ciblé)   : chaque servo validé est sauvegardé immédiatement.
 
 Parcours recommandé : Follower d'abord (obligatoire), Leader ensuite.
 Un seul bras branché à la fois.
