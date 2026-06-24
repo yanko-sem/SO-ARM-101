@@ -79,6 +79,10 @@ SERVO_NAMES = {
 # avec le depannage du guide Phase 3 (amplitude < 500 = probleme).
 MIN_AMPLITUDE = 500
 
+def clear_screen():
+    """Efface l'écran"""
+    os.system('clear')
+
 # ----------------------------------------------------------------------------
 # Politique de gestion des erreurs (calibration) :
 # Certains servos Feetech peuvent renvoyer un statut interne non nul (error)
@@ -512,6 +516,8 @@ def flux_un_seul_bras():
     session_bras(robot_type)
 
 def main():
+    clear_screen()
+
     print("""
 ╔══════════════════════════════════════════════════════════╗
 ║     CALIBRATION SO-ARM 101                              ║
