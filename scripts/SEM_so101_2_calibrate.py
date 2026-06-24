@@ -462,8 +462,45 @@ def session_bras(robot_type):
 
     return servos_session
 
+def calibrer_bras_sequence(robot_type):
+    """Calibration séquentielle des 6 servos d'un bras (parcours complet [1], sans menu).
+
+    Connexion + confirmation de rôle, puis calibration 1 -> 6 d'affilée (sauvegarde
+    après chaque servo), libération garantie. Retourne l'ensemble des IDs calibrés
+    dans cette session. En cas d'échec d'un servo, la séquence s'interrompt ; les
+    servos déjà validés restent sauvegardés.
+    """
+    portHandler, packetHandler = connecter_robot(robot_type)
+    if portHandler is None:
+        return set()
+
+    servos_session = set()
+    try:
+        calibration = charger_calibration(robot_type)
+        print("\n🔄 CALIBRATION DES 6 SERVOS")
+        for servo_id in range(1, 7):
+            result = calibrer_servo(packetHandler, portHandler,
+                                  servo_id, SERVO_NAMES[servo_id])
+            if result is None:
+                print(f"❌ Servo {servo_id} : calibration annulée, rien n'est sauvegardé pour ce servo. Séquence interrompue.")
+                print("ℹ️ Les servos déjà validés avant cet échec restent sauvegardés.")
+                break
+
+            calibration[f"servo_{servo_id}"] = result
+            servos_session.add(servo_id)
+            sauvegarder_calibration(calibration, robot_type)
+            print(f"💾 Servo {servo_id} sauvegardé!")
+        else:
+            print("\n✅ CALIBRATION COMPLÈTE TERMINÉE")
+
+        afficher_tableau_calibration(calibration)
+    finally:
+        liberer_et_fermer(packetHandler, portHandler)
+
+    return servos_session
+
 def flux_complet():
-    """Calibration complète : Follower obligatoire (6 servos en session) puis Leader optionnel."""
+    """Calibration complète des deux bras : Follower puis Leader enchaînés (6 servos chacun). Follower bloquant ; Leader incomplet = avertissement non fatal (Follower conservé)."""
     print("\n" + "="*60)
     print("ÉTAPE 1/2 — Calibration du FOLLOWER (obligatoire)")
     print("="*60)
@@ -471,7 +508,7 @@ def flux_complet():
     print("au déploiement autonome. Cette calibration est OBLIGATOIRE.")
     input("\n➡️  Branchez UNIQUEMENT le Follower, puis appuyez sur [ENTRÉE]...")
 
-    servos = session_bras("FOLLOWER")
+    servos = calibrer_bras_sequence("FOLLOWER")
     requis = {1, 2, 3, 4, 5, 6}
     if not requis.issubset(servos):
         manquants = sorted(requis - servos)
@@ -483,18 +520,23 @@ def flux_complet():
     print("\n✅ Follower complet (les 6 servos calibrés dans cette session).")
 
     print("\n" + "="*60)
-    print("ÉTAPE 2/2 — Calibration du LEADER (optionnelle, recommandée)")
+    print("ÉTAPE 2/2 — Calibration du LEADER (obligatoire pour la calibration complète)")
     print("="*60)
     print("Le Leader n'est pas utilisé au déploiement autonome, mais il sert")
     print("à la téléopération et à l'enregistrement des démonstrations.")
-    rep = input("\nVoulez-vous calibrer le Leader maintenant ? [O/N] : ").strip().upper()
-    if rep != 'O':
-        print("↩️  Leader non calibré — retour au menu principal.")
+    input("\n➡️  Débranchez le Follower. Branchez UNIQUEMENT le Leader. Puis [ENTRÉE]...")
+
+    servos_leader = calibrer_bras_sequence("LEADER")
+    if not requis.issubset(servos_leader):
+        manquants = sorted(requis - servos_leader)
+        print(f"\n⚠️ LEADER incomplet : servos non calibrés dans cette session : {manquants}")
+        print("   Le Follower (bras critique) reste complet et sauvegardé.")
+        print("   Relancez [1] pour refaire la séquence complète, ou utilisez [2] pour terminer uniquement le Leader.")
+        print("   ↩️  Retour au menu principal.")
         return
 
-    input("\n➡️  Débranchez le Follower. Branchez UNIQUEMENT le Leader. Puis [ENTRÉE]...")
-    # Leader optionnel : échec ou abandon NON bloquant, aucun critère imposé.
-    session_bras("LEADER")
+    print("\n✅ Leader complet (les 6 servos calibrés dans cette session).")
+    print("\n✅ Calibration complète Follower + Leader terminée.")
 
 def flux_un_seul_bras():
     """Recalibration de maintenance d'un seul bras (granularité libre : 1 à 6 servos)."""
