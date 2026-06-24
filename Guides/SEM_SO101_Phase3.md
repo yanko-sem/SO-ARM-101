@@ -54,10 +54,13 @@ ls SEM_so101_2_calibrate.py SEM_so101_3_monitor.py
 
 > **⚠️ Attention :** Avant de calibrer, assurez-vous que le bras peut bouger librement sans obstruction. Éloignez tout objet qui pourrait gêner le mouvement.
 
-> **⚠️ Un seul adaptateur à la fois :** ne branchez que l'adaptateur USB du bras en cours de calibration. Si les deux adaptateurs (Leader et Follower) sont connectés en même temps, le script **refuse de démarrer** (il détecte plusieurs robots) pour éviter de calibrer le mauvais bras. Calibrez donc un bras, débranchez-le, puis l'autre. Le tableau ci-dessus liste les prérequis **par bras**, à vérifier l'un après l'autre.
+> **⚠️ Un seul adaptateur à la fois :** ne branchez que l'adaptateur USB du bras en cours de calibration. Si les deux adaptateurs (Leader et Follower) sont connectés en même temps, le script **refuse la session de calibration** du bras concerné (il détecte plusieurs robots) pour éviter de calibrer le mauvais bras. Calibrez donc un bras, débranchez-le, puis l'autre. Le tableau ci-dessus liste les prérequis **par bras**, à vérifier l'un après l'autre.
 
 
 ### 🚀 Étape 2 : Lancement du script de calibration
+
+> **🧭 Pourquoi calibrer le Follower en premier ?**
+> Le Follower est le bras qui sera enregistré dans le dataset et qui exécutera ensuite le modèle en autonomie : sa calibration est **prioritaire et obligatoire**. Le Leader reste utile pour la téléopération et la qualité des démonstrations, mais il n'est **pas** utilisé directement au déploiement autonome. Dans le parcours recommandé `[1]`, le script impose donc le Follower d'abord, puis propose le Leader.
 
 **Démarrage**
 
@@ -65,41 +68,58 @@ ls SEM_so101_2_calibrate.py SEM_so101_3_monitor.py
 python SEM_so101_2_calibrate.py
 ```
 
-**Sélection du bras**
-
-```
-╔══════════════════════════════════════════════════════════╗
-║     CALIBRATION SO-ARM 101                              ║
-║     Service Ecoles Médias                               ║
-╚══════════════════════════════════════════════════════════╝
-
-✅ Port détecté: /dev/ttyACM0
-
-🤖 Quel robot calibrer ?
-  [L] LEADER
-  [F] FOLLOWER
-
-Votre choix [L/F] : _
-```
-
-Tapez `L` pour le Leader ou `F` pour le Follower. Le script attend un choix **explicite** : une entrée vide ou invalide est refusée et redemandée (il n'y a plus de bascule silencieuse vers Leader).
-
 **Menu principal**
+
+Le script affiche l'**état des deux calibrations**, puis le menu principal :
 
 ```
 ============================================================
 MENU PRINCIPAL
 ============================================================
-1-6 → Calibrer un servo spécifique
-  T → Calibrer TOUS les servos
-  V → Voir calibration actuelle
-  Q → Quitter
+État : Follower ✅ complet
+       Leader   ⬜ non vérifié
+------------------------------------------------------------
+  [1] Calibration complète (Follower puis Leader) — recommandé
+  [2] Recalibrer un seul bras (Follower OU Leader)
+  [Q] Quitter
 ============================================================
 
 Votre choix: _
 ```
 
-> **💡 Conseil :** Pour une première calibration, utilisez T pour calibrer tous les servos d'un coup. Pour des ajustements, utilisez les numéros 1-6.
+L'état de chaque bras vaut **✅ complet** (6 servos calibrés), **⚠️ incomplet** (1 à 5 servos) ou **⬜ non vérifié** (aucun fichier).
+
+**Option [1] — Calibration complète (recommandée)**
+
+Parcours guidé en deux étapes, **un seul bras branché à la fois** :
+
+1. **Étape 1/2 — Follower (obligatoire).** Le script demande de brancher uniquement le Follower, détecte le port, puis demande une **confirmation de rôle** — le script ne pouvant pas identifier physiquement le bras :
+   ```
+   ⚠️  Confirmez-vous que le bras branché est bien le FOLLOWER ? [O/N] :
+   ```
+   Vous entrez ensuite dans le **sous-menu servo** du Follower (voir Étape 3). Le Follower n'est considéré **complet** que si **les 6 servos sont calibrés dans cette session**. Si la session s'interrompt avant le 6e servo (échec ou retour), les servos déjà validés **restent sauvegardés**, mais le Follower n'est **pas** complet : l'étape Leader n'est pas proposée tant que les 6 ne sont pas faits.
+2. **Étape 2/2 — Leader (optionnel, recommandé).** Proposé **uniquement** si le Follower est complet. Le script demande de débrancher le Follower, de brancher le Leader, confirme son rôle, puis ouvre le même sous-menu servo. Un échec ou un abandon du Leader n'est **pas** bloquant.
+
+**Option [2] — Recalibrer un seul bras**
+
+Mode de maintenance : vous choisissez explicitement le bras (`[L]` ou `[F]`, sans bascule silencieuse), le branchez seul, confirmez son rôle, puis recalibrez **un ou plusieurs** servos. Aucun critère « 6 servos » n'est imposé ici (utile pour corriger un seul servo).
+
+**Sous-menu servo (commun aux deux options)**
+
+```
+============================================================
+MENU SERVO — FOLLOWER
+============================================================
+1-6 → Calibrer un servo spécifique
+  T → Calibrer TOUS les servos
+  V → Voir calibration actuelle
+  R → Retour au menu principal
+============================================================
+
+Votre choix: _
+```
+
+> **💡 Conseil :** Pour une première calibration, utilisez `T` pour calibrer les 6 servos du bras courant d'un coup. Pour des ajustements, utilisez les numéros 1-6. `[R]` termine la session du bras courant (libère les servos) et revient au menu principal.
 
 
 ### 🔧 Étape 3 : Procédure de calibration
@@ -113,7 +133,7 @@ Pour chaque servo, vous devez :
 3. Bouger jusqu'à sa position MAXIMALE
 4. Valider avec ENTRÉE (le script lit la position MAX)
 5. Le script calcule automatiquement le centre et l'amplitude
-6. Le servo se recentre automatiquement en douceur, puis est libéré
+6. Le servo se recentre automatiquement en douceur, puis **reste bloqué au centre** si le recentrage est confirmé (sinon il est libéré)
 
 **Exemple pratique : Calibration du servo 3 (Coude)**
 
@@ -144,7 +164,7 @@ Position actuelle: 1800
   • CENTRE: 2048
   • Amplitude: 3072
   🔄 Centrage fluide vers 2048...
-✅ Servo 3 centré
+🔒 Servo 3 centré et maintenu bloqué (facilite la suite)
 💾 Calibration du servo 3 sauvegardée!
 ```
 
@@ -166,7 +186,7 @@ Position actuelle: 1800
 
 ### 📊 Étape 4 : Calibration complète (option T)
 
-L'option T permet de calibrer les 6 servos à la suite :
+Dans le **sous-menu servo du bras courant**, l'option `T` calibre les 6 servos de ce bras à la suite — elle ne lance **pas** Follower + Leader automatiquement (l'enchaînement des deux bras est géré par l'option `[1]` du menu principal) :
 
 **Ordre de calibration**
 
@@ -221,18 +241,27 @@ Si un servo nécessite un ajustement :
 
 > **💡 Centrage doux :** Le script utilise une courbe sinusoïdale pour recentrer les servos en douceur. Cela évite les mouvements brusques qui pourraient stresser les mécaniques.
 
-**Quitter proprement**
+**Terminer une session / quitter**
 
-Utilisez `Q` pour quitter le script. Les calibrations déjà validées ont été sauvegardées automatiquement après chaque servo ; en quittant, le script libère les servos et ferme le port :
+Deux niveaux de sortie :
+
+- Dans le **sous-menu servo**, `[R]` **termine la session du bras courant** : le script libère les 6 servos (avant tout débranchement) et revient au menu principal.
+- Dans le **menu principal**, `[Q]` **quitte le script** et affiche le récapitulatif final des deux calibrations :
 
 ```
-Votre choix: Q
-
 🏁 Libération des servos...
 
-✅ Calibration terminée
-📁 Fichier: ~/lerobot/calibration/follower_calibration.json
+============================================================
+RÉCAPITULATIF FINAL DES CALIBRATIONS
+============================================================
+  Follower : présente · complète
+  Leader   : absente · —
+============================================================
+
+✅ Script de calibration terminé
 ```
+
+Les calibrations déjà validées ont été sauvegardées automatiquement après chaque servo.
 
 
 ### 📡 Étape 6 : Définir la position de repos (script 3)
@@ -351,11 +380,16 @@ python SEM_so101_2_calibrate.py
 python SEM_so101_3_monitor.py
 ```
 
-**Options du menu (calibration, script 2) :**
-- `T` — Calibrer tous les servos
+**Menu principal (script 2) :**
+- `[1]` — Calibration complète (Follower obligatoire puis Leader optionnel)
+- `[2]` — Recalibrer un seul bras (Follower OU Leader)
+- `[Q]` — Quitter (affiche le récapitulatif final)
+
+**Sous-menu servo (script 2) :**
+- `T` — Calibrer tous les servos du bras courant
 - `V` — Voir la calibration actuelle
 - `1-6` — Calibrer un servo spécifique
-- `Q` — Quitter (libère les servos et ferme le port)
+- `R` — Retour au menu principal (libère les servos du bras courant)
 
 **Touches (monitoring/repos, script 3) :**
 - `C` — Capturer la position de repos (position physique actuelle)
@@ -372,4 +406,4 @@ python SEM_so101_3_monitor.py
 - Les amplitudes sont cohérentes (ni trop faibles, ni excessives)
 - Le centrage automatique fonctionne pour tous les servos
 
-> **🎯 Objectif atteint :** Votre robot est maintenant calibré, sa position de repos peut être définie, et il est prêt pour les tests de contrôle (Phase 4) puis la téléopération. Les scripts de contrôle, téléopération, enregistrement et déploiement utiliseront automatiquement ces valeurs de calibration pour protéger votre matériel.
+> **🎯 Objectif atteint :** Le ou les bras calibrés disposent maintenant de limites de mouvement sûres. Si le **Follower** est complet, sa position de repos peut être définie (Étape 6), puis les tests de contrôle (Phase 4) et la téléopération peuvent commencer. Les scripts de contrôle, téléopération, enregistrement et déploiement utiliseront automatiquement ces valeurs de calibration pour protéger votre matériel.
