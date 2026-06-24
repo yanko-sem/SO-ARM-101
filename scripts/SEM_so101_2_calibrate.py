@@ -293,18 +293,49 @@ def afficher_tableau_calibration(calibration):
 
     print("="*80)
 
-def main():
-    print("""
-╔══════════════════════════════════════════════════════════╗
-║     CALIBRATION SO-ARM 101                              ║
-║     Service Ecoles Médias                               ║
-╚══════════════════════════════════════════════════════════╝
+def etat_calibration(robot_type):
+    """État du fichier de calibration d'un bras : 'complet', 'incomplet' ou 'absent'."""
+    cal = charger_calibration(robot_type)
+    if not cal:
+        return "absent"
+    if all(f"servo_{i}" in cal for i in range(1, 7)):
+        return "complet"
+    return "incomplet"
 
-Ce script calibre les limites de mouvement de chaque servo.
-IMPORTANT: La calibration est SAUVEGARDÉE après chaque servo!
-""")
+# Libellés d'état affichés au menu principal (un par bras).
+_LIBELLE_ETAT = {
+    "complet": "✅ complet",
+    "incomplet": "⚠️ incomplet",
+    "absent": "⬜ non vérifié",
+}
 
-    # Détection du port
+def afficher_etat_calibrations():
+    """Affiche l'état courant des calibrations Follower et Leader."""
+    ef = etat_calibration("FOLLOWER")
+    el = etat_calibration("LEADER")
+    print(f"État : Follower {_LIBELLE_ETAT[ef]}")
+    print(f"       Leader   {_LIBELLE_ETAT[el]}")
+
+def afficher_recap_final():
+    """Récapitulatif final de l'état des deux fichiers de calibration."""
+    print("\n" + "="*60)
+    print("RÉCAPITULATIF FINAL DES CALIBRATIONS")
+    print("="*60)
+    for robot_type in ("FOLLOWER", "LEADER"):
+        etat = etat_calibration(robot_type)
+        presence = "absente" if etat == "absent" else "présente"
+        completude = {"complet": "complète", "incomplet": "incomplète", "absent": "—"}[etat]
+        print(f"  {robot_type.capitalize():<9}: {presence} · {completude}")
+    print("="*60)
+
+def connecter_robot(robot_type):
+    """Détecte le port, demande la confirmation de rôle, ouvre la connexion.
+
+    Le script ne pouvant PAS identifier physiquement quel bras est branché (les deux
+    SO-ARM 101 sont identiques), une confirmation explicite de l'opérateur sert de
+    garde-fou humain. Retourne (portHandler, packetHandler) en cas de succès, sinon
+    (None, None).
+    """
     PORT = detect_port()
     if not PORT:
         print("❌ Connexion au robot impossible.")
@@ -312,63 +343,75 @@ IMPORTANT: La calibration est SAUVEGARDÉE après chaque servo!
         print("  1. Câble USB branché (un seul adaptateur à la fois)")
         print("  2. Alimentation connectée (5V ou 12V selon le bras)")
         print("  3. Interrupteur ON")
-        return
+        return None, None
 
     print(f"✅ Port détecté: {PORT}")
 
-    # Choix du robot - UN SEUL ! (choix explicite : pas de defaut silencieux vers Leader)
-    print("\n🤖 Quel robot calibrer ?")
-    print("  [L] LEADER")
-    print("  [F] FOLLOWER")
+    rep = input(f"\n⚠️  Confirmez-vous que le bras branché est bien le {robot_type} ? [O/N] : ").strip().upper()
+    if rep != 'O':
+        print("↩️  Calibration annulée — retour au menu principal.")
+        return None, None
 
-    robot_type = None
-    while robot_type is None:
-        choix_robot = input("\nVotre choix [L/F] : ").strip().upper()
-        if choix_robot == 'L':
-            robot_type = "LEADER"
-        elif choix_robot == 'F':
-            robot_type = "FOLLOWER"
-        else:
-            print("❌ Choix invalide : tapez L ou F")
-
-    print(f"\n✅ Calibration du {robot_type}")
-
-    # Charger calibration existante si disponible
-    calibration = charger_calibration(robot_type)
-    if calibration:
-        print("📁 Calibration existante chargée")
-        afficher_tableau_calibration(calibration)
-
-    # Connexion - UN SEUL PORT !
     BAUDRATE = 1000000
     portHandler = PortHandler(PORT)
     packetHandler = PacketHandler(1.0)
 
     if not portHandler.openPort():
         print("❌ Impossible d'ouvrir le port")
-        return
-
+        return None, None
     if not portHandler.setBaudRate(BAUDRATE):
         print("❌ Impossible de configurer le baudrate")
         portHandler.closePort()
-        return
+        return None, None
 
     print("✅ Connexion établie")
+    return portHandler, packetHandler
 
+def liberer_et_fermer(packetHandler, portHandler):
+    """Libère les 6 servos (best-effort) puis ferme le port. Toujours sûr à appeler."""
+    print("\n🏁 Libération des servos...")
+    for i in range(1, 7):
+        try:
+            packetHandler.write1ByteTxRx(portHandler, i, 40, 0)
+        except Exception:
+            pass
     try:
+        portHandler.closePort()
+    except Exception:
+        pass
+
+def session_bras(robot_type):
+    """Calibration d'un bras : connexion, menu servo, libération garantie.
+
+    Retourne l'ensemble (set) des IDs de servos calibrés AU COURS DE CETTE SESSION.
+    Le menu servo est inchangé, à une exception près : l'option de sortie est
+    [R] Retour au menu principal (elle ne quitte plus le programme). La libération
+    des 6 servos est garantie à la fin (bloc finally), AVANT tout débranchement.
+    """
+    portHandler, packetHandler = connecter_robot(robot_type)
+    if portHandler is None:
+        return set()
+
+    servos_session = set()
+    try:
+        calibration = charger_calibration(robot_type)
+        if calibration:
+            print("📁 Calibration existante chargée")
+            afficher_tableau_calibration(calibration)
+
         while True:
             print("\n" + "="*60)
-            print("MENU PRINCIPAL")
+            print(f"MENU SERVO — {robot_type}")
             print("="*60)
             print("1-6 → Calibrer un servo spécifique")
             print("  T → Calibrer TOUS les servos")
             print("  V → Voir calibration actuelle")
-            print("  Q → Quitter")
+            print("  R → Retour au menu principal")
             print("="*60)
 
             choix = input("\nVotre choix: ").strip().upper()
 
-            if choix == 'Q':
+            if choix == 'R':
                 break
             elif choix == 'V':
                 afficher_tableau_calibration(calibration)
@@ -383,6 +426,7 @@ IMPORTANT: La calibration est SAUVEGARDÉE après chaque servo!
                         break
 
                     calibration[f"servo_{servo_id}"] = result
+                    servos_session.add(servo_id)
 
                     # SAUVEGARDE APRÈS CHAQUE SERVO
                     sauvegarder_calibration(calibration, robot_type)
@@ -401,6 +445,7 @@ IMPORTANT: La calibration est SAUVEGARDÉE après chaque servo!
                     continue
 
                 calibration[f"servo_{servo_id}"] = result
+                servos_session.add(servo_id)
 
                 # SAUVEGARDE IMMÉDIATE
                 sauvegarder_calibration(calibration, robot_type)
@@ -408,20 +453,101 @@ IMPORTANT: La calibration est SAUVEGARDÉE après chaque servo!
             else:
                 print("❌ Choix invalide")
     finally:
-        # Liberation finale GARANTIE (meme en cas d'exception ou d'interruption).
-        # Chaque ecriture est best-effort pour garantir que closePort() soit toujours atteint.
-        print("\n🏁 Libération des servos...")
-        for i in range(1, 7):
-            try:
-                packetHandler.write1ByteTxRx(portHandler, i, 40, 0)
-            except Exception:
-                pass
-        try:
-            portHandler.closePort()
-        except Exception:
-            pass
-        print("\n✅ Calibration terminée")
-        print(f"📁 Fichier: ~/lerobot/calibration/{robot_type.lower()}_calibration.json")
+        liberer_et_fermer(packetHandler, portHandler)
+
+    return servos_session
+
+def flux_complet():
+    """Calibration complète : Follower obligatoire (6 servos en session) puis Leader optionnel."""
+    print("\n" + "="*60)
+    print("ÉTAPE 1/2 — Calibration du FOLLOWER (obligatoire)")
+    print("="*60)
+    print("Le Follower est le bras enregistré dans le dataset et utilisé")
+    print("au déploiement autonome. Cette calibration est OBLIGATOIRE.")
+    input("\n➡️  Branchez UNIQUEMENT le Follower, puis appuyez sur [ENTRÉE]...")
+
+    servos = session_bras("FOLLOWER")
+    requis = {1, 2, 3, 4, 5, 6}
+    if not requis.issubset(servos):
+        manquants = sorted(requis - servos)
+        print(f"\n⚠️ FOLLOWER incomplet : servos non calibrés dans cette session : {manquants}")
+        print("   Le Leader ne sera pas proposé tant que le Follower n'est pas complet.")
+        print("   ↩️  Retour au menu principal.")
+        return
+
+    print("\n✅ Follower complet (les 6 servos calibrés dans cette session).")
+
+    print("\n" + "="*60)
+    print("ÉTAPE 2/2 — Calibration du LEADER (optionnelle, recommandée)")
+    print("="*60)
+    print("Le Leader n'est pas utilisé au déploiement autonome, mais il sert")
+    print("à la téléopération et à l'enregistrement des démonstrations.")
+    rep = input("\nVoulez-vous calibrer le Leader maintenant ? [O/N] : ").strip().upper()
+    if rep != 'O':
+        print("↩️  Leader non calibré — retour au menu principal.")
+        return
+
+    input("\n➡️  Débranchez le Follower. Branchez UNIQUEMENT le Leader. Puis [ENTRÉE]...")
+    # Leader optionnel : échec ou abandon NON bloquant, aucun critère imposé.
+    session_bras("LEADER")
+
+def flux_un_seul_bras():
+    """Recalibration de maintenance d'un seul bras (granularité libre : 1 à 6 servos)."""
+    print("\n🤖 Quel bras recalibrer ?")
+    print("  [L] LEADER")
+    print("  [F] FOLLOWER")
+
+    robot_type = None
+    while robot_type is None:
+        choix_robot = input("\nVotre choix [L/F] : ").strip().upper()
+        if choix_robot == 'L':
+            robot_type = "LEADER"
+        elif choix_robot == 'F':
+            robot_type = "FOLLOWER"
+        else:
+            print("❌ Choix invalide : tapez L ou F")
+
+    input(f"\n➡️  Branchez UNIQUEMENT le {robot_type}, puis appuyez sur [ENTRÉE]...")
+    session_bras(robot_type)
+
+def main():
+    print("""
+╔══════════════════════════════════════════════════════════╗
+║     CALIBRATION SO-ARM 101                              ║
+║     Service Ecoles Médias                               ║
+╚══════════════════════════════════════════════════════════╝
+
+Ce script calibre les limites de mouvement de chaque servo.
+IMPORTANT: La calibration est SAUVEGARDÉE après chaque servo!
+
+Parcours recommandé : Follower d'abord (obligatoire), Leader ensuite.
+Un seul bras branché à la fois.
+""")
+
+    while True:
+        print("\n" + "="*60)
+        print("MENU PRINCIPAL")
+        print("="*60)
+        afficher_etat_calibrations()
+        print("-"*60)
+        print("  [1] Calibration complète (Follower puis Leader) — recommandé")
+        print("  [2] Recalibrer un seul bras (Follower OU Leader)")
+        print("  [Q] Quitter")
+        print("="*60)
+
+        choix = input("\nVotre choix: ").strip().upper()
+
+        if choix == 'Q':
+            break
+        elif choix == '1':
+            flux_complet()
+        elif choix == '2':
+            flux_un_seul_bras()
+        else:
+            print("❌ Choix invalide")
+
+    afficher_recap_final()
+    print("\n✅ Script de calibration terminé")
 
 if __name__ == "__main__":
     main()
