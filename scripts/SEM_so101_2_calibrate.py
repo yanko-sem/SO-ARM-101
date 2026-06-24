@@ -422,7 +422,8 @@ def session_bras(robot_type):
                     result = calibrer_servo(packetHandler, portHandler,
                                           servo_id, SERVO_NAMES[servo_id])
                     if result is None:
-                        print(f"❌ Servo {servo_id} : calibration annulée, rien n'est sauvegardé. Séquence interrompue.")
+                        print(f"❌ Servo {servo_id} : calibration annulée, rien n'est sauvegardé pour ce servo. Séquence interrompue.")
+                        print("ℹ️ Les servos déjà validés avant cet échec restent sauvegardés.")
                         break
 
                     calibration[f"servo_{servo_id}"] = result
