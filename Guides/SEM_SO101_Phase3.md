@@ -97,8 +97,10 @@ Parcours guidé qui calibre **automatiquement les 6 servos du Follower (1 → 6)
    ```
    ⚠️  Confirmez-vous que le bras branché est bien le FOLLOWER ? [O/N] :
    ```
-   Les **6 servos sont alors calibrés à la suite** (1 → 6), avec sauvegarde après chacun — **sans sous-menu**. Si la séquence s'interrompt avant le 6e servo (échec d'un servo), les servos déjà validés **restent sauvegardés**, mais le Follower n'est **pas** complet : l'étape Leader n'est pas lancée et le script revient au menu principal.
-2. **Étape 2/2 — Leader.** Lancée **automatiquement** dès que le Follower est complet. Le script demande de débrancher le Follower, de brancher le Leader, confirme son rôle, puis calibre **les 6 servos du Leader à la suite**. Si le Leader reste incomplet, c'est un **avertissement non bloquant** : le Follower (bras critique) reste complet et sauvegardé. Pour corriger la situation, relancez `[1]` pour refaire la séquence complète, ou utilisez `[2]` pour terminer uniquement le Leader.
+   Si une calibration existe déjà, elle est d'abord **affichée pour référence**. Les **6 servos sont ensuite mesurés à la suite** (1 → 6) **en mémoire**, sans sous-menu et **sans modifier le fichier** de calibration. À la fin, un tableau **ancien → nouveau** (MIN, CENTRE, MAX, amplitude) s'affiche pour validation : **[O]** enregistre les nouvelles valeurs, **[N]** recommence les 6 servos, **[A]** abandonne en conservant l'ancienne calibration. En cas d'échec d'un servo (séquence interrompue) ou d'abandon, **rien n'est écrit** : l'ancienne calibration est conservée et le script revient au menu principal (le Follower n'est alors pas finalisé, l'étape Leader n'est pas lancée).
+2. **Étape 2/2 — Leader.** Lancée **automatiquement** dès que le Follower est validé. Le script demande de débrancher le Follower, de brancher le Leader, confirme son rôle, puis **mesure les 6 servos du Leader** avec la même validation finale (tableau ancien → nouveau, puis **[O]** enregistre / **[N]** recommence / **[A]** abandonne). Si la calibration du Leader n'est **pas finalisée** (abandon ou interruption), c'est un **avertissement non bloquant** : le Follower (bras critique) reste **validé et enregistré**. Pour corriger la situation, relancez `[1]` pour refaire la séquence complète, ou utilisez `[2]` pour terminer uniquement le Leader.
+
+> **⚠️ Avant chaque relâchement (anti-chute) :** à la fin de la séquence d'un bras (après validation [O], abandon [A] ou interruption de la séquence), le script **prévient avant de relâcher les servos** — le bras ne tiendra plus seul. Tenez-le ou posez-le en position sûre, puis appuyez sur [ENTRÉE] pour autoriser le relâchement.
 
 **Option [2] — Recalibrer un seul bras**
 
@@ -168,9 +170,11 @@ Position actuelle: 1800
 💾 Calibration du servo 3 sauvegardée!
 ```
 
-> **✅ Important :** La sauvegarde est automatique après chaque servo **validé**. Si une calibration est annulée ou échoue (lecture invalide, amplitude trop faible), elle n'est **pas** sauvegardée, afin de ne pas corrompre le fichier de calibration.
+> **ℹ️ Mode affiché dans cet exemple :** la dernière ligne (`💾 … sauvegardée!`) correspond au **mode [2]** (sauvegarde immédiate). En **mode [1]**, elle devient `✅ Servo 3 mesuré (en mémoire).` — l'enregistrement n'a lieu qu'après la validation [O] du tableau final.
 
-> **⚠️ Recentrage non confirmé :** si le script affiche « recentrage non confirmé » ou « couple non réactivé, recentrage ignoré », la calibration (MIN/MAX) reste **valide et sauvegardée** — mais le servo n'a pas rejoint son centre. Replacez alors le bras à la main dans une **position sûre** avant de continuer.
+> **✅ Important — quand l'enregistrement a-t-il lieu ?** En **mode [2]** (recalibration ciblée), chaque servo **validé** est sauvegardé immédiatement. En **mode [1]** (calibration complète), les 6 servos sont d'abord mesurés **en mémoire** et le fichier n'est écrit **qu'après la validation [O]** du tableau ancien → nouveau. Dans les deux cas, une calibration annulée ou en échec (lecture invalide, amplitude trop faible) n'est **pas** enregistrée, afin de ne pas corrompre le fichier de calibration.
+
+> **⚠️ Recentrage non confirmé :** si le script affiche « recentrage non confirmé » ou « couple non réactivé, recentrage ignoré », la calibration MIN/MAX reste **utilisable pour la suite** — mais le servo n'a pas rejoint son centre. En **mode [1]**, elle reste **en mémoire** jusqu'à la validation finale [O] ; en **mode [2]**, elle est **sauvegardée immédiatement** après le servo validé. Replacez alors le bras à la main dans une **position sûre** avant de continuer.
 
 > ### ℹ️ Message « statut interne non nul » — faut-il s'inquiéter ?
 >
@@ -246,11 +250,9 @@ Si un servo nécessite un ajustement :
 Deux niveaux de sortie :
 
 - Dans le **sous-menu servo**, `[R]` **termine la session du bras courant** : le script libère les 6 servos (avant tout débranchement) et revient au menu principal.
-- Dans le **menu principal**, `[Q]` **quitte le script** et affiche le récapitulatif final des deux calibrations :
+- Dans le **menu principal**, `[Q]` **quitte le script** : aucun bras n'y est connecté (la libération a déjà eu lieu en fin de session), donc `[Q]` affiche simplement le récapitulatif final des deux calibrations :
 
 ```
-🏁 Libération des servos...
-
 ============================================================
 RÉCAPITULATIF FINAL DES CALIBRATIONS
 ============================================================
@@ -261,7 +263,7 @@ RÉCAPITULATIF FINAL DES CALIBRATIONS
 ✅ Script de calibration terminé
 ```
 
-Les calibrations déjà validées ont été sauvegardées automatiquement après chaque servo.
+En mode [2], les calibrations déjà validées ont été sauvegardées au fil de l'eau (après chaque servo) ; en mode [1], l'enregistrement a lieu après la validation [O] du tableau final.
 
 
 ### 📡 Étape 6 : Définir la position de repos (script 3)
@@ -355,7 +357,7 @@ Les calibrations sont stockées dans :
 | Amplitude trop faible (< 500) | MIN/MAX trop proches (servo peu/pas bougé, butées trop proches) | Le script **refuse** la sauvegarde ; recommencez avec des limites MIN/MAX bien distinctes |
 | Amplitude très élevée (> 3800) | Plage presque complète de l'encodeur, ou limites trop larges | Vérifier que MIN/MAX ne forcent pas contre les butées mécaniques |
 | Le servo force après calibration | Limites mal définies | Recalibrer ce servo spécifiquement |
-| Calibration perdue | Fichier supprimé | Refaire la calibration (option T) |
+| Calibration perdue | Fichier supprimé | Refaire la calibration complète via [1], ou [2] puis T pour recalibrer un seul bras |
 
 
 ### 💡 Conseils pratiques
