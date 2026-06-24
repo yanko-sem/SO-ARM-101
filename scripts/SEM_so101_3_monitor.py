@@ -172,6 +172,16 @@ def ticks_vers_pct(positions, calibration):
             repos_pct[i] = 50.0
     return repos_pct
 
+def tick_vers_pct_brut(tick, cal):
+    """Pourcentage BRUT (physique, non borné) d'un tick, pour l'AFFICHAGE.
+    Peut sortir de [0, 100] si la position dépasse la plage calibrée. Le bornage à
+    [0, 100] n'intervient qu'au STOCKAGE (ticks_vers_pct)."""
+    min_v = cal.get('min', 0)
+    max_v = cal.get('max', 4095)
+    if max_v <= min_v:
+        return 0.0
+    return (tick - min_v) / (max_v - min_v) * 100.0
+
 def verifier_limites(positions, calibration):
     """Vérifie que chaque position est dans [min, max], avec une marge de tolérance
     de MARGE_REPOS_PCT % de l'amplitude calibrée (pour accepter un léger dépassement
@@ -187,16 +197,23 @@ def verifier_limites(positions, calibration):
             result[i] = True
     return result
 
-def afficher_recap_repos(positions, repos_pct, limites):
-    """Affiche un récapitulatif de la position repos (ticks + % + vérif limites)."""
-    print("\n┌─────────┬────────┬──────────┬────────────┐")
-    print("│ SERVO   │ TICKS  │    %     │  LIMITES   │")
-    print("├─────────┼────────┼──────────┼────────────┤")
+def afficher_recap_repos(positions, repos_pct, limites, calibration):
+    """Récapitulatif du repos : ticks, % brut (physique réel), % enregistré (borné
+    [0, 100] au stockage) et vérification des limites. Le % brut peut sortir de
+    [0, 100] si la position dépasse la plage calibrée ; le % enregistré est celui
+    qui sera écrit dans repos_position.json."""
+    print("\n┌───────────┬────────┬──────────┬──────────┬────────────┐")
+    print("│ SERVO     │ TICKS  │  % BRUT  │ % ENREG. │  LIMITES   │")
+    print("├───────────┼────────┼──────────┼──────────┼────────────┤")
     for i in range(1, 7):
         nom = f"{i}:{SERVO_NAMES[i]}"
         etat = "OK" if limites[i] else "HORS !"
-        print(f"│ {nom:<7} │ {positions[i]:6} │ {repos_pct[i]:7.2f}% │ {etat:<10} │")
-    print("└─────────┴────────┴──────────┴────────────┘")
+        if calibration and f"servo_{i}" in calibration:
+            brut = tick_vers_pct_brut(positions[i], calibration[f"servo_{i}"])
+        else:
+            brut = 0.0
+        print(f"│ {nom:<9} │ {positions[i]:6} │ {brut:7.2f}% │ {repos_pct[i]:7.2f}% │ {etat:<10} │")
+    print("└───────────┴────────┴──────────┴──────────┴────────────┘")
 
 def capturer_repos_mode_A(packetHandler, portHandler, calibration, robot_type):
     """Mode A : capture la position physique actuelle du robot comme position repos."""
@@ -231,7 +248,7 @@ def capturer_repos_mode_A(packetHandler, portHandler, calibration, robot_type):
 
     repos_pct = ticks_vers_pct(positions, calibration)
     limites = verifier_limites(positions, calibration)
-    afficher_recap_repos(positions, repos_pct, limites)
+    afficher_recap_repos(positions, repos_pct, limites, calibration)
 
     # Verrou 3 : un repos doit rester DANS les limites de calibration (marge incluse)
     if not all(limites.values()):
@@ -268,19 +285,26 @@ def saisir_repos_mode_B(calibration, robot_type, positions):
         input("\nAppuyez sur Entrée pour revenir au monitoring...")
         return
 
-    # Table de référence : dernières positions monitorées + limites (évite de devoir
-    # mémoriser le tableau de monitoring, effacé en entrant dans ce mode).
-    ref_pct = ticks_vers_pct(positions, calibration)
+    # Table de référence : dernières positions monitorées + repos enregistré (évite
+    # de devoir mémoriser le tableau de monitoring, effacé en entrant dans ce mode).
+    # % BRUT = physique réel non borné ; le bornage [0, 100] n'a lieu qu'au stockage.
+    repos_enr = charger_repos()
     print("\n📋 Référence — dernières positions monitorées :")
-    print("┌───────────┬───────┬───────┬───────┬───────┬───────┐")
-    print("│ SERVO     │  POS  │   %   │  MIN  │ CENTRE│  MAX  │")
-    print("├───────────┼───────┼───────┼───────┼───────┼───────┤")
+    print("┌───────────┬───────┬───────┬───────┬───────┬───────┬─────────────────┐")
+    print("│ SERVO     │  POS  │   %   │  MIN  │ CENTRE│  MAX  │  REPOS (réf.)   │")
+    print("├───────────┼───────┼───────┼───────┼───────┼───────┼─────────────────┤")
     for i in range(1, 7):
         nom = f"{i}:{SERVO_NAMES[i]}"
         cal = calibration[f"servo_{i}"]
         center = cal.get('center', 2048)
-        print(f"│ {nom:<9} │ {positions.get(i, 0):5} │ {ref_pct[i]:5.1f} │ {cal['min']:5} │ {center:5} │ {cal['max']:5} │")
-    print("└───────────┴───────┴───────┴───────┴───────┴───────┘")
+        brut = tick_vers_pct_brut(positions.get(i, 0), cal)
+        if repos_enr and i in repos_enr:
+            tick_r = int(cal['min'] + (cal['max'] - cal['min']) * repos_enr[i] / 100)
+            repos_cell = f"{repos_enr[i]:.1f}% / {tick_r}"
+        else:
+            repos_cell = "—"
+        print(f"│ {nom:<9} │ {positions.get(i, 0):5} │ {brut:5.1f} │ {cal['min']:5} │ {center:5} │ {cal['max']:5} │ {repos_cell:^15} │")
+    print("└───────────┴───────┴───────┴───────┴───────┴───────┴─────────────────┘")
     print()
 
     positions_saisie = {}
@@ -302,7 +326,7 @@ def saisir_repos_mode_B(calibration, robot_type, positions):
 
     repos_pct = ticks_vers_pct(positions_saisie, calibration)
     limites = verifier_limites(positions_saisie, calibration)
-    afficher_recap_repos(positions_saisie, repos_pct, limites)
+    afficher_recap_repos(positions_saisie, repos_pct, limites, calibration)
 
     print("\n→ Enregistrer cette position comme repos ? [O/N] : ", end="", flush=True)
     confirm = input().strip().upper()
@@ -403,8 +427,12 @@ def afficher_tableau_temps_reel(positions, calibration, stats=None, robot_type='
         print("ℹ️  Position de repos : disponible uniquement sur le FOLLOWER.")
         print("   (Le Leader se manipule à la main ; le repos sert au déploiement")
         print("    autonome et de point de retour commun.)")
-    # État affiché hors du cadre (longueur variable, évite les soucis d'alignement)
-    print(f"   {etat_repos}")
+    # État affiché hors du cadre (longueur variable, évite les soucis d'alignement),
+    # encadré par des séparateurs pour le rendre bien visible.
+    print()
+    print("  " + "═"*70)
+    print(f"  {etat_repos}")
+    print("  " + "═"*70)
     print("   [Ctrl+C] Quitter le monitoring")
 
 # ============================================
