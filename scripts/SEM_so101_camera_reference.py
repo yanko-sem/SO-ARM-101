@@ -3,7 +3,7 @@
 Module SEM_so101_camera_reference.py
 Service Écoles-Médias (SEM) - DIP Genève
 
-RÉFÉRENCE VISUELLE CAMÉRA — OUTIL & MODULE (v7, multi-caméra)
+RÉFÉRENCE VISUELLE CAMÉRA — OUTIL & MODULE (v8.1, multi-caméra)
 ============================================================
 Fichier : SEM_so101_camera_reference.py (ex-SEM_camera_reference.py)
 
@@ -76,10 +76,12 @@ Garanties (v4) :
     UNIQUEMENT après action explicite de l'utilisateur via guvcview, en
     utilisant le mécanisme existant de SEM_so101_camera_config.py. Elle peut
     aussi ajouter reglages_recalibres + date_recalibrage dans la référence.
-  - RÉGLAGE INITIAL : si la caméra n'a AUCUN réglage enregistré (première
-    mise en service), le menu propose à son démarrage de les créer
-    (guvcview, action explicite, [R]) — seule autre situation où l'outil
-    écrit camera_settings.json.
+  - RÉGLAGE [R] : crée ou refait les réglages caméra via guvcview (action
+    explicite). Proposé au démarrage si aucun réglage n'existe (RÉGLAGE
+    INITIAL), ET disponible dans le menu même quand les réglages sont déjà
+    verrouillés. Avec [7], seules situations où l'outil écrit
+    camera_settings.json ; après un [R] qui modifie les réglages, recrée la
+    référence avec [4].
   - Si le verrouillage échoue ou si la caméra est absente du fichier de
     réglages : la mesure reste autorisée comme TEST DE L'OUTIL, avec
     l'avertissement « mesures non représentatives du pipeline ».
@@ -111,7 +113,7 @@ Usage :
     python SEM_so101_camera_reference.py
 
 Auteur: Service Écoles-Médias (SEM)
-Version: 8.0 (multi-caméra + déploiement étape 6 + étapes 1-4 + API étape 5 du plan « Référence visuelle caméra »)
+Version: 8.1 (multi-caméra + déploiement étape 6 + étapes 1-4 + API étape 5 ; + porte qualité référence anti-saturation + [R] réglages disponible même verrouillé)
 """
 
 import os
@@ -215,6 +217,21 @@ SEUILS = {
     "C9": (1.5, 3.0),     # sigma_t (absolu) ; 🔴 = mesure instable, diagnostic suspendu
 }
 SATURATION_ABS_AVERTISSEMENT = 5.0   # % absolu bol : avertissement informatif (non bloquant)
+
+# ============================================
+# PORTE QUALITÉ DE LA RÉFÉRENCE (projet 2.0) — seuils PROVISOIRES
+# À ajuster ICI pendant la campagne de figeage, sans toucher à la logique.
+# But : refuser une référence MORTE (zone pilote OBLIGATOIRE ou bol saturé)
+# que la porte « ratios non calculables » (Ḡ < 1) ne détecte pas — un pixel
+# à 255 a perdu toute information de couleur tout en passant cette garde.
+# Les zones pilotes optionnelles saturées et les expositions limites sont
+# signalées (avertissement) sans bloquer.
+# ============================================
+REF_PILOTE_SAT_AVERT = 0.5     # % saturés zone pilote : avertissement
+REF_PILOTE_SAT_REFUS = 1.0     # % saturés zone pilote OBLIGATOIRE : refus (verrou dur)
+REF_PILOTE_Y_INDIC   = 245.0   # Y zone pilote : indicateur de quasi-saturation (avertissement)
+REF_PILOTE_Y_BAS     = 60.0    # Y zone pilote : indicateur de sous-exposition (avertissement)
+REF_BOL_SAT_REFUS    = 30.0    # % saturés bol : refus (sentinelle morte)
 
 # ============================================
 # CORRESPONDANCE RÉGLAGES TECHNIQUES ↔ INTERFACE GUVCVIEW
@@ -1265,6 +1282,59 @@ def capturer_reference(idx, mask_pts, mask_img, zones, verrouille):
                   f"{REF_SIGMA_T_MAX})")
         print("   Vérifie : automatismes caméra coupés ? lampe qui scintille ?")
         print("   mouvement dans la scène ? Puis recommence la capture.")
+        return
+
+    # ----- Porte qualité de la référence (projet 2.0) -----
+    # Refuse une référence MORTE que la porte « ratios non calculables » ne
+    # détecte pas : zone pilote OBLIGATOIRE saturée, ou bol mort. Une zone
+    # pilote OPTIONNELLE saturée et les expositions limites sont signalées
+    # (avertissement) sans bloquer si les obligatoires restent saines.
+    obligatoires = {nom for nom, oblig, _ in PROFIL["sequence_zones"]
+                    if oblig and nom in PROFIL["pilotes"]}
+    refus_qualite = []
+    avertissements = []
+    for nom in PROFIL["pilotes"]:
+        s = stats_ref.get(nom)
+        if s is None:
+            continue
+        sat = s["pct_satures"]
+        if sat > REF_PILOTE_SAT_REFUS and nom in obligatoires:
+            refus_qualite.append(
+                f"{nom} : {sat:.2f} % de pixels saturés "
+                f"(maximum {REF_PILOTE_SAT_REFUS} % sur une zone pilote obligatoire)")
+        elif sat > REF_PILOTE_SAT_AVERT:
+            etiquette = "optionnelle" if nom not in obligatoires else "à surveiller"
+            avertissements.append(f"{nom} : {sat:.2f} % saturés ({etiquette})")
+        if s["Y"] >= REF_PILOTE_Y_INDIC:
+            avertissements.append(f"{nom} : Y = {s['Y']:.0f} — proche de la saturation")
+        elif s["Y"] <= REF_PILOTE_Y_BAS:
+            avertissements.append(f"{nom} : Y = {s['Y']:.0f} — zone sombre (sous-exposée)")
+
+    if PROFIL.get("bol") and "bol" in stats_ref:
+        b = stats_ref["bol"]
+        bol_mort = ((b["Y"] >= 254.5 and b["sigma_Y"] < 0.5)
+                    or b["pct_satures"] > REF_BOL_SAT_REFUS)
+        if bol_mort:
+            refus_qualite.append(
+                f"bol : sentinelle morte (Y = {b['Y']:.0f}, "
+                f"sigma_Y = {b['sigma_Y']:.2f}, {b['pct_satures']:.0f} % saturés) "
+                f"— ne mesure plus la surexposition")
+        elif b["pct_satures"] > SATURATION_ABS_AVERTISSEMENT:
+            avertissements.append(
+                f"bol : {b['pct_satures']:.1f} % saturés "
+                f"(> {SATURATION_ABS_AVERTISSEMENT:.0f} % — surveille les reflets)")
+
+    if avertissements:
+        print("\n⚠️  Porte qualité — avertissements (non bloquants) :")
+        for a in avertissements:
+            print(f"   {a}")
+
+    if refus_qualite:
+        print("\n❌ Capture refusée — référence non exploitable (zone saturée) :")
+        for r in refus_qualite:
+            print(f"   {r}")
+        print("   Action : baisse l'exposition dans guvcview, réduis les reflets,")
+        print("   utilise une surface mate, puis recommence la capture.")
         return
 
     # ----- Frame témoin représentative (D3) -----
@@ -2461,7 +2531,7 @@ def main():
     clear_screen()
     print("""
 ╔══════════════════════════════════════════════════════════╗
-║   RÉFÉRENCE VISUELLE CAMÉRA — OUTIL & MODULE (v7)        ║
+║   RÉFÉRENCE VISUELLE CAMÉRA — OUTIL & MODULE (v8.1)      ║
 ║     Service Écoles-Médias (SEM) — DIP Genève             ║
 ╚══════════════════════════════════════════════════════════╝
     """)
@@ -2470,6 +2540,8 @@ def main():
     print("création de réglage caméra ; option [7] : recalibrage guidé,")
     print("pouvant modifier camera_settings.json après action explicite")
     print("via guvcview. Aucun script validé du pipeline n'est modifié.")
+    print("option [R] : créer ou refaire les réglages caméra avec guvcview,")
+    print("disponible même réglages déjà verrouillés (recrée ensuite [4]).")
 
     # 1) Choix de la caméra de travail
     print("\nQuelle caméra veux-tu travailler ?")
@@ -2593,6 +2665,7 @@ def executer_menu(idx, nom_camera, mode_integre=False):
             print("  [5] Afficher la référence active")
             print("  [6] Diagnostic de conformité (vs référence active)")
             print("  [7] Recalibrer pour REVENIR à la référence (ajuster jusqu'à 🟢)")
+            print("  [R] Refaire les réglages caméra avec guvcview (invalide la référence)")
         else:
             print("  [5] Afficher la référence active")
             print("  ([4] référence, [6] diagnostic, [7] recalibrage : INDISPONIBLES")
@@ -2607,16 +2680,22 @@ def executer_menu(idx, nom_camera, mode_integre=False):
         if not verrouille and choix in ('4', '6', '7'):
             print("⚠️  Indisponible : réglages non verrouillés — utilise [R].")
             continue
-        if not verrouille and choix == 'R':
+        if choix == 'R':
             if capturer_reglages_camera is None:
                 print(f"⚠️  Module {NOM_MODULE_CONFIG} introuvable — réglage impossible.")
                 continue
+            etait_verrouille = verrouille
             capturer_reglages_camera(f"/dev/video{idx}", NOM_CAMERA,
                                      forcer=True,
                                      titre=f"RÉGLAGES — {PROFIL['libelle']}")
             verrouille = appliquer_reglages_pipeline(idx)
             print("   " + ("✅ Réglages verrouillés." if verrouille
                            else "❌ Verrouillage toujours impossible."))
+            if verrouille and etait_verrouille and REF_FILE.exists():
+                print("   ⚠️  Réglages caméra modifiés et réappliqués.")
+                print("       Si tu as changé l'exposition, la référence active n'est")
+                print("       probablement plus comparable — recrée-la avec [4] avant")
+                print("       d'enregistrer.")
             continue
 
         if choix == '1':
