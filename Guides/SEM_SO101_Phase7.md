@@ -194,25 +194,44 @@ définies, référence active) et propose :
 | `[4]` | Créer / remplacer la **référence** active (scène standard requise) |
 | `[5]` | Afficher la référence active |
 | `[6]` | **Diagnostic** de conformité (vs référence active) |
-| `[7]` | **Recalibrer** pour revenir à la référence |
-| `[R]` | Régler la caméra avec **guvcview** (exposition / balance des blancs / gain) puis verrouiller — proposé tant que les réglages ne sont pas figés |
+| `[7]` | **Recalibrer** vers la référence (validation verte ou orange confirmée) |
+| `[R]` | Régler la caméra avec **guvcview** (exposition / balance des blancs / gain) puis verrouiller — **toujours disponible** : avant verrouillage pour définir les réglages, après pour les refaire (ce qui **invalide la référence**, à recréer avec `[4]`) |
 | `[S]` | Étape suivante (poursuivre l'enregistrement) |
 
 Concrètement, pour chaque caméra : si ses réglages ne sont pas encore figés,
-utilisez `[R]` (guvcview) pour les définir **une seule fois** ; définissez ses
-**zones** `[1]` ; créez sa **référence** `[4]` ; vérifiez avec le **diagnostic**
-`[6]`. Quand la caméra est prête, `[S]` passe à la suivante (puis à la suite du
-script).
+utilisez `[R]` (guvcview) pour les définir ; définissez ses **zones** `[1]` ;
+créez sa **référence** `[4]` ; vérifiez avec le **diagnostic** `[6]`. Si vous
+refaites les réglages plus tard avec `[R]`, **recréez ensuite la référence**
+avec `[4]`. Quand la caméra est prête, `[S]` passe à la suivante (puis à la
+suite du script).
 
-> **⚠️ Tant que les réglages ne sont pas verrouillés**, les options `[4]`,
-> `[6]` et `[7]` sont **indisponibles** : commencez par `[R]`. De même, `[2]`,
-> `[3]`, `[4]`, `[6]` et `[7]` exigent d'avoir d'abord défini les **zones**
-> `[1]`.
+> **⚠️ Conditions d'accès.** Les options `[4]`, `[6]` et `[7]` exigent des
+> réglages **verrouillés** : tant qu'ils ne le sont pas, commencez par `[R]`.
+> `[R]` reste **toujours disponible**, y compris une fois les réglages figés
+> (il sert alors à les refaire, ce qui invalide la référence). De même, `[2]`,
+> `[3]`, `[4]`, `[6]` et `[7]` exigent d'avoir d'abord défini les **zones** `[1]`.
+
+> **🛡️ Référence protégée contre la surexposition.** À la création `[4]`, le
+> script **refuse** d'enregistrer une référence saturée. Une **zone pilote
+> obligatoire** est refusée dès qu'elle dépasse **~1 % de pixels saturés**
+> (même sans être visuellement « cramée »), et le **bol** est refusé s'il
+> devient une **sentinelle morte** (uniformément blanc). Si `[4]` refuse,
+> réduisez l'exposition via `[R]` (guvcview, désactivez l'auto-exposition),
+> limitez les reflets si besoin, puis relancez `[4]`.
+
+> **🟠 Valider un écart non bloquant dans `[7]`.** Le recalibrage guidé vous
+> fait ajuster les réglages jusqu'au verdict 🟢. Mais si le seul écart restant
+> est **orange et non bloquant** (typiquement la *sentinelle couleur* — la pince
+> verte ou la pièce rose —, souvent décalée pour une raison **géométrique**, pas
+> de balance des blancs), `[V]` permet de **valider explicitement cet orange**
+> (après confirmation). Inutile alors de continuer à modifier la balance des
+> blancs : vous tourneriez en rond.
 
 > **💡 Pourquoi figer l'exposition et la balance des blancs ?** Pour que
 > **tous** les épisodes soient visuellement cohérents — condition importante
-> pour que le modèle apprenne correctement. Réglez chaque caméra **une seule
-> fois**, puis gardez les mêmes réglages d'une session à l'autre.
+> pour que le modèle apprenne correctement. Réglez chaque caméra pour obtenir
+> une image stable, puis gardez les mêmes réglages tant que la référence reste
+> valable. Si vous les changez avec `[R]`, recréez la référence avec `[4]`.
 
 **7. Récapitulatif, libération du Leader, connexion et verrouillage des caméras**
 
@@ -405,12 +424,13 @@ Chaque épisode produit :
 | Erreur "import cv2" | Mauvais environnement | `conda activate lerobot` |
 | Fenêtre vidéo ne s'ouvre pas | opencv-python-headless | Voir Phase 6, Étape 2 |
 | « Masque globale introuvable » au lancement | `camera_mask.json` absent | Lancer le script 7 (Phase 6) pour créer le masque |
-| Image trop claire/sombre ou couleurs fausses | Exposition/balance des blancs mal réglées | Au réglage de la caméra, choisir `[R]` (guvcview) et réajuster |
+| Image trop claire/sombre ou couleurs fausses | Exposition/balance des blancs mal réglées | Choisir `[R]` (guvcview) et réajuster ; si `[4]` **refuse** la référence (image saturée), réduire l'exposition via `[R]` puis recréer `[4]` |
 | « Verrouillage caméra incomplet » | `v4l2-ctl` absent ou contrôle non appliqué | Installer `v4l-utils` ; vérifier la caméra ; relancer |
 | Module `SEM_so101_camera_reference.py` absent | Module manquant dans le dossier | Le script s'arrête au démarrage : placer le module dans le dossier des scripts |
 | « Zones absentes » ou zones caduques | Zones non définies, ou masque/référence modifié | Menu de référence → `[1]` (re)définir les zones |
 | « Aucune référence active » | Référence non créée pour la caméra | Menu de référence → `[1]` zones, puis `[4]` créer la référence |
 | Diagnostic 🔴 ou contrôle avant bloc refusé | Image non conforme à la référence (lumière, cadrage, couleurs) | Suivre l'action recommandée : `[7]`/`[R]` recalibrage, ou `[M]` menu de référence |
+| Recalibrage `[7]` qui « boucle » (orange persistant) | Un critère non bloquant reste orange (ex. sentinelle couleur, souvent géométrique) ; la balance des blancs ne le corrigera pas | Dans `[7]`, valider avec `[V]` au lieu d'ajuster sans fin ; ou accepter l'orange au contrôle avant bloc |
 | Réglages caméra incompatibles avec la référence | Exposition / balance des blancs changées depuis la référence | Menu de référence → `[R]` régler puis verrouiller, ou recalibrer `[7]` |
 
 
