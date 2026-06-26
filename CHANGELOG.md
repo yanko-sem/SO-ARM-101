@@ -4,23 +4,30 @@ Toutes les modifications importantes du projet seront documentées dans ce fichi
 
 Le format s’inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le projet utilise une logique de versionnement stable à partir de la version `v1.0.0`.
 
-## [1.4.0] - 2026-06-24
+## [1.4.0] - 2026-06-26
 
-Refonte de la calibration (script 2) en parcours guidé Follower → Leader, et inventaire de référence des fichiers de données du pipeline.
+Fiabilisation de la définition de la **position de repos** (script 3) et de la chaîne de **référence visuelle des caméras** (module `SEM_so101_camera_reference.py`, version interne `8.2`), avec alignement des guides correspondants (phases 3, 7, 10).
 
 ### Modifié
 
-- **Refonte du script de calibration** (script 2) : architecture à deux niveaux. Menu principal affichant l'état des calibrations (Follower / Leader) et proposant `[1]` calibration complète guidée — **Follower d'abord (obligatoire, 6 servos), puis Leader (optionnel, recommandé)** — ou `[2]` recalibration d'un seul bras (maintenance, granularité libre). Confirmation de rôle explicite avant chaque bras (les deux SO-ARM 101 étant électriquement indiscernables). Un seul bras branché à la fois ; libération des 6 servos avant tout débranchement ; récapitulatif final à la sortie. Dans le sous-menu servo, l'option de sortie passe de `[Q]` à `[R] Retour au menu principal`.
-- **Maintien des servos au centre** (script 2) : après un recentrage **confirmé**, le servo reste bloqué au centre (facilite l'alignement des servos suivants) au lieu d'être libéré. Fail-closed : recentrage non confirmé → servo libéré (jamais bloqué dans une pose non maîtrisée). Libération de tous les servos garantie à la sortie.
+- **Refonte du flux de calibration** (script 2) : le mode `[1]` calibre le **Follower en premier** (bras critique), puis enchaîne automatiquement le Leader. Les 6 servos d'un bras sont mesurés **en mémoire** ; le fichier de calibration n'est écrit qu'**après validation** du tableau **ancien → nouveau** (`[O]` valider, `[N]` recommencer les 6, `[A]` abandonner). Une interruption ou un abandon **conserve l'ancienne calibration**. Après un Follower validé, un Leader non finalisé devient un **avertissement non bloquant** (le bras critique reste enregistré).
+- **Mode maintenance ciblé** (script 2) : le mode `[2]` recalibre explicitement **un seul bras** (Follower ou Leader) et **sauvegarde immédiatement** chaque servo validé — distinct du mode complet `[1]` à écriture différée.
+- **Position de repos = Follower uniquement** (script 3) : la capture (`C`) et la saisie manuelle (`M`) ne sont proposées que lorsque le **Follower** est monitoré ; sur le Leader, le monitoring reste disponible mais ces touches sont refusées. Suppression du contournement « taper OUI » qui permettait d'enregistrer un repos depuis le Leader. Le repos est désormais affiché comme « référence Follower ». (`repos_position.json` est unique et partagé par les scripts 4, 5, 6, 7, 8 et 11 ; le Follower est le bras de référence du déploiement.)
+- **Marge de tolérance et bornage du repos** (script 3) : une position est acceptée dans `[min − 2 %, max + 2 %]` de l'amplitude calibrée (jeu mécanique en butée), mais le **pourcentage enregistré reste borné à `[0, 100]`** — cohérent avec les consommateurs (scripts 11 et 4) qui rejettent toute valeur hors `[0, 100]` et bornent les cibles de déploiement à `[min, max]`.
+- **Récapitulatifs du repos** (script 3) : affichage distinct du **% brut** (position physique, non borné, informatif) et du **% enregistré** (borné, réellement stocké) ; en saisie manuelle (`M`), une **table de référence** (position actuelle, %, MIN/CENTRE/MAX, repos déjà enregistré) précède la saisie.
+- **Réglages caméra `[R]` toujours accessibles** (module de référence caméra) : le (re)réglage via guvcview est désormais disponible **même lorsque les réglages sont verrouillés** ; refaire les réglages **invalide la référence**, qui doit alors être recréée avec `[4]`.
+- **Validation d'un écart orange `[V]` dans le recalibrage guidé `[7]`** (module de référence caméra) : lorsque le verdict global est 🟠 (jamais 🔴), une option `[V]` permet d'**accepter explicitement** l'écart non bloquant (typiquement la *sentinelle couleur*, souvent d'origine géométrique) après confirmation forte. Supprime la boucle de réglage sans issue lorsque seul un critère plafonné-orange subsiste. En déploiement (script 11), la validation se fait **sans modifier** la référence du dataset (lecture seule). Libellé de `[7]` ajusté : « Recalibrer vers la référence (validation verte ou orange confirmée) ».
 
-### Corrigé
+### Sécurité
 
-- **Message du flux « T »** (script 2) : en cas d'échec d'un servo pendant la calibration des six, le message précise désormais que seul *ce* servo n'est pas sauvegardé, et une ligne d'information rappelle que les servos déjà validés restent enregistrés.
+- **Sécurisation de la calibration** (script 2) : **détection fail-closed** d'un mauvais nombre d'adaptateurs branchés (refus de la session), **confirmation explicite du rôle** du bras (Leader/Follower indiscernables électriquement), **refus des amplitudes trop faibles** (`< 500` ticks), **conservation de l'ancienne calibration** en cas d'échec ou d'abandon, et **avertissement anti-chute** avant le relâchement du couple. Un statut interne non nul en lecture est **signalé sans bloquer** tant que la communication reste valide.
+- **Porte qualité anti-saturation à la création de référence `[4]`** (module de référence caméra) : la capture est **refusée** si une **zone pilote obligatoire** dépasse ~1 % de pixels saturés, ou si le **bol** devient une **sentinelle morte** (`Y ≥ 254.5` et `sigma_Y < 0.5`, ou > 30 % de pixels saturés). Empêche d'enregistrer une référence surexposée, inexploitable pour le diagnostic ultérieur.
 
 ### Documentation
 
-- **Nouveau `README_fichiers.md`** : inventaire de référence des principaux fichiers lus/écrits par le pipeline hors scripts (calibrations, masque, réglages et références caméra, datasets bruts et consolidés, checkpoints, fichiers d'état), avec rôle, écrivain et lecteurs, établi à partir du code réel.
-- **Guide Phase 3 mis à jour** : nouveau menu de calibration (Follower d'abord, sous-menu servo `[R]`), confirmation de rôle, maintien des servos au centre, récapitulatif final, et clarification du comportement en cas d'échec partiel du Follower.
+- **Guide Phase 3** aligné sur la refonte de la **calibration** et du **repos** : parcours Follower puis Leader, écriture différée en mode `[1]`, mode maintenance `[2]`, confirmation de rôle, avertissement anti-chute, gestion des statuts internes ; puis repos Follower-uniquement (sécurités, marge 2 % et bornage, modes `C`/`M`, table de référence, récapitulatif des touches).
+- **Guide Phase 7** aligné sur le module caméra `8.2` : `[R]` toujours disponible et son effet sur la référence, porte qualité anti-saturation, validation orange `[V]` dans `[7]`, entrées de dépannage correspondantes ; suppression des formulations « une seule fois » devenues fausses.
+- **Guide Phase 10** : le recalibrage de déploiement peut se valider en 🟢 **ou** sur un 🟠 confirmé via `[V]` (sans modifier la référence du dataset).
 
 ## [1.3.0] - 2026-06-22
 
