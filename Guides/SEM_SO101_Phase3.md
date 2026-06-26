@@ -307,14 +307,14 @@ Tapez `L` ou `F` (choix explicite : une entrée vide ou invalide est redemandée
 
 Sous le tableau, deux touches permettent de créer ou modifier le repos :
 
-- **`C`** — **capture** la position physique actuelle du bras. Placez le bras à la main dans la pose de repos souhaitée, pressez `C`, vérifiez le récapitulatif (ticks, %, contrôle des limites), puis confirmez par `O`.
-- **`M`** — **saisie manuelle** des 6 valeurs en ticks (le script vérifie que chaque valeur est dans les limites de calibration).
+- **`C`** — **capture** la position physique actuelle du bras. Placez le bras à la main dans la pose de repos souhaitée, pressez `C`, vérifiez le récapitulatif (**ticks, % brut, % enregistré, limites**), puis confirmez par `O`.
+- **`M`** — **saisie manuelle** des 6 valeurs en ticks. Le script affiche d'abord une **table de référence** (position actuelle, % brut, MIN, CENTRE, MAX, repos déjà enregistré), puis vérifie que chaque valeur est dans les limites de calibration.
 
 Dans les deux cas, un récapitulatif s'affiche avant la confirmation, puis la position est enregistrée dans `repos_position.json` (écriture atomique).
 
-> **🔒 Sécurités à l'enregistrement :** une position **hors des limites** de calibration est refusée (repositionnez le bras et recommencez) ; et si vous n'êtes **pas sur le FOLLOWER**, le script demande de taper `OUI` en toutes lettres pour confirmer. En mode `C`, si la **communication** avec un servo échoue, la capture est annulée ; un statut interne non nul est, lui, **signalé sans bloquer** (voir l'encadré en Étape 3).
+> **🔒 Sécurités à l'enregistrement :** une position **hors des limites** de calibration (au-delà d'une **marge de 2 %** de l'amplitude) est refusée (repositionnez le bras et recommencez) ; le **pourcentage enregistré reste borné à [0, 100]**. En mode `C`, si la **communication** avec un servo échoue, la capture est annulée ; un statut interne non nul est, lui, **signalé sans bloquer** (voir l'encadré en Étape 3).
 
-> **💡 Recommandation :** capturez la position de repos depuis le **FOLLOWER** — c'est lui qui sert de référence au déploiement. Le script le rappelle si vous monitorez le Leader.
+> **🔒 Repos = Follower uniquement.** La position de repos se capture **uniquement sur le FOLLOWER** — c'est elle qui sert de référence au déploiement autonome et de point de retour commun à tous les scripts. Sur le **Leader**, le monitoring reste disponible mais les touches `C`/`M` ne sont **pas** proposées ; si vous les pressez, le script **refuse** avec un message clair. Le repos est d'ailleurs affiché comme « **référence Follower** ».
 
 **Quitter**
 
@@ -394,8 +394,8 @@ python SEM_so101_3_monitor.py
 - `R` — Retour au menu principal (libère les servos du bras courant)
 
 **Touches (monitoring/repos, script 3) :**
-- `C` — Capturer la position de repos (position physique actuelle)
-- `M` — Saisie manuelle des 6 valeurs (ticks)
+- `C` — Capturer la position de repos (position physique actuelle) — **uniquement si le Follower est monitoré**
+- `M` — Saisie manuelle des 6 valeurs (ticks) — **uniquement si le Follower est monitoré**
 - `Ctrl+C` — Quitter (libère les servos et ferme le port)
 
 
