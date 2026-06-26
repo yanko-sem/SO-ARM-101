@@ -3,7 +3,7 @@
 Module SEM_so101_camera_reference.py
 Service Écoles-Médias (SEM) - DIP Genève
 
-RÉFÉRENCE VISUELLE CAMÉRA — OUTIL & MODULE (v8.1, multi-caméra)
+RÉFÉRENCE VISUELLE CAMÉRA — OUTIL & MODULE (v8.2, multi-caméra)
 ============================================================
 Fichier : SEM_so101_camera_reference.py (ex-SEM_camera_reference.py)
 
@@ -113,7 +113,7 @@ Usage :
     python SEM_so101_camera_reference.py
 
 Auteur: Service Écoles-Médias (SEM)
-Version: 8.1 (multi-caméra + déploiement étape 6 + étapes 1-4 + API étape 5 ; + porte qualité référence anti-saturation + [R] réglages disponible même verrouillé)
+Version: 8.2 (multi-caméra + déploiement étape 6 + étapes 1-4 + API étape 5 ; + porte qualité référence anti-saturation + [R] réglages disponible même verrouillé + [V] valider à l'orange dans [7])
 """
 
 import os
@@ -2073,15 +2073,18 @@ def recalibrage_guide(idx, mask_pts, mask_img, zones, verrouille, ecrire_referen
                 # 'A' → on retombe dans la phase d'ajustement ci-dessous
             action_camera = _afficher_aide_guvcview(resultats, cour, refs, zones)
 
+        peut_valider_orange = (global_v == "🟠")
+        print()
+        if peut_valider_orange:
+            print("  [V]      : valider ces réglages malgré l'orange")
         if action_camera:
-            print("\n  [A]      : ajuster les réglages (guvcview)")
-        else:
-            print()
+            print("  [A]      : ajuster les réglages (guvcview)")
         print("  [Entrée] : remesurer sans ajuster")
         print("  [Q]      : abandonner le recalibrage")
         while True:
             rep = input("Choix : ").strip().upper()
-            if rep in ("", "Q") or (rep == "A" and action_camera):
+            if (rep in ("", "Q") or (rep == "A" and action_camera)
+                    or (rep == "V" and peut_valider_orange)):
                 break
             if rep == "A":
                 print("   ⚠️  [A] non proposé ici : écart purement LOCAL —")
@@ -2090,6 +2093,38 @@ def recalibrage_guide(idx, mask_pts, mask_img, zones, verrouille, ecrire_referen
                 print(f"   ⚠️  Saisie '{rep}' non reconnue.")
         if rep == "Q":
             print("   Recalibrage abandonné.")
+            return
+        if rep == "V":
+            # Validation explicite à l'orange : l'utilisateur accepte un écart
+            # non bloquant (jamais proposé au 🔴). On liste les critères non
+            # verts et on exige une confirmation forte avant d'écrire.
+            non_verts = [(code, libelle, verdict, texte)
+                         for code, libelle, verdict, texte in resultats
+                         if verdict != "🟢"]
+            print("\n⚠️  Tu vas accepter un recalibrage encore ORANGE.")
+            print("   Critères non verts :")
+            for code, libelle, verdict, texte in non_verts:
+                print(f"     {verdict} {code} {libelle} — {texte}")
+            if [c[0] for c in non_verts] == ["C8"]:
+                print("   ℹ️  Écart sur la sentinelle couleur — souvent d'origine")
+                print("       géométrique (position de la pièce / de la pince),")
+                print("       pas la balance des blancs (ne la retouche pas).")
+            conf = input("\n   Tape OUI pour enregistrer ces réglages "
+                         "malgré l'orange : ").strip().upper()
+            if conf != "OUI":
+                print("   Validation annulée — nouvelle mesure.")
+                continue
+            actuels = (charger_reglages_camera(NOM_CAMERA)
+                       if charger_reglages_camera else None)
+            if not actuels:
+                print("   ⚠️  Réglages actuels illisibles — non enregistrés.")
+                return
+            if not ecrire_reference:
+                print("   ℹ️  Mode déploiement : référence du dataset non modifiée.")
+            elif _ecrire_recalibrage_reference(actuels):
+                print("   ✅ Recalibrage accepté (orange) enregistré dans la")
+                print("      référence (reglages_recalibres). Le diagnostic [6]")
+                print("      acceptera désormais ces réglages.")
             return
         if rep == "A":
             # guvcview a besoin d'un accès exclusif au device : aucune
@@ -2531,7 +2566,7 @@ def main():
     clear_screen()
     print("""
 ╔══════════════════════════════════════════════════════════╗
-║   RÉFÉRENCE VISUELLE CAMÉRA — OUTIL & MODULE (v8.1)      ║
+║   RÉFÉRENCE VISUELLE CAMÉRA — OUTIL & MODULE (v8.2)      ║
 ║     Service Écoles-Médias (SEM) — DIP Genève             ║
 ╚══════════════════════════════════════════════════════════╝
     """)
@@ -2664,7 +2699,7 @@ def executer_menu(idx, nom_camera, mode_integre=False):
             print("  [4] Créer / remplacer la référence (scène standard requise)")
             print("  [5] Afficher la référence active")
             print("  [6] Diagnostic de conformité (vs référence active)")
-            print("  [7] Recalibrer pour REVENIR à la référence (ajuster jusqu'à 🟢)")
+            print("  [7] Recalibrer vers la référence (validation verte ou orange confirmée)")
             print("  [R] Refaire les réglages caméra avec guvcview (invalide la référence)")
         else:
             print("  [5] Afficher la référence active")
