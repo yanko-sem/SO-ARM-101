@@ -122,8 +122,10 @@ verdict s'affiche avec les chiffres :
 | 🔴 | Trop éloigné du dataset | `[R]` recalibrer / `[Q]` (pas de passage en force) |
 
 Le recalibrage `[R]` vous guide (guvcview) pour ramener l'image vers la
-référence du dataset, jusqu'au 🟢. **L'inférence ne démarre que si les deux
-caméras sont autorisées.**
+référence du dataset, jusqu'au 🟢 — ou, si le seul écart restant est un 🟠
+**non bloquant**, vous pouvez le **valider explicitement avec `[V]`** (la
+référence du dataset n'est pas modifiée). **L'inférence ne démarre que si les
+deux caméras sont autorisées.**
 
 > **💡 Pourquoi contre le dataset et pas en local ?** Le modèle a appris dans
 > les conditions visuelles du dataset. La référence qui fait foi est donc
@@ -195,7 +197,7 @@ Si le comportement est mauvais :
 | Verrouillage caméra incomplet | v4l2 / caméra | Le script s'arrête (fail-closed) ; vérifier les caméras puis relancer |
 | Aucun port USB détecté | Branchement / permissions | Vérifier le câble et le groupe `dialout` |
 | « Masque globale introuvable » → arrêt | `camera_mask.json` manquant | Le créer (script 7, Phase 6) ; il est obligatoire au déploiement |
-| Déploiement annulé : contrôle caméra non concluant | Éclairage ≠ dataset | Au verdict 🟠/🔴, utiliser `[R]` pour recalibrer jusqu'au 🟢 |
+| Déploiement annulé : contrôle caméra non concluant | Éclairage ≠ dataset | Au verdict 🟠/🔴, utiliser `[R]` pour recalibrer jusqu'au 🟢 (ou valider un 🟠 non bloquant avec `[V]`) |
 | « références partielles » → arrêt | Une seule des 2 références dans le dataset | Reconsolider le dataset (Phase 8) ou choisir un autre modèle |
 | Le bras bouge de façon erratique | Incohérence entraînement↔déploiement | Vérifier masque, réglages caméra, résolution, positions des caméras |
 | Le bras ne fait pas la tâche | Modèle insuffisant | Plus d'épisodes + réentraînement (Phases 7-9) |
@@ -225,7 +227,7 @@ python SEM_so101_11_deploy.py
 | Choisir le checkpoint | numéro ou Entrée (dernier) |
 | Mode LEGACY (dataset ancien) | L (références locales) / Q |
 | Identifier les caméras | G (Globale) / P (Pince) / Q (passer) |
-| Recalibrer une caméra (🟠/🔴) | R (guidé jusqu'au 🟢) |
+| Recalibrer une caméra (🟠/🔴) | R (guidé jusqu'au 🟢, ou `[V]` pour valider un 🟠) |
 | Pause / Reprendre | P |
 | Fin d'essai (retour repos) | R |
 | Nouvel essai | Entrée |
