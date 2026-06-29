@@ -2774,6 +2774,248 @@ def executer_menu(idx, nom_camera, mode_integre=False):
             print("⚠️  Choix non reconnu.")
 
 
+
+# ============================================
+# PLANCHER QUALITÉ ABSOLU (projet 2.0, V1) — primitive partagée
+# Source unique de vérité du contrôle « image exploitable », appelé par le
+# script 8 (enregistrement) puis le script 11 (déploiement). AUCUN matching
+# colorimétrique, AUCUNE comparaison à une référence : on mesure des grandeurs
+# ABSOLUES (Y, % saturés, % sombres, sigma_t) sur les zones. Lecture seule,
+# aucune écriture. Voir spec « verrou §4 bis » v1.0.
+# ============================================
+
+# Seuils de NOIR au déploiement/enregistrement — PROVISOIRES (campagne de figeage)
+REF_NOIR_MEDY_REFUS = 30.0     # médiane Y ancre : refus (image noire / objectif obscurci)
+REF_NOIR_PCT_AVERT  = 20.0     # % sombres ancre : avertissement
+REF_NOIR_PCT_REFUS  = 60.0     # % sombres ancre : refus (noir massif)
+
+
+def _roles_zones_absolu(profil):
+    """Rôle de chaque zone pour le plancher absolu, dérivé du PROFIL :
+      'ancre'      : zone pilote OBLIGATOIRE (surface de travail) — 🔴 possible
+      'bol'        : sentinelle de surexposition absolue — 🔴 possible
+      'secondaire' : zone pilote optionnelle — plafonnée à 🟠
+      'debug'      : ancienne sentinelle couleur (rose/pince_verte) — HORS verdict
+    Aucune comparaison couleur : 'rose'/'pince_verte' ne servent plus de repère
+    colorimétrique, seulement de mesure journalisée."""
+    sentinelle = profil.get("sentinelle")
+    pilotes = profil.get("pilotes", [])
+    roles = {}
+    for nom, obligatoire, _couleur in profil.get("sequence_zones", []):
+        if nom == sentinelle:
+            roles[nom] = "debug"
+        elif nom == "bol" and profil.get("bol"):
+            roles[nom] = "bol"
+        elif nom in pilotes:
+            roles[nom] = "ancre" if obligatoire else "secondaire"
+        else:
+            roles[nom] = "debug"
+    return roles
+
+
+def _verdict_zone_absolu(s, role):
+    """Verdict 🟢/🟠/🔴 d'UNE zone, sur grandeurs ABSOLUES uniquement.
+    s : stats moyennées (Y, med_Y, pct_satures, pct_sombres, sigma_t).
+    role : 'ancre' | 'bol' | 'secondaire'. 'secondaire' est plafonné à 🟠.
+    Retourne (verdict, [raisons])."""
+    sat_avert = SATURATION_ABS_AVERTISSEMENT if role == "bol" else REF_PILOTE_SAT_AVERT
+    sat_refus = REF_BOL_SAT_REFUS            if role == "bol" else REF_PILOTE_SAT_REFUS
+
+    rouge, orange = [], []
+    # --- Cramé (saturation absolue) ---
+    if s["pct_satures"] > sat_refus:
+        rouge.append(f"saturés {s['pct_satures']:.2f}% > {sat_refus:.0f}%")
+    elif s["pct_satures"] > sat_avert:
+        orange.append(f"saturés {s['pct_satures']:.2f}% > {sat_avert:.1f}%")
+    # --- Noir (luminance / pixels sombres) : ancre & secondaire, pas le bol ---
+    if role != "bol":
+        if s["med_Y"] < REF_NOIR_MEDY_REFUS:
+            rouge.append(f"médiane Y {s['med_Y']:.0f} < {REF_NOIR_MEDY_REFUS:.0f}")
+        if s["pct_sombres"] > REF_NOIR_PCT_REFUS:
+            rouge.append(f"sombres {s['pct_sombres']:.1f}% > {REF_NOIR_PCT_REFUS:.0f}%")
+        elif s["pct_sombres"] > REF_NOIR_PCT_AVERT:
+            orange.append(f"sombres {s['pct_sombres']:.1f}% > {REF_NOIR_PCT_AVERT:.0f}%")
+        if s["Y"] >= REF_PILOTE_Y_INDIC:
+            orange.append(f"Y {s['Y']:.0f} >= {REF_PILOTE_Y_INDIC:.0f} (quasi-saturé)")
+        elif s["Y"] <= REF_PILOTE_Y_BAS:
+            orange.append(f"Y {s['Y']:.0f} <= {REF_PILOTE_Y_BAS:.0f} (sous-exposé)")
+    # --- Instabilité temporelle (absolue) ---
+    if s["sigma_t"] > SEUILS["C9"][1]:
+        rouge.append(f"sigma_t {s['sigma_t']:.2f} > {SEUILS['C9'][1]}")
+    elif s["sigma_t"] > SEUILS["C9"][0]:
+        orange.append(f"sigma_t {s['sigma_t']:.2f} > {SEUILS['C9'][0]}")
+
+    if rouge and role != "secondaire":
+        return "🔴", rouge + orange
+    if rouge or orange:                       # secondaire : 🔴 rétrogradé en 🟠
+        return "🟠", rouge + orange
+    return "🟢", []
+
+
+def evaluer_qualite_image_absolue(idx, mask_img, zones, profil):
+    """Plancher qualité ABSOLU — primitive partagée (script 8 puis script 11).
+    Mesure REF_N_ECHANTILLONS échantillons et juge si l'image est PHYSIQUEMENT
+    EXPLOITABLE maintenant (sombre ? cramée ? instable ?), SANS aucune
+    comparaison à une référence ni matching couleur. Lecture seule.
+
+    Rôles (cf. _roles_zones_absolu) : ancres pilotes + bol peuvent bloquer
+    (🔴) ; zone optionnelle plafonnée à 🟠 ; rose/pince_verte mesurées mais
+    HORS verdict (champ 'debug'). Une zone décisionnelle (ancre OU bol) absente => 🔴
+    (jamais d'exclusion silencieuse — invariant fail-closed).
+
+    Retourne un dict :
+      verdict      : "🟢" | "🟠" | "🔴"
+      bloque       : True ssi 🔴
+      details      : [ (zone, role, verdict, [raisons]) ] (zones du verdict)
+      debug        : { zone_hors_verdict: {Y, med_Y, pct_satures, pct_sombres, sigma_t} }
+      indisponible : str | None
+      date"""
+    date = datetime.now().isoformat(timespec="seconds")
+
+    res = _acquerir_echantillons(idx, mask_img, zones, REF_N_ECHANTILLONS,
+                                 STABILITE_INTERVALLE)
+    if res is None:
+        return {"verdict": "🔴", "bloque": True, "details": [],
+                "debug": {}, "indisponible": "acquisition caméra impossible",
+                "date": date}
+    _, _, brut = res
+
+    # Moyennes par zone + sigma_t (std temporel de Y) — grandeurs ABSOLUES
+    mesures = {}
+    for nom, liste in brut.items():
+        if not liste:
+            continue
+        m = {c: float(np.mean([e[c] for e in liste]))
+             for c in ("Y", "med_Y", "pct_satures", "pct_sombres")}
+        m["sigma_t"] = float(np.std([e["Y"] for e in liste]))
+        mesures[nom] = m
+
+    roles = _roles_zones_absolu(profil)
+    decisionnelles = [n for n, r in roles.items() if r in ("ancre", "bol")]
+    manquantes = [n for n in decisionnelles if n not in mesures]
+    if manquantes:
+        return {"verdict": "🔴", "bloque": True, "details": [], "debug": {},
+                "indisponible": "zone(s) décisionnelle(s) absente(s) : "
+                                + ", ".join(manquantes), "date": date}
+
+    details, debug, verdicts = [], {}, []
+    for nom, m in mesures.items():
+        role = roles.get(nom, "debug")
+        if role == "debug":
+            debug[nom] = m
+            continue
+        v, raisons = _verdict_zone_absolu(m, role)
+        details.append((nom, role, v, raisons))
+        verdicts.append(v)
+
+    verdict = max(verdicts, key=lambda v: _SEVERITE[v]) if verdicts else "🔴"
+    return {"verdict": verdict, "bloque": verdict == "🔴",
+            "details": details, "debug": debug,
+            "indisponible": None if verdicts else "aucune zone décisionnelle",
+            "date": date}
+
+def controle_qualite_camera(idx, nom_camera, contexte=""):
+    """Contrôle « image exploitable » d'UNE caméra — V1 (sans référence).
+    Produit une image propre de séance, la VERROUILLE, puis juge le PLANCHER
+    ABSOLU (evaluer_qualite_image_absolue). AUCUN matching couleur, AUCUNE
+    comparaison à une référence, AUCUN recalibrage vers référence.
+
+    Flux : réglages (image propre AVANT verrouillage) -> masque + zones
+    (définies si absentes, SANS référence) -> mesure absolue en boucle.
+    Fail-closed strict : tout [R] exige un VERROUILLAGE réussi avant toute
+    mesure ; clavier strict (seules les touches proposées agissent, toute
+    autre touche est rejetée SANS mesurer ; un [R] échoué ne remesure pas).
+
+    PRÉ-REQUIS : caméra idx déjà identifiée et LIBÉRÉE par l'appelant.
+    Retourne {"autorise": bool, "verdict": "🟢|🟠|🔴"}."""
+    selectionner_profil(nom_camera)
+    profil = PROFILS[nom_camera]
+    if contexte:
+        print(f"\n📷 Contrôle qualité — {profil['libelle']} ({contexte})")
+
+    # 1) Image propre de séance AVANT verrouillage (réglages existants / [R]).
+    #    On ne sort qu'avec un verrouillage RÉUSSI ; [R] échoué ou touche
+    #    inconnue ne fait pas avancer (fail-closed, clavier strict).
+    verrouille = appliquer_reglages_pipeline(idx)
+    while not verrouille:
+        print(f"\n⚠️  Réglages absents ou verrouillage échoué — {profil['libelle']}.")
+        print("  [R] régler avec guvcview puis verrouiller     [Q] quitter")
+        choix = input("Choix : ").strip().upper()
+        if choix == "R":
+            if capturer_reglages_camera is None:
+                print(f"   ⚠️  Module {NOM_MODULE_CONFIG} introuvable — réglage impossible.")
+                continue
+            capturer_reglages_camera(f"/dev/video{idx}", NOM_CAMERA, forcer=True,
+                                     titre=f"RÉGLAGES — {profil['libelle']}")
+            if not appliquer_reglages_pipeline(idx):
+                print("   ❌ Verrouillage échoué — image NON verrouillée.")
+                continue
+            verrouille = True
+        elif choix == "Q":
+            print("   Contrôle annulé.")
+            return {"autorise": False, "verdict": "🔴"}
+        else:
+            print(f"   ⚠️  Saisie '{choix}' non reconnue — R ou Q.")
+
+    # 2) Masque (script 7) + zones (définies si absentes, SANS référence).
+    if profil["masque"]:
+        mask_pts = charger_masque()
+        if mask_pts is None:
+            print(f"\n❌ Masque introuvable : {MASK_FILE} — crée-le avec le script 7.")
+            return {"autorise": False, "verdict": "🔴"}
+    else:
+        mask_pts = []
+    mask_img = construire_mask_image(mask_pts, LARGEUR, HAUTEUR)
+    zones = charger_zones(mask_pts, mask_img)
+    if not zones:
+        print("\nℹ️  Aucune zone définie — définition maintenant (sans référence).")
+        zones = definir_zones(idx, mask_pts, mask_img)
+        if not zones:
+            print("   ❌ Zones non définies — contrôle annulé.")
+            return {"autorise": False, "verdict": "🔴"}
+
+    # 3) Plancher qualité ABSOLU, en boucle sur 🔴 (clavier strict R/E/Q).
+    while True:
+        res = evaluer_qualite_image_absolue(idx, mask_img, zones, profil)
+        verdict = res["verdict"]
+        for nom, role, v, raisons in res["details"]:
+            if v != "🟢":
+                print(f"   {v} {nom} ({role}) : {', '.join(raisons)}")
+        if res.get("indisponible"):
+            print(f"   ⚠️  {res['indisponible']}")
+        if verdict != "🔴":
+            if verdict == "🟠":
+                ok_log = _journaliser_evenement(contexte or "controle", "🟠",
+                                                res["details"], "continue (proche limite)")
+                trace = "journalisé" if ok_log else "journalisation impossible"
+                print(f"   🟠 Exploitable mais proche d'une limite — on continue ({trace}).")
+            return {"autorise": True, "verdict": verdict}
+
+        # 🔴 : choix opérateur SANS remesurer tant qu'on ne le décide pas.
+        remesurer = False
+        while not remesurer:
+            print(f"\n🔴 {profil['libelle']} : image inexploitable.")
+            print("  [R] régler une image propre (guvcview, sans référence)   "
+                  "[E] remesurer   [Q] quitter")
+            choix = input("Choix : ").strip().upper()
+            if choix == "R":
+                if capturer_reglages_camera is None:
+                    print(f"   ⚠️  Module {NOM_MODULE_CONFIG} introuvable — réglage impossible.")
+                    continue
+                capturer_reglages_camera(f"/dev/video{idx}", NOM_CAMERA, forcer=True,
+                                         titre=f"RÉGLAGES — {profil['libelle']}")
+                if not appliquer_reglages_pipeline(idx):
+                    print("   ❌ Verrouillage échoué — image NON verrouillée, pas de mesure.")
+                    continue
+                remesurer = True             # verrouillage OK -> on remesure
+            elif choix == "E":
+                remesurer = True             # remesure explicite
+            elif choix == "Q":
+                return {"autorise": False, "verdict": "🔴"}
+            else:
+                print(f"   ⚠️  Saisie '{choix}' non reconnue — R, E ou Q.")
+
+
 if __name__ == "__main__":
     try:
         main()
