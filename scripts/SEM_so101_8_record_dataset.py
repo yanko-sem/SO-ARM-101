@@ -368,8 +368,11 @@ def clear_screen():
 
 MIN_AMPLITUDE = 500
 
+# Dossier de calibration partagé (même convention que le module caméra et les autres scripts)
+CALIB_DIR = Path.home() / "lerobot" / "calibration"
+
 # Fichier externe centralisant la position repos (partage entre tous les scripts)
-REPOS_FILE = os.path.expanduser("~/lerobot/calibration/repos_position.json")
+REPOS_FILE = CALIB_DIR / "repos_position.json"
 
 def detect_ports():
     """Détecte les ports des robots (liste).
@@ -444,7 +447,7 @@ def cleanup_ports(lp=None, fp=None, lk=None, fk=None, release=True):
 
 def charger_calibration(robot_type):
     """Charge la calibration d'un robot (ou None si absente/illisible)."""
-    calib_file = os.path.expanduser(f"~/lerobot/calibration/{robot_type}_calibration.json")
+    calib_file = CALIB_DIR / f"{robot_type}_calibration.json"
     if os.path.exists(calib_file):
         try:
             with open(calib_file, 'r') as f:
@@ -528,7 +531,7 @@ def charger_config_teleoperation(mode):
     VALIDÉE (entiers 1-6, sans doublon ; liste vide = tout-COPIE, valide), ou None
     si le fichier est ABSENT, illisible ou mal formé. Le script 6 REFUSE alors de
     lancer ce mode (au démarrage) ou de basculer dessus (flip F)."""
-    config_file = os.path.expanduser(f"~/lerobot/calibration/teleoperation_config_{mode}.json")
+    config_file = CALIB_DIR / f"teleoperation_config_{mode}.json"
     if not os.path.exists(config_file):
         return None
     miroir = charger_servos_miroir_fichier(config_file)
@@ -841,7 +844,7 @@ def choisir_mode():
         print("❌ Choix invalide : tapez C ou F")
 
 # Fichier externe du masque de zone utile (cree par le script 7, partage avec le 11)
-MASK_FILE = os.path.expanduser("~/lerobot/calibration/camera_mask.json")
+MASK_FILE = CALIB_DIR / "camera_mask.json"
 
 
 def charger_masque_globale():
@@ -903,9 +906,8 @@ def construire_mask_image(points, width, height):
 class DatasetRecorder:
     def __init__(self, base_name="so101_pick_place"):
         self.base_name = base_name
-        self.base_path = Path(os.path.expanduser(
-            f"~/.cache/huggingface/lerobot/local/{base_name}"
-        ))
+        self.base_path = (Path.home() / ".cache" / "huggingface"
+                          / "lerobot" / "local" / base_name)
         self.episodes_par_position = {i: 0 for i in range(1, 6)}
         self._charger_etat()
         self.current_episode_data = []
