@@ -11,7 +11,14 @@ Double rôle (décision validée) :
   1. OUTIL autonome (menu) : mesure, référence, diagnostic, recalibrage.
   2. MODULE importé par les scripts du pipeline (étapes 5-6) — l'import
      ne déclenche ni menu ni caméra (garde __main__). API publique :
+       controle_qualite_camera(idx, nom_camera, contexte) → dict
+                             [ACTUEL, script 8] contrôle de QUALITÉ ABSOLUE
+                             (image exploitable), SANS référence ni matching
+       evaluer_qualite_image_absolue(idx, mask_img, zones, profil) → dict
+                             primitive de mesure absolue sous-jacente
        controle_camera_avant_enregistrement(idx, nom_camera, contexte) → dict
+                             [LEGACY] contrôle par référence colorimétrique,
+                             conservé pour le script 11 — PLUS utilisé par 8
        copier_reference_vers_meta(meta_dir) → bool (copie les DEUX caméras)
        menu_reference(idx, nom_camera) → menu complet, caméra déjà
                              identifiée, sortie [S] Étape suivante
@@ -89,12 +96,12 @@ Garanties (v4) :
     (camera_reference_zones_<cam>.json) et référence active
     (camera_reference_<cam>.json + image témoin _raw.png ; _masked.png
     uniquement pour cam_top, qui a un masque).
-  - API d'intégration (étape 5) : controle_camera_avant_enregistrement
-    applique la politique script 8 (spec §5) et peut écrire dans le
-    journal camera_reference_log.jsonl (passages 🟠 confirmés) ; un
-    contrôle indisponible ne peut plus être « passé » : il se répare ([M])
-    ou annule ([Q]) ; copier_reference_vers_meta copie la
-    référence dans le meta/ d'un dataset (traçabilité).
+  - API d'intégration (étape 5) : le SCRIPT 8 utilise désormais
+    controle_qualite_camera (QUALITÉ ABSOLUE, sans référence ni matching).
+    controle_camera_avant_enregistrement (référence colorimétrique) reste
+    pour le script 11 (LEGACY). Les deux peuvent écrire dans le journal
+    camera_reference_log.jsonl (passages 🟠) ; copier_reference_vers_meta
+    copie la référence dans le meta/ d'un dataset (traçabilité).
   - Aucun script validé du pipeline n'est modifié par ce module lui-même.
 
 Identification obligatoire : les index /dev/videoX ne sont pas stables.
@@ -531,10 +538,11 @@ def charger_masque():
 
 
 def construire_mask_image(points, width, height):
+    """Masque binaire (uint8 0/255) à partir des points du polygone.
+    Si points est vide (profil pince, sans masque), retourne un masque plein."""
     if not points:
         # Caméra SANS masque (profil pince) : toute l'image est utile.
         return np.full((height, width), 255, dtype=np.uint8)
-    """Masque binaire (uint8 0/255) à partir des points du polygone."""
     mask = np.zeros((height, width), dtype=np.uint8)
     pts = np.array(points, np.int32)
     cv2.fillPoly(mask, [pts], 255)
@@ -1790,7 +1798,7 @@ def diagnostic_conformite(idx, mask_pts, mask_img, zones, verrouille):
          + avertissement informatif si saturation absolue bol > 5 %.
 
     Le diagnostic n'écrit RIEN (D3) : la journalisation appartient à
-    l'intégration au script 8 (étape 5)."""
+    l'intégration legacy (étape 5)."""
     # ----- Garde-fous -----
     if not verrouille:
         print("\n❌ Diagnostic refusé : réglages caméra NON VERROUILLÉS.")
@@ -2150,26 +2158,33 @@ def recalibrage_guide(idx, mask_pts, mask_img, zones, verrouille, ecrire_referen
 
 
 # ============================================
-# API D'INTÉGRATION AU PIPELINE (étape 5 — script 8)
-# Fonctions PUBLIQUES importables :
+# API D'INTÉGRATION (étape 5) — LEGACY : contrôle par référence colorimétrique.
+# Le script 8 N'utilise PLUS ce chemin (il appelle controle_qualite_camera,
+# plancher qualité absolu). Conservé pour le script 11 tant qu'il n'est pas
+# recadré. Fonctions PUBLIQUES importables :
 #   from SEM_so101_camera_reference import (
 #       controle_camera_avant_enregistrement, copier_reference_vers_meta)
 # ============================================
 
 def _journaliser_evenement(contexte, verdict, resultats, decision, note=""):
     """Ajoute une ligne JSON au journal camera_reference_log.jsonl
-    (spec §5 : une ligne par événement — date, caméra, critères hors
-    zone verte avec leurs valeurs, décision de l'utilisateur).
-    Retourne True si l'écriture a réussi."""
+    (une ligne par événement — date, caméra, items hors zone verte avec
+    leurs valeurs, décision de l'utilisateur). Retourne True si OK.
+
+    NOTE : la CLÉ de `items_hors_vert` est, selon l'appelant, un critère
+    (C1/C2/… — chemin référence legacy) ou une ZONE (plateau_1, bol… — chemin
+    qualité absolue). Le 2e champ du tuple est conservé sous `libelle_ou_role`
+    (legacy : libellé du critère ; qualité : rôle ancre/bol/secondaire).
+    Format : {clé: {libelle_ou_role, verdict, detail}}."""
     entree = {
         "date": datetime.now().isoformat(timespec="seconds"),
         "camera": NOM_CAMERA,
         "contexte": contexte,
         "verdict": verdict,
         "decision": decision,
-        "criteres_hors_vert": {
-            code: {"verdict": v, "detail": texte}
-            for code, _, v, texte in resultats if v != "🟢"
+        "items_hors_vert": {
+            code: {"libelle_ou_role": libelle_ou_role, "verdict": v, "detail": texte}
+            for code, libelle_ou_role, v, texte in resultats if v != "🟢"
         },
     }
     if note:
@@ -2223,8 +2238,11 @@ def copier_reference_vers_meta(meta_dir):
 
 
 def controle_camera_avant_enregistrement(idx, nom_camera="cam_top", contexte=""):
-    """API publique (étape 5, multi-caméra) — enveloppe : exécute le
-    contrôle de la caméra nom_camera ; si l'utilisateur choisit [M], ouvre
+    """API publique (étape 5, multi-caméra) — [LEGACY] contrôle par
+    RÉFÉRENCE colorimétrique, conservé pour le script 11 ; le script 8 utilise
+    désormais controle_qualite_camera (les mentions « script 8 » ci-dessous
+    sont historiques). Enveloppe : exécute le contrôle de la caméra
+    nom_camera ; si l'utilisateur choisit [M], ouvre
     le menu COMPLET de référence de CETTE caméra (sans re-reconnaissance)
     puis REVÉRIFIE depuis le début (la référence ou les réglages ont pu
     changer dans le menu).
@@ -2238,7 +2256,7 @@ def controle_camera_avant_enregistrement(idx, nom_camera="cam_top", contexte="")
 
 
 def _controle_une_passe(idx, nom_camera, contexte=""):
-    """API publique (étape 5) — appelée par le script 8 AVANT une session
+    """API publique (étape 5, LEGACY) — appelée AVANT une session
     ou un bloc d'épisodes. PRÉ-REQUIS : les caméras du script appelant
     sont LIBÉRÉES (règle validée : contrôle uniquement entre les blocs ;
     ce module ouvre et ferme sa propre capture, puis la libère).
@@ -2246,7 +2264,7 @@ def _controle_une_passe(idx, nom_camera, contexte=""):
     Déroulé : chargement masque + zones + référence → garde-fous de
     comparabilité (les mêmes que l'option [6]) → check-list de la scène →
     verrouillage des réglages → mesure (20 éch., ~4 s) → rapport complet
-    + ACTION RECOMMANDÉE → politique script 8 (spec §5) :
+    + ACTION RECOMMANDÉE → politique d'enregistrement legacy (spec §5) :
       🟢 → autorisé ;
       🟠 → autorisé après CONFIRMATION explicite, écart JOURNALISÉ ;
       🔴 → BLOQUÉ par défaut, recalibrage guidé proposé immédiatement ;
@@ -2329,10 +2347,10 @@ def _controle_une_passe(idx, nom_camera, contexte=""):
         resultats, global_v = _evaluer_conformite(cour, refs, zones)
         criteres = {code: v for code, _, v, _ in resultats}
 
-        # Mesure instable : traitée comme 🔴 pour le script 8 (spec §5)
+        # Mesure instable : traitée comme 🔴 (politique legacy, spec §5)
         if global_v == "🔴" and len(resultats) == 1:
             _afficher_instable(cour, zones, resultats[0][3])
-            print("\n   Politique script 8 : mesure instable = bloqué.")
+            print("\n   Politique (legacy) : mesure instable = bloqué.")
             print("  [E] : remesurer (après stabilisation de la lumière)")
             print("  [Q] : annuler l'enregistrement")
             while True:
@@ -2355,7 +2373,7 @@ def _controle_une_passe(idx, nom_camera, contexte=""):
                              criteres)
 
         if global_v == "🟠":
-            print("\n🟠 Politique script 8 : autorisé après CONFIRMATION "
+            print("\n🟠 Politique (legacy) : autorisé après CONFIRMATION "
                   "explicite (journalisé).")
             print("  [Entrée] : continuer l'enregistrement (écart journalisé)")
             print("  [R]      : recalibrer d'abord (recommandé)")
@@ -2369,14 +2387,15 @@ def _controle_une_passe(idx, nom_camera, contexte=""):
             if rep == "M":
                 return _resultat("MENU", False, "menu", criteres)
             if rep == "":
-                _journaliser_evenement(contexte, "🟠", resultats,
-                                       "confirme_orange")
-                print("   ✅ Écart journalisé — enregistrement autorisé.")
+                ok_log = _journaliser_evenement(contexte, "🟠", resultats,
+                                                "confirme_orange")
+                trace = "journalisé" if ok_log else "journalisation impossible"
+                print(f"   ✅ Écart {trace} — enregistrement autorisé.")
                 return _resultat("🟠", True, "confirme_orange", criteres)
             if rep == "Q":
                 return _resultat("🟠", False, "annule", criteres)
         else:  # 🔴
-            print("\n🔴 Politique script 8 : BLOQUÉ par défaut — "
+            print("\n🔴 Politique (legacy) : BLOQUÉ par défaut — "
                   "recalibrer d'abord.")
             print("  [R] : recalibrage guidé (recommandé)")
             print("  [M] : ouvrir le menu de référence")
@@ -2533,9 +2552,10 @@ def _deploiement_une_passe(idx, contexte):
                     break
                 print(f"   ⚠️  Saisie '{rep}' non reconnue.")
             if rep == "":
-                _journaliser_evenement(contexte, "🟠", resultats,
-                                       "confirme_orange")
-                print("   ✅ Écart journalisé — déploiement autorisé.")
+                ok_log = _journaliser_evenement(contexte, "🟠", resultats,
+                                                "confirme_orange")
+                trace = "journalisé" if ok_log else "journalisation impossible"
+                print(f"   ✅ Écart {trace} — déploiement autorisé.")
                 return _resultat("🟠", True, "confirme_orange", criteres)
             if rep == "Q":
                 return _resultat("🟠", False, "annule", criteres)
@@ -2602,7 +2622,7 @@ def main():
 def menu_reference(idx, nom_camera="cam_top"):
     """API publique : ouvre le menu COMPLET de l'outil pour la caméra
     nom_camera, DÉJÀ identifiée à l'index idx (aucune re-reconnaissance).
-    Utilisé par le script 8 — appelé une fois par caméra.
+    [LEGACY] Était appelé par le script 8 ; conservé pour le script 11.
     La sortie est [S] Étape suivante (et non Quitter) : au retour de
     cette fonction, le script appelant poursuit son déroulement normal.
     PRÉ-REQUIS : la caméra idx est LIBÉRÉE par l'appelant."""
@@ -2612,7 +2632,7 @@ def menu_reference(idx, nom_camera="cam_top"):
 def executer_menu(idx, nom_camera, mode_integre=False):
     """Boucle du menu principal pour la caméra nom_camera (index idx).
     mode_integre=False : outil autonome — sortie [Q] Quitter.
-    mode_integre=True  : intégré au script 8 — sortie [S] Étape suivante."""
+    mode_integre=True  : intégré au flux legacy — sortie [S] Étape suivante."""
     selectionner_profil(nom_camera)
     # Application des réglages du pipeline (caméra libérée avant,
     # rouverte ensuite par chaque fonction de mesure — D1/D2)
