@@ -18,20 +18,6 @@ Ce README décrit la chaîne actuelle validée des scripts SEM :
 11 Déploiement ACT
 ```
 
-## ✅ Changements majeurs intégrés dans cette version
-
-Cette version du README tient compte des mises à jour récentes de la chaîne complète, en particulier :
-
-- suppression de l'ancienne séparation entre préparation, visualisation, entraînement et déploiement ;
-- `SEM_so101_9_dataset.py` prépare désormais le dataset complet et intègre la visualisation ;
-- `SEM_so101_10_train.py` est le script d'entraînement ACT ;
-- `SEM_so101_11_deploy.py` est le script de déploiement autonome ;
-- `SEM_so101_camera_config.py` est le module canonique de verrouillage matériel des caméras ;
-- `SEM_so101_camera_reference.py` est le module canonique de référence visuelle caméra ;
-- les scripts 8, 9, 10 et 11 sont maintenant alignés sur la même logique de traçabilité, de fail-closed et de sécurité robot.
-
----
-
 ## 🔧 Prérequis
 
 ```bash
