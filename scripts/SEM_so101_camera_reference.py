@@ -2809,6 +2809,14 @@ REF_NOIR_MEDY_REFUS = 30.0     # médiane Y ancre : refus (image noire / objecti
 REF_NOIR_PCT_AVERT  = 20.0     # % sombres ancre : avertissement
 REF_NOIR_PCT_REFUS  = 60.0     # % sombres ancre : refus (noir massif)
 
+# Seuils de SATURATION du plancher absolu — PROVISOIRES (campagne de figeage).
+# DÉDIÉS : indépendants des seuils legacy REF_PILOTE_*/REF_BOL_* (porte référence),
+# qui restent inchangés. À caler sur la campagne multi-lumière.
+ABS_ANCRE_SAT_AVERT = 5.0      # % saturés ancre : avertissement 🟠
+ABS_ANCRE_SAT_REFUS = 10.0     # % saturés ancre : refus 🔴
+ABS_BOL_SAT_AVERT   = 5.0      # % saturés bol   : avertissement 🟠
+ABS_BOL_SAT_REFUS   = 30.0     # % saturés bol   : refus 🔴 (sentinelle surexposition)
+
 
 def _roles_zones_absolu(profil):
     """Rôle de chaque zone pour le plancher absolu, dérivé du PROFIL :
@@ -2838,8 +2846,8 @@ def _verdict_zone_absolu(s, role):
     s : stats moyennées (Y, med_Y, pct_satures, pct_sombres, sigma_t).
     role : 'ancre' | 'bol' | 'secondaire'. 'secondaire' est plafonné à 🟠.
     Retourne (verdict, [raisons])."""
-    sat_avert = SATURATION_ABS_AVERTISSEMENT if role == "bol" else REF_PILOTE_SAT_AVERT
-    sat_refus = REF_BOL_SAT_REFUS            if role == "bol" else REF_PILOTE_SAT_REFUS
+    sat_avert = ABS_BOL_SAT_AVERT if role == "bol" else ABS_ANCRE_SAT_AVERT
+    sat_refus = ABS_BOL_SAT_REFUS if role == "bol" else ABS_ANCRE_SAT_REFUS
 
     rouge, orange = [], []
     # --- Cramé (saturation absolue) ---
@@ -2888,6 +2896,7 @@ def evaluer_qualite_image_absolue(idx, mask_img, zones, profil):
       bloque       : True ssi 🔴
       details      : [ (zone, role, verdict, [raisons]) ] (zones du verdict)
       debug        : { zone_hors_verdict: {Y, med_Y, pct_satures, pct_sombres, sigma_t} }
+      mesures      : { zone: {Y, med_Y, pct_satures, pct_sombres, sigma_t} } (toutes)
       indisponible : str | None
       date"""
     date = datetime.now().isoformat(timespec="seconds")
@@ -2896,8 +2905,8 @@ def evaluer_qualite_image_absolue(idx, mask_img, zones, profil):
                                  STABILITE_INTERVALLE)
     if res is None:
         return {"verdict": "🔴", "bloque": True, "details": [],
-                "debug": {}, "indisponible": "acquisition caméra impossible",
-                "date": date}
+                "debug": {}, "mesures": {},
+                "indisponible": "acquisition caméra impossible", "date": date}
     _, _, brut = res
 
     # Moyennes par zone + sigma_t (std temporel de Y) — grandeurs ABSOLUES
@@ -2915,6 +2924,7 @@ def evaluer_qualite_image_absolue(idx, mask_img, zones, profil):
     manquantes = [n for n in decisionnelles if n not in mesures]
     if manquantes:
         return {"verdict": "🔴", "bloque": True, "details": [], "debug": {},
+                "mesures": mesures,
                 "indisponible": "zone(s) décisionnelle(s) absente(s) : "
                                 + ", ".join(manquantes), "date": date}
 
@@ -2930,9 +2940,33 @@ def evaluer_qualite_image_absolue(idx, mask_img, zones, profil):
 
     verdict = max(verdicts, key=lambda v: _SEVERITE[v]) if verdicts else "🔴"
     return {"verdict": verdict, "bloque": verdict == "🔴",
-            "details": details, "debug": debug,
+            "details": details, "debug": debug, "mesures": mesures,
             "indisponible": None if verdicts else "aucune zone décisionnelle",
             "date": date}
+
+def _afficher_mesures_absolu(res):
+    """Affiche les seuils absolus actifs, formatés depuis les constantes
+    ABS_*, REF_NOIR_* et SEUILS (jamais en dur), puis un tableau des zones
+    décisionnelles (zone, rôle, verdict, Y, médiane Y, % saturés, % sombres,
+    sigma_t). Lecture seule ; n'influence pas le verdict."""
+    print("\n   Seuils absolus actifs :")
+    print(f"      saturé    : ancre avert > {ABS_ANCRE_SAT_AVERT:.0f}%  refus > {ABS_ANCRE_SAT_REFUS:.0f}%"
+          f"   |   bol avert > {ABS_BOL_SAT_AVERT:.0f}%  refus > {ABS_BOL_SAT_REFUS:.0f}%")
+    print(f"      sombre    : médiane Y < {REF_NOIR_MEDY_REFUS:.0f} refus"
+          f"   |   sombres avert > {REF_NOIR_PCT_AVERT:.0f}%  refus > {REF_NOIR_PCT_REFUS:.0f}%")
+    print(f"      stabilité : sigma_t avert > {SEUILS['C9'][0]}  refus > {SEUILS['C9'][1]}")
+    mesures, details = res.get("mesures", {}), res.get("details", [])
+    if not details:
+        return
+    print(f"\n   {'zone':<12} {'rôle':<10} verdict {'Y':>5} {'medY':>5} "
+          f"{'sat%':>6} {'somb%':>6} {'sigma_t':>7}")
+    for nom, role, v, _raisons in details:
+        m = mesures.get(nom, {})
+        print(f"   {nom:<12} {role:<10} {v}    "
+              f"{m.get('Y',0):>5.0f} {m.get('med_Y',0):>5.0f} "
+              f"{m.get('pct_satures',0):>6.2f} {m.get('pct_sombres',0):>6.1f} "
+              f"{m.get('sigma_t',0):>7.2f}")
+
 
 def controle_qualite_camera(idx, nom_camera, contexte=""):
     """Contrôle « image exploitable » d'UNE caméra — V1 (sans référence).
@@ -2998,6 +3032,7 @@ def controle_qualite_camera(idx, nom_camera, contexte=""):
     while True:
         res = evaluer_qualite_image_absolue(idx, mask_img, zones, profil)
         verdict = res["verdict"]
+        _afficher_mesures_absolu(res)
         for nom, role, v, raisons in res["details"]:
             if v != "🟢":
                 print(f"   {v} {nom} ({role}) : {', '.join(raisons)}")
