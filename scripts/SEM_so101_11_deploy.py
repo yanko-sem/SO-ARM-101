@@ -21,8 +21,7 @@ Contrôles pendant l'inférence (au clavier, dans le terminal):
     Q      : Quitter
 
 Auteur: Service Écoles-Médias (SEM)
-Version: 1.1
-Date: Avril 2026
+Version: 1.2  (exposition auto puis figée + contrôle image simple)
 """
 
 import os
@@ -74,48 +73,28 @@ except ImportError:
     print("Solution: conda activate lerobot")
     sys.exit(1)
 
-# Module de configuration caméra — partagé avec le script 8 (même camera_settings.json).
-# Au lancement (étape 6), le script 11 CONTRÔLE les deux caméras vs les références copiées dans le
-# meta/ du dataset d'entraînement (resoudre_meta_dataset → controle_camera_deploiement), puis verrouille
-# les réglages — cohérence colorimétrie entraînement↔déploiement. Le réglage « à l'œil » est supprimé.
-# Flux : checkpoint → modèle → références du dataset (ou LEGACY local) → masque globale obligatoire →
-# Follower au REPOS → identification caméras → contrôle GLOBALE puis PINCE (autorisation = les deux) →
-# connexion ThreadedCamera + verrouillage (échec = arrêt) → inférence. La création de référence est
-# INTERDITE en déploiement (lecture seule du dataset) ; seul le recalibrage [R] est offert.
-# Import protégé : si le module est absent, mal placé ou cassé, on le signalera plus bas
+# Module caméra unifié (partagé avec le script 8) : au démarrage du déploiement,
+# chaque caméra est réglée en EXPOSITION AUTO PUIS FIGÉE (adaptée à la lumière réelle
+# de la salle), puis son image BRUTE passe un CONTRÔLE IMAGE SIMPLE (plancher physique ;
+# GLOBALE mesurée en zone utile du masque, PINCE en plein cadre). Plus de références ni
+# de verrouillage sur des réglages enregistrés — la robustesse à la lumière est portée
+# par l'augmentation à l'entraînement.
+# Flux : checkpoint → modèle → masque globale obligatoire → Follower au REPOS →
+# identification caméras → connexion ThreadedCamera → exposition auto puis figée →
+# contrôle image simple (GLOBALE puis PINCE, autorisation = les deux) → inférence.
+# Import protégé : si le module est absent, mal placé ou cassé, on le signale plus bas
 # par un message clair + arrêt propre, au lieu d'un traceback illisible au démarrage.
 try:
-    from SEM_so101_camera_config import verrouiller_camera
-    CAMERA_LOCK_AVAILABLE = True
-    CAMERA_LOCK_IMPORT_ERROR = None
-except Exception as _e_config_canonique:
-    try:
-        from SEM_so101_8_camera_config import verrouiller_camera
-        CAMERA_LOCK_AVAILABLE = True
-        CAMERA_LOCK_IMPORT_ERROR = None
-    except Exception:
-        try:
-            from SEM_8_camera_config import verrouiller_camera
-            CAMERA_LOCK_AVAILABLE = True
-            CAMERA_LOCK_IMPORT_ERROR = None
-        except Exception as e:
-            verrouiller_camera = None
-            CAMERA_LOCK_AVAILABLE = False
-            CAMERA_LOCK_IMPORT_ERROR = _e_config_canonique
-
-# Module de référence visuelle (étape 6) : contrôle des deux caméras au
-# démarrage du déploiement, CONTRE les références copiées dans le meta/ du
-# dataset d'entraînement. Remplace le réglage « à l'œil » par un contrôle
-# mesuré. Import protégé : sans lui, le déploiement est bloqué (le contrôle
-# garantit la cohérence colorimétrie entraînement↔déploiement).
-try:
-    from SEM_so101_camera_reference import controle_camera_deploiement
-    CAMERA_REF_AVAILABLE = True
-    CAMERA_REF_IMPORT_ERROR = None
+    from SEM_so101_camera_auto import (
+        regler_exposition_auto_puis_figee, controle_image_simple, texte_verdict)
+    CAMERA_AUTO_AVAILABLE = True
+    CAMERA_AUTO_IMPORT_ERROR = None
 except Exception as e:
-    controle_camera_deploiement = None
-    CAMERA_REF_AVAILABLE = False
-    CAMERA_REF_IMPORT_ERROR = e
+    regler_exposition_auto_puis_figee = None
+    controle_image_simple = None
+    texte_verdict = None
+    CAMERA_AUTO_AVAILABLE = False
+    CAMERA_AUTO_IMPORT_ERROR = e
 
 # ============================================
 # CONFIGURATION
@@ -155,6 +134,61 @@ stop_threads = False          # arrête le thread clavier
 cmd_queue    = queue.Queue()  # file des commandes clavier (P / R / Q)
 urgence      = False          # devient True sur CTRL+C : arrêt d'urgence, pas de retour repos
 _MASK_GLOBALE_IMG = None      # image binaire du masque globale (None tant que le fichier n'est pas chargé)
+
+# Instances caméra pour l'affichage dans le thread principal (phase de préparation)
+_display_cam_top = None
+_display_cam_follower = None
+_prep_window_created = False  # la fenêtre de préparation n'est créée/dimensionnée qu'une seule fois
+
+def refresh_display(titre=None, legende=None):
+    """Rafraîchit l'affichage des caméras dans UNE fenêtre combinée (thread principal).
+    Retourne la touche lue par cv2.waitKey (& 0xFF), ou None si rien à afficher — ce
+    qui permet de piloter des décisions interactives DIRECTEMENT dans la fenêtre
+    caméra. Les appels existants qui ignorent ce retour fonctionnent à l'identique.
+    Si `titre`/`legende` sont fournis, ils sont incrustés sur un bandeau noir EN HAUT
+    (titre vert + touches jaunes), MÊME style qu'à l'identification des caméras. Sans
+    eux, affichage normal (labels CAM GLOBALE / CAM PINCE)."""
+    global _prep_window_created
+    if not CV2_AVAILABLE:
+        return None
+    w = CONFIG['camera_width']
+    h = CONFIG['camera_height']
+    frame_top = _display_cam_top.async_read() if (_display_cam_top and _display_cam_top.is_connected) else None
+    frame_fol = _display_cam_follower.async_read() if (_display_cam_follower and _display_cam_follower.is_connected) else None
+    # Masque appliqué uniquement à la globale, avant l'étiquette → on voit en direct ce qui sera fourni au modèle
+    if frame_top is not None and _MASK_GLOBALE_IMG is not None:
+        frame_top = cv2.bitwise_and(frame_top, frame_top, mask=_MASK_GLOBALE_IMG)
+    images = []
+    for frame, label in [(frame_top, "CAM GLOBALE"), (frame_fol, "CAM PINCE")]:
+        if frame is None:
+            continue
+        if frame.shape[:2] != (h, w):
+            frame = cv2.resize(frame, (w, h))
+        cv2.putText(frame, label, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        images.append(frame)
+    if not images:
+        time.sleep(0.03)
+        return None
+    display = images[0] if len(images) == 1 else cv2.hconcat(images)
+    # Fenêtre redimensionnable + taille ×1.5 (1920×540) — créée/dimensionnée une seule fois
+    if not _prep_window_created:
+        cv2.namedWindow('Cameras SO-ARM 101', cv2.WINDOW_NORMAL)
+        cv2.resizeWindow('Cameras SO-ARM 101', 1920, 540)
+        _prep_window_created = True
+    # Bandeau noir EN HAUT (titre vert + touches jaunes), MÊME style qu'à
+    # l'identification G/P, pour que l'opérateur voie les choix sans le terminal.
+    if titre or legende:
+        dw = display.shape[1]
+        cv2.rectangle(display, (0, 0), (dw, 72), (0, 0, 0), -1)
+        if titre:
+            cv2.putText(display, titre, (10, 28),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+        if legende:
+            cv2.putText(display, legende, (10, 58),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+    cv2.imshow('Cameras SO-ARM 101', display)
+    k = cv2.waitKey(30) & 0xFF   # throttle ~33 Hz + lit la touche pour les décisions live
+    return None if k == 255 else k
 
 # ============================================
 # FONCTIONS UTILITAIRES
@@ -691,43 +725,6 @@ def selectionner_checkpoint():
 # CHARGEMENT DU MODÈLE
 # ============================================
 
-def resoudre_meta_dataset(checkpoint_path):
-    """Étape 6 : remonte du checkpoint au meta/ du dataset d'entraînement.
-       checkpoint/pretrained_model/train_config.json → repo_id → meta/
-    Retourne (Path meta | None, message, mode_ref) avec
-    mode_ref ∈ {"dataset", "legacy_possible", "bloquant"} (décision D1).
-
-    Politique de traçabilité : un checkpoint NON traçable (train_config.json
-    absent/illisible, repo_id manquant, meta/ introuvable) est BLOQUANT. Le mode
-    LEGACY ne couvre QUE les datasets identifiés mais antérieurs au système de
-    références caméra (meta/ présent, 0 référence)."""
-    cfg = checkpoint_path / "train_config.json"
-    if not cfg.exists():
-        return None, f"train_config.json absent ({cfg})", "bloquant"
-    try:
-        with open(cfg, 'r') as f:
-            data = json.load(f)
-    except Exception as e:
-        return None, f"train_config.json illisible ({e})", "bloquant"
-    repo_id = (data.get("dataset", {}) or {}).get("repo_id")
-    if not repo_id:
-        return None, "repo_id absent de train_config.json", "bloquant"
-    meta = Path.home() / ".cache" / "huggingface" / "lerobot" / repo_id / "meta"
-    if not meta.exists():
-        return None, f"meta/ du dataset introuvable ({meta})", "bloquant"
-    # Présence RÉELLE des deux références (pas seulement du dossier meta/) :
-    #   les deux → mode dataset ; aucune → LEGACY possible (ancien dataset) ;
-    #   une seule → état incohérent → blocage (décision D1).
-    ref_top = (meta / "camera_reference_cam_top.json").exists()
-    ref_fol = (meta / "camera_reference_cam_follower.json").exists()
-    if ref_top and ref_fol:
-        return meta, f"références du dataset : {repo_id}", "dataset"
-    if not ref_top and not ref_fol:
-        return None, f"dataset ancien sans références caméra : {repo_id}", "legacy_possible"
-    return None, (f"références caméra PARTIELLES dans le dataset "
-                  f"(cam_top={ref_top}, cam_follower={ref_fol})"), "bloquant"
-
-
 def charger_modele(checkpoint_path):
     """
     Charge la politique ACT depuis le checkpoint sélectionné.
@@ -767,15 +764,12 @@ def detect_cameras():
 
 
 def identification_cameras():
-    """
-    Identification VISUELLE des deux caméras (globale cam_top + pince cam_follower)
-    AVANT le démarrage. Les deux caméras du projet sont identiques : aucune détection
-    automatique possible. Parcourt TOUTES les caméras détectées (pas seulement les deux
-    premières) ; pour chacune dont l'image est lisible, affiche le flux et demande G/P/Q.
-    S'arrête dès que les DEUX sont identifiées. AUCUNE auto-assignation : cam_top et
-    cam_follower doivent être désignées explicitement.
-    Retourne (index_cam_top, index_cam_follower) ou (None, None) si échec.
-    """
+    """Identification VISUELLE des deux caméras (globale cam_top + pince cam_follower).
+    Les deux caméras du projet sont identiques : aucune détection automatique possible.
+    Parcourt TOUTES les caméras détectées (pas seulement les deux premières) ; pour
+    chacune dont l'image est lisible, affiche le flux et demande G/P/Q. S'arrête dès
+    que les DEUX sont identifiées. AUCUNE auto-assignation : cam_top et cam_follower
+    doivent être désignées explicitement (exigence de cohérence avec le dataset d'entraînement)."""
     if not CV2_AVAILABLE:
         print("❌ OpenCV non disponible")
         return None, None
@@ -783,76 +777,89 @@ def identification_cameras():
     print("\n" + "="*60)
     print("📷 IDENTIFICATION DES CAMÉRAS")
     print("="*60)
-
-    # Détecter les caméras
     cameras = detect_cameras()
     print(f"\n🔍 Caméras détectées: {cameras}")
 
     if len(cameras) < 2:
-        print(f"❌ Le modèle requiert 2 caméras (globale + pince). Seulement {len(cameras)} détectée(s).")
-        print("   Vérifiez vos branchements USB.")
+        print("❌ Deux caméras sont requises (globale + pince) pour le déploiement.")
+        print(f"   Détecté : {len(cameras)} caméra(s). Branchez les deux caméras et relancez.")
         return None, None
 
-    print("\n📌 Vous allez voir chaque caméra tour à tour.")
+    print("\n📌 Vous allez voir chaque caméra tour à tour dans UNE seule fenêtre.")
     print("   Identifiez la caméra GLOBALE (vue d'ensemble du plateau) et")
     print("   la caméra PINCE (sur le follower). Les deux étant identiques,")
     print("   distinguez-les par ce qu'elles cadrent.")
-    print("\n   Appuyez sur ENTRÉE pour continuer...")
+    print("\n   ⌨️  Réponds DIRECTEMENT DANS LA FENÊTRE (pas au terminal) :")
+    print("      G = globale   P = pince   Q = passer   Échap = tout annuler")
+    print("\n   Appuyez sur ENTRÉE pour commencer...")
     input()
 
+    FENETRE = "Identification camera"
     cam_top_index = None
     cam_follower_index = None
 
     for idx in cameras:
         if cam_top_index is not None and cam_follower_index is not None:
             break  # les deux caméras sont identifiées, inutile de continuer
-        print(f"\n🎥 Caméra index {idx}...")
+        print(f"\n🎥 Caméra index {idx} — dans la FENÊTRE, appuie sur :")
+        print( "      G = GLOBALE (plateau)    P = PINCE (follower)    Q = passer    Échap = annuler")
         cap = cv2.VideoCapture(idx)
-
         if not cap.isOpened():
             print(f"   ❌ Impossible d'ouvrir la caméra {idx} — passée.")
             continue
 
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, CONFIG['camera_width'])
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CONFIG['camera_height'])
-        window_name = f"Camera {idx} - Identifiez cette camera"
 
-        ret, frame = cap.read()
-        fenetre_ouverte = False
-        if ret:
-            cv2.putText(frame, f"Camera {idx}", (10, 30),
-                       cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-            cv2.putText(frame, "Repondez dans le TERMINAL", (10, 60),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 1)
-            cv2.imshow(window_name, frame)
-            cv2.waitKey(100)   # rendu de l'image figée uniquement (pas de capture de touche)
-            fenetre_ouverte = True
+        # Vue LIVE + touches lues DANS la fenêtre (une seule fenêtre persistante,
+        # réutilisée pour toutes les caméras). Aucune réponse au terminal → pas de
+        # clic à donner. Si aucune image lisible pendant ~2 s, on ne propose pas
+        # cette caméra (pas de confirmation à l'aveugle).
+        choix = None
+        image_vue = False
+        t0 = time.time()
+        while choix is None:
+            ret, frame = cap.read()
+            if ret:
+                image_vue = True
+                # Bandeau noir en haut → légende lisible même sur une image très claire.
+                cv2.rectangle(frame, (0, 0), (frame.shape[1], 72), (0, 0, 0), -1)
+                cv2.putText(frame, f"Camera {idx}", (10, 28),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                cv2.putText(frame, "G=GLOBALE (plateau)  P=PINCE (follower)  Q=passer  Echap=annuler", (10, 58),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+                cv2.imshow(FENETRE, frame)
+            k = cv2.waitKey(30) & 0xFF
+            if k in (ord('g'), ord('G')):
+                choix = 'G'
+            elif k in (ord('p'), ord('P')):
+                choix = 'P'
+            elif k in (ord('q'), ord('Q')):
+                choix = 'Q'
+            elif k == 27:  # Échap
+                choix = 'ESC'
+            elif not image_vue and (time.time() - t0) > 2.0:
+                choix = 'NOIMG'
         cap.release()
 
-        # Sans image lisible, l'identification visuelle est impossible : on ne propose
-        # PAS cette caméra (pas de confirmation à l'aveugle) et on ne détruit pas une
-        # fenêtre qui n'a jamais été affichée.
-        if not fenetre_ouverte:
+        if choix == 'NOIMG':
             print(f"   ⚠️  Image indisponible pour la caméra {idx} — identification impossible, on passe.")
             continue
-
-        print(f"   📺 Regardez la fenêtre '{window_name}'")
-        print(f"   → Tapez G + Entrée si c'est la caméra GLOBALE (vue d'ensemble)")
-        print(f"   → Tapez P + Entrée si c'est la caméra PINCE (sur le follower)")
-        print(f"   → Tapez Q + Entrée pour passer")
-        choix_cam = input("   Votre choix : ").strip().upper()
-        cv2.destroyWindow(window_name)
-        cv2.waitKey(1)
-
-        if choix_cam == 'G':
+        if choix == 'ESC':
+            print("   ⏹  Identification annulée.")
+            cv2.destroyAllWindows()
+            cv2.waitKey(1)
+            return None, None
+        if choix == 'G':
             cam_top_index = idx
             print(f"   ✅ Caméra {idx} = {CAM_TOP} (globale)")
-        elif choix_cam == 'P':
+        elif choix == 'P':
             cam_follower_index = idx
             print(f"   ✅ Caméra {idx} = {CAM_FOLLOWER} (pince)")
-        else:
+        else:  # Q
             print(f"   ⏭️  Caméra {idx} passée")
 
+    # Fermeture UNE seule fois, à la fin.
     cv2.destroyAllWindows()
     cv2.waitKey(1)
 
@@ -861,7 +868,6 @@ def identification_cameras():
     print(f"   {CAM_TOP} (globale): index {cam_top_index}")
     print(f"   {CAM_FOLLOWER} (pince): index {cam_follower_index}")
     print("-"*40)
-
     return cam_top_index, cam_follower_index
 
 
@@ -1286,6 +1292,80 @@ def boucle_inference(policy, cam_top, cam_follower_cam, port_handler, packet_han
 
 
 # ============================================
+# CONTRÔLE IMAGE INTERACTIF (préparation caméra)
+# ============================================
+
+def controle_camera_simple_interactif(cam, index, nom, est_globale):
+    """Contrôle image simple d'UNE caméra (image BRUTE, avant masque) + retour
+    lumière. Le verdict détaillé s'affiche au TERMINAL ; la décision se prend
+    DANS LA FENÊTRE NORMALE « Cameras SO-ARM 101 », qui reste LIVE (on lit la
+    touche renvoyée par refresh_display). Pas de fenêtre spéciale. En 🟠/🔴, un
+    bandeau (titre + touches) est incrusté EN HAUT de la fenêtre, comme à
+    l'identification ; en 🟢 et hors contrôle, l'affichage reste normal.
+
+    Décision selon le verdict :
+      🟢 → verdict au terminal, fenêtre live ~1,5 s, puis on continue
+           AUTOMATIQUEMENT (rien à faire) ;
+      🟠 → dans la fenêtre : C = continuer / R = re-régler l'exposition / Q = annuler ;
+      🔴 → dans la fenêtre : R = re-régler l'exposition après correction / Q = annuler
+           (PAS de C). L'image reste VIVANTE : on voit l'effet du réglage lumière.
+    Le réglage d'exposition n'est relancé QUE sur demande explicite [R] (jamais en automatique).
+    Retourne True si le déploiement reste autorisé pour cette caméra."""
+    T_C = (ord('c'), ord('C'))
+    T_R = (ord('r'), ord('R'))
+    T_Q = (ord('q'), ord('Q'))
+    while True:
+        res = controle_image_simple(
+            cam.async_read, nom, CONFIG['camera_width'], CONFIG['camera_height'],
+            masque_path=str(MASK_FILE), est_globale=est_globale)
+        print(f"\n📷 {texte_verdict(nom, res)}")
+        verdict = res["verdict"]
+
+        # 🟢 : fenêtre normale live ~1,5 s, puis on continue automatiquement.
+        if verdict == "🟢":
+            t0 = time.time()
+            while time.time() - t0 < 1.5:
+                refresh_display()
+            return True
+
+        # 🟠 / 🔴 : décision DANS la fenêtre normale, qui reste LIVE (on voit
+        # l'effet du réglage lumière en direct). Touches lues via refresh_display.
+        titre_img = "Controle lumiere - " + ("GLOBALE" if est_globale else "PINCE")
+        if verdict == "🟠":
+            print("   👉 Dans la fenêtre caméra : C = continuer le déploiement / R = re-régler / Q = annuler")
+            continuer_possible = True
+            legende_img = "C = continuer   R = re-regler   Q = annuler"
+        else:  # 🔴
+            print("   👉 Dans la fenêtre caméra : R = ajuste la lumière puis re-règle / Q = annuler (pas de C)")
+            continuer_possible = False
+            legende_img = "R = re-regler (ajuste la lumiere)   Q = annuler   (pas de C)"
+
+        decision = None
+        while decision is None:
+            k = refresh_display(titre=titre_img, legende=legende_img)   # haut : titre + touches
+            if k is None:
+                continue
+            if continuer_possible and k in T_C:
+                decision = "continuer"
+            elif k in T_R:
+                decision = "relancer"
+            elif k in T_Q:
+                decision = "quitter"
+
+        if decision == "continuer":
+            return True
+        if decision == "quitter":
+            return False
+        # relancer : l'opérateur a (éventuellement) ajusté la lumière
+        print(f"   🛠️  Recalage exposition — {nom} (auto puis figée)...")
+        r = regler_exposition_auto_puis_figee(index, nom, cam.async_read)
+        if not r["ok"]:
+            print(f"   ❌ {nom} : réglage d'exposition non appliqué — {', '.join(r['echecs'])}")
+            return False
+        # boucle : on recontrôle après recalage
+
+
+# ============================================
 # PROGRAMME PRINCIPAL
 # ============================================
 
@@ -1317,17 +1397,12 @@ def main():
     if checkpoint_path is None:
         sys.exit(1)
 
-    # Garde-fous modules caméra : sans eux, pas de contrôle ni de
-    # verrouillage → déploiement bloqué (cohérence entraînement↔déploiement).
-    if not CAMERA_LOCK_AVAILABLE:
-        print("\n❌ Module de configuration caméra indisponible.")
-        print(f"   Erreur : {CAMERA_LOCK_IMPORT_ERROR}")
-        print("   → Impossible de verrouiller les caméras. Déploiement annulé.")
-        sys.exit(1)
-    if not CAMERA_REF_AVAILABLE:
-        print("\n❌ Module de référence visuelle (SEM_so101_camera_reference) indisponible.")
-        print(f"   Erreur : {CAMERA_REF_IMPORT_ERROR}")
-        print("   → Impossible de contrôler les caméras vs le dataset. Déploiement annulé.")
+    # Garde-fou module caméra unifié : sans lui, ni exposition ni contrôle image
+    # → déploiement bloqué (fail-closed).
+    if not CAMERA_AUTO_AVAILABLE:
+        print("\n❌ Module caméra (SEM_so101_camera_auto) indisponible.")
+        print(f"   Erreur : {CAMERA_AUTO_IMPORT_ERROR}")
+        print("   → Impossible de régler/contrôler les caméras. Déploiement annulé.")
         sys.exit(1)
 
     # 2. Chargement du modèle ACT
@@ -1335,38 +1410,8 @@ def main():
     if policy is None:
         sys.exit(1)
 
-    # 3. Résolution des références du dataset d'entraînement (étape 6).
-    #    La « vérité » de comparaison est le meta/ du dataset, pas le local.
-    meta_dataset, msg_ref, mode_ref = resoudre_meta_dataset(checkpoint_path)
-    print(f"\n📂 {msg_ref}")
-    if mode_ref == "bloquant":
-        print("\n❌ Déploiement bloqué : la cause ci-dessus empêche un contrôle")
-        print("   caméra fiable — checkpoint non traçable (train_config/repo_id/meta)")
-        print("   ou références du dataset incohérentes. Le mode LEGACY ne couvre")
-        print("   pas ce cas.")
-        print("   → Reconsolide le dataset (script 9) ou choisis un autre modèle.")
-        sys.exit(1)
-    dossier_reference = meta_dataset       # None → LEGACY
-    if mode_ref == "legacy_possible":
-        print("\n⚠️  Le dataset de ce checkpoint ne contient pas de références caméra.")
-        print("   Ce modèle semble antérieur au système de référence visuelle.")
-        print("\n  [L] utiliser les références LOCALES actives — mode LEGACY, moins traçable")
-        print("  [Q] quitter")
-        while True:
-            rep_leg = input("Choix : ").strip().upper()
-            if rep_leg in ("L", "Q"):
-                break
-            print(f"   ⚠️  Saisie '{rep_leg}' non reconnue — L ou Q.")
-        if rep_leg == "Q":
-            print("\n❌ Déploiement annulé.")
-            sys.exit(0)
-        print("   ℹ️  Mode LEGACY : comparaison contre les références locales.")
-    # Contexte journalisé (D1) : distingue LEGACY du mode dataset normal.
-    contexte_deploiement = ("déploiement LEGACY — références locales"
-                            if mode_ref == "legacy_possible" else "déploiement")
-
-    # 3bis. Masque globale OBLIGATOIRE (le contrôle cam_top en dépend).
-    global _MASK_GLOBALE_IMG
+    # 3. Masque globale OBLIGATOIRE (le contrôle cam_top et l'inférence en dépendent).
+    global _MASK_GLOBALE_IMG, _display_cam_top, _display_cam_follower
     mask_pts = charger_masque_globale()
     if not mask_pts:
         print("\n❌ Masque globale introuvable (camera_mask.json).")
@@ -1377,17 +1422,16 @@ def main():
         mask_pts, CONFIG['camera_width'], CONFIG['camera_height'])
     print(f"\n✅ Masque globale actif ({len(mask_pts)} points)")
 
-    # 4. Robot Follower AU REPOS AVANT les caméras (étape 6) : la vue de la
-    #    PINCE dépend de la pose du bras → la scène doit être celle du repos,
-    #    garantie par le script. Le bras reste connecté pour l'inférence.
+    # 4. Robot Follower AU REPOS AVANT les caméras : la vue de la PINCE dépend de
+    #    la pose du bras → la scène doit être celle du repos, garantie par le
+    #    script. Le bras reste connecté pour l'inférence.
     port_handler, packet_handler, calib = connexion_follower()
     if port_handler is None:
         sys.exit(1)
 
-    # Le Follower est désormais connecté et ses servos sous couple. Toute
-    # sortie AVANT l'ouverture des caméras doit relâcher le couple proprement
-    # (sinon le bras reste rigide). _abort_cameras (défini plus bas) réutilise
-    # cette fonction après avoir fermé les caméras.
+    # Le Follower est désormais connecté et ses servos sous couple. Toute sortie
+    # avant l'inférence doit relâcher le couple proprement (sinon le bras reste
+    # rigide) et fermer les caméras déjà ouvertes.
     def _abort_follower(code=1):
         try:
             for sid in range(1, 7):
@@ -1402,40 +1446,9 @@ def main():
             cv2.destroyAllWindows()
         sys.exit(code)
 
-    # Phase de préparation (repos → identification caméras → contrôle) sous
-    # protection : un Ctrl+C ou une exception imprévue ici doit relâcher le
-    # couple du Follower (déjà sous tension), jamais laisser le bras rigide.
-    try:
-        print("\n🎯 Position repos (avant contrôle caméra)...")
-        if not aller_position_repos(packet_handler, port_handler, calib):
-            print("❌ Position repos impossible au démarrage — déploiement annulé.")
-            _abort_follower(1)
-
-        # 5. Identification des deux caméras (robot déjà au repos)
-        idx_top, idx_follower = identification_cameras()
-        if idx_top is None or idx_follower is None:
-            print("\n❌ Déploiement annulé : les deux caméras (globale + pince) sont requises.")
-            _abort_follower(1)
-
-        # 6. CONTRÔLE des deux caméras vs la référence du dataset (étape 6).
-        #    Séquentiel (jamais en parallèle) ; autorisation = les deux OK.
-        #    Remplace l'ancien réglage « à l'œil » par un contrôle mesuré.
-        for nom_cam, idx_cam, lib in ((CAM_TOP, idx_top, "GLOBALE"),
-                                      (CAM_FOLLOWER, idx_follower, "PINCE")):
-            res = controle_camera_deploiement(idx_cam, nom_cam,
-                                              dossier_reference,
-                                              contexte=contexte_deploiement)
-            if not (isinstance(res, dict) and res.get("autorise")):
-                print(f"\n❌ Déploiement annulé (contrôle {lib} non concluant).")
-                _abort_follower(0)
-    except KeyboardInterrupt:
-        print("\n\n🛑 ARRÊT pendant la préparation — couple du Follower coupé.")
-        _abort_follower(130)
-    except Exception as e:
-        print(f"\n❌ Erreur pendant la préparation du déploiement : {e}")
-        _abort_follower(1)
-
-    # 7. Connexion des caméras (ThreadedCamera)
+    # Caméras déclarées AVANT la préparation : _abort_cameras teste « if cam_top: »
+    # → sûr même quand les caméras ne sont pas encore ouvertes. On l'utilise donc
+    # uniformément pendant toute la phase de préparation.
     cam_top          = None
     cam_follower_cam = None
 
@@ -1449,60 +1462,96 @@ def main():
             cam_follower_cam.disconnect()
         _abort_follower(code)
 
-    if CV2_AVAILABLE:
-        if idx_top is not None:
-            cam_top = ThreadedCamera(
-                idx_top, CAM_TOP,
-                CONFIG['camera_width'], CONFIG['camera_height'], CONFIG['fps']
-            )
-            # Point A : arrêt si la connexion physique échoue
-            if not cam_top.connect() or not cam_top.is_connected:
-                print("\n❌ Caméra globale non connectée — arrêt.")
-                _abort_cameras(1)
-            # Point B : arrêt si la résolution réelle n'est pas celle attendue
-            frame_test = cam_top.async_read()
-            if frame_test is not None and frame_test.shape[:2] != (CONFIG['camera_height'], CONFIG['camera_width']):
-                print(f"\n❌ Résolution caméra globale incorrecte : {frame_test.shape[:2]}")
-                print(f"   Attendu : {(CONFIG['camera_height'], CONFIG['camera_width'])}")
-                _abort_cameras(1)
-
-        if idx_follower is not None:
-            cam_follower_cam = ThreadedCamera(
-                idx_follower, CAM_FOLLOWER,
-                CONFIG['camera_width'], CONFIG['camera_height'], CONFIG['fps']
-            )
-            # Point A : arrêt si la connexion physique échoue
-            if not cam_follower_cam.connect() or not cam_follower_cam.is_connected:
-                print("\n❌ Caméra pince non connectée — arrêt.")
-                _abort_cameras(1)
-            # Point B : arrêt si la résolution réelle n'est pas celle attendue
-            frame_test = cam_follower_cam.async_read()
-            if frame_test is not None and frame_test.shape[:2] != (CONFIG['camera_height'], CONFIG['camera_width']):
-                print(f"\n❌ Résolution caméra pince incorrecte : {frame_test.shape[:2]}")
-                print(f"   Attendu : {(CONFIG['camera_height'], CONFIG['camera_width'])}")
-                _abort_cameras(1)
-
-        # 7bis. Verrouillage matériel des caméras (exposition / balance des blancs / gain).
-        # Applique les réglages enregistrés par le script 8 dans camera_settings.json.
-        # CRITIQUE pour la cohérence entraînement↔déploiement : le modèle a été entraîné sur
-        # des images à réglages verrouillés. Sans ce verrouillage, l'auto-exposition / auto-WB
-        # ferait dériver la luminosité et la colorimétrie au déploiement.
-        # (La disponibilité du module de configuration caméra a déjà été
-        # vérifiée au démarrage — fail closed. Pas besoin de revérifier ici.)
-        # Verrouillage matériel : doit réussir (D2). Échec = arrêt — pas de
-        # passage en force (auto-exposition/auto-WB feraient dériver l'image).
-        ok_lock = True
-        ok_lock &= verrouiller_camera(f"/dev/video{idx_top}", CAM_TOP)
-        ok_lock &= verrouiller_camera(f"/dev/video{idx_follower}", CAM_FOLLOWER)
-        if not ok_lock:
-            print("\n❌ Verrouillage caméra incomplet — déploiement annulé")
-            print("   (les réglages doivent être garantis comme à l'entraînement).")
+    # 5. Préparation caméra (repos → identification → connexion → exposition auto
+    #    puis figée → contrôle image) sous protection : un Ctrl+C ou une exception
+    #    imprévue doit relâcher le couple du Follower et fermer les caméras, jamais
+    #    laisser le bras rigide.
+    try:
+        print("\n🎯 Position repos (avant contrôle caméra)...")
+        if not aller_position_repos(packet_handler, port_handler, calib):
+            print("❌ Position repos impossible au démarrage — déploiement annulé.")
             _abort_cameras(1)
 
-        # Stabilisation déterministe : laisse le temps aux caméras d'appliquer les
-        # réglages verrouillés et aux threads de rafraîchir vers des frames POST-
-        # verrouillage avant que la première action du modèle ne les lise.
-        time.sleep(0.5)
+        # 5a. Identification des deux caméras (robot déjà au repos).
+        idx_top, idx_follower = identification_cameras()
+        if idx_top is None or idx_follower is None:
+            print("\n❌ Déploiement annulé : les deux caméras (globale + pince) sont requises.")
+            _abort_cameras(1)
+
+        # 5b. Connexion des caméras (ThreadedCamera) AVANT le réglage d'exposition,
+        #     qui a besoin d'un flux actif pour converger puis figer l'exposition.
+        if not CV2_AVAILABLE:
+            print("\n❌ OpenCV indisponible — déploiement annulé.")
+            _abort_cameras(1)
+
+        cam_top = ThreadedCamera(
+            idx_top, CAM_TOP,
+            CONFIG['camera_width'], CONFIG['camera_height'], CONFIG['fps'])
+        if not cam_top.connect() or not cam_top.is_connected:
+            print("\n❌ Caméra globale non connectée — arrêt.")
+            _abort_cameras(1)
+        frame_test = cam_top.async_read()
+        if frame_test is not None and frame_test.shape[:2] != (CONFIG['camera_height'], CONFIG['camera_width']):
+            print(f"\n❌ Résolution caméra globale incorrecte : {frame_test.shape[:2]}")
+            print(f"   Attendu : {(CONFIG['camera_height'], CONFIG['camera_width'])}")
+            _abort_cameras(1)
+
+        cam_follower_cam = ThreadedCamera(
+            idx_follower, CAM_FOLLOWER,
+            CONFIG['camera_width'], CONFIG['camera_height'], CONFIG['fps'])
+        if not cam_follower_cam.connect() or not cam_follower_cam.is_connected:
+            print("\n❌ Caméra pince non connectée — arrêt.")
+            _abort_cameras(1)
+        frame_test = cam_follower_cam.async_read()
+        if frame_test is not None and frame_test.shape[:2] != (CONFIG['camera_height'], CONFIG['camera_width']):
+            print(f"\n❌ Résolution caméra pince incorrecte : {frame_test.shape[:2]}")
+            print(f"   Attendu : {(CONFIG['camera_height'], CONFIG['camera_width'])}")
+            _abort_cameras(1)
+
+        # Affichage : assigner les caméras d'affichage dès la connexion, pour que
+        # refresh_display() montre les deux flux pendant le réglage et le contrôle.
+        _display_cam_top = cam_top
+        _display_cam_follower = cam_follower_cam
+
+        # 5c. Réglage d'exposition UNE fois par session (auto puis figée + 50 Hz),
+        #     adapté à la lumière réelle de la salle. Fail-closed.
+        for cam, idx_cam, nom_cam, lib in ((cam_top, idx_top, CAM_TOP, "GLOBALE"),
+                                           (cam_follower_cam, idx_follower, CAM_FOLLOWER, "PINCE")):
+            print(f"\n🛠️  RÉGLAGE EXPOSITION — {lib} (auto puis figée)...")
+            r = regler_exposition_auto_puis_figee(idx_cam, nom_cam, cam.async_read)
+            if not r["ok"]:
+                print(f"\n❌ {lib} : réglage d'exposition non appliqué — {', '.join(r['echecs'])}")
+                _abort_cameras(1)
+
+        # 5d. Contrôle image simple (image BRUTE, avant masque) : plancher physique
+        #     + retour lumière. GLOBALE en zone utile du masque, PINCE en plein cadre.
+        #     🔴 = arrêt ; 🟠 = l'opérateur décide ; autorisation = les deux.
+        for cam, idx_cam, nom_cam, lib, est_glob in (
+                (cam_top, idx_top, CAM_TOP, "GLOBALE", True),
+                (cam_follower_cam, idx_follower, CAM_FOLLOWER, "PINCE", False)):
+            print(f"\n🔎 CONTRÔLE IMAGE — {lib}")
+            if not controle_camera_simple_interactif(cam, idx_cam, nom_cam, est_glob):
+                print(f"\n❌ {lib} : image non exploitable — déploiement annulé.")
+                _abort_cameras(0)
+
+        # Fenêtre de préparation fermée avant l'inférence (qui utilise sa propre
+        # fenêtre). Sans effet si elle n'a jamais été créée.
+        try:
+            cv2.destroyWindow('Cameras SO-ARM 101')
+            cv2.waitKey(1)
+        except Exception:
+            pass
+
+    except KeyboardInterrupt:
+        print("\n\n🛑 ARRÊT pendant la préparation — couple du Follower coupé.")
+        _abort_cameras(130)
+    except Exception as e:
+        print(f"\n❌ Erreur pendant la préparation du déploiement : {e}")
+        _abort_cameras(1)
+
+    # Stabilisation déterministe avant la première lecture du modèle : laisse les
+    # threads caméra rafraîchir vers des frames post-réglage.
+    time.sleep(0.5)
 
     # 8. Boucle d'inférence, sous protection CTRL+C (le robot est déjà
     #    connecté et au repos depuis l'étape 4).
