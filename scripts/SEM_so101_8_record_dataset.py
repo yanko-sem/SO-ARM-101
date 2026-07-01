@@ -23,41 +23,20 @@ import numpy as np
 from datetime import datetime
 from pathlib import Path
 
-# Module de configuration caméra (verrouillage matériel des réglages).
+# Module caméra (exposition auto puis figée) + contrôle image simple.
 # Import protégé : si le module est absent, mal placé ou cassé, on le signalera par un
 # message clair + arrêt propre plus bas, au lieu d'un traceback illisible au démarrage.
+# Décision validée : sans ce module, on N'ENREGISTRE PAS (fail closed).
 try:
-    from SEM_so101_camera_config import verrouiller_camera
-    CAMERA_LOCK_AVAILABLE = True
-    CAMERA_LOCK_IMPORT_ERROR = None
-except Exception as _e_config_canonique:
-    try:
-        from SEM_so101_8_camera_config import verrouiller_camera
-        CAMERA_LOCK_AVAILABLE = True
-        CAMERA_LOCK_IMPORT_ERROR = None
-    except Exception:
-        try:
-            from SEM_8_camera_config import verrouiller_camera
-            CAMERA_LOCK_AVAILABLE = True
-            CAMERA_LOCK_IMPORT_ERROR = None
-        except Exception as e:
-            verrouiller_camera = None
-            CAMERA_LOCK_AVAILABLE = False
-            CAMERA_LOCK_IMPORT_ERROR = _e_config_canonique
-
-# Module de qualité caméra (étape 5) : contrôle de QUALITÉ ABSOLUE de l'image
-# (exploitable : ni noire, ni cramée, ni instable), au démarrage et avant chaque
-# bloc — sans référence colorimétrique ni matching.
-# Décision validée (Q1) : sans ce module, on N'ENREGISTRE PAS (fail closed),
-# même logique que le module de configuration caméra ci-dessus.
-try:
-    from SEM_so101_camera_reference import controle_qualite_camera
-    CAMERA_QUALITY_AVAILABLE = True
-    CAMERA_QUALITY_IMPORT_ERROR = None
+    from SEM_so101_camera_auto import regler_exposition_auto_puis_figee, controle_image_simple, texte_verdict
+    CAMERA_AUTO_AVAILABLE = True
+    CAMERA_AUTO_IMPORT_ERROR = None
 except Exception as e:
-    controle_qualite_camera = None
-    CAMERA_QUALITY_AVAILABLE = False
-    CAMERA_QUALITY_IMPORT_ERROR = e
+    regler_exposition_auto_puis_figee = None
+    controle_image_simple = None
+    texte_verdict = None
+    CAMERA_AUTO_AVAILABLE = False
+    CAMERA_AUTO_IMPORT_ERROR = e
 
 # Supprimer les messages d'erreur OpenCV
 os.environ["OPENCV_LOG_LEVEL"] = "FATAL"
@@ -138,11 +117,17 @@ _display_cam_follower = None
 _MASK_GLOBALE_IMG = None  # image binaire du masque globale (None tant que le fichier n'est pas chargé)
 _window_created = False  # la fenêtre d'affichage n'est créée/dimensionnée qu'une seule fois
 
-def refresh_display():
-    """Rafraîchit l'affichage des caméras dans UNE fenêtre combinée (thread principal)."""
+def refresh_display(titre=None, legende=None):
+    """Rafraîchit l'affichage des caméras dans UNE fenêtre combinée (thread principal).
+    Retourne la touche lue par cv2.waitKey (& 0xFF), ou None si rien à afficher — ce
+    qui permet de piloter des décisions interactives DIRECTEMENT dans la fenêtre
+    caméra. Les appels existants qui ignorent ce retour fonctionnent à l'identique.
+    Si `titre`/`legende` sont fournis, ils sont incrustés sur un bandeau noir EN HAUT
+    (titre vert + touches jaunes), MÊME style qu'à l'identification des caméras. Sans
+    eux, affichage normal (labels CAM GLOBALE / CAM PINCE)."""
     global _window_created
     if not CV2_AVAILABLE:
-        return
+        return None
     w = CONFIG['camera_width']
     h = CONFIG['camera_height']
     frame_top = _display_cam_top.async_read() if (_display_cam_top and _display_cam_top.is_connected) else None
@@ -160,15 +145,27 @@ def refresh_display():
         images.append(frame)
     if not images:
         time.sleep(0.03)
-        return
+        return None
     display = images[0] if len(images) == 1 else cv2.hconcat(images)
     # Fenêtre redimensionnable + taille ×1.5 (1920×540) — créée/dimensionnée une seule fois
     if not _window_created:
         cv2.namedWindow('Cameras SO-ARM 101', cv2.WINDOW_NORMAL)
         cv2.resizeWindow('Cameras SO-ARM 101', 1920, 540)
         _window_created = True
+    # Bandeau noir EN HAUT (titre vert + touches jaunes), MÊME style qu'à
+    # l'identification G/P, pour que l'opérateur voie les choix sans le terminal.
+    if titre or legende:
+        dw = display.shape[1]
+        cv2.rectangle(display, (0, 0), (dw, 72), (0, 0, 0), -1)
+        if titre:
+            cv2.putText(display, titre, (10, 28),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+        if legende:
+            cv2.putText(display, legende, (10, 58),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
     cv2.imshow('Cameras SO-ARM 101', display)
-    cv2.waitKey(30)  # throttle l'affichage à ~33 Hz (évite la saturation CPU des boucles menu)
+    k = cv2.waitKey(30) & 0xFF   # throttle ~33 Hz + lit la touche pour les décisions live
+    return None if k == 255 else k
 
 # ============================================
 # CLASSE THREADED CAMERA (architecture LeRobot)
@@ -290,20 +287,24 @@ def identification_cameras():
         print(f"   Détecté : {len(cameras)} caméra(s). Branchez les deux caméras et relancez.")
         return None, None
 
-    print("\n📌 Vous allez voir chaque caméra tour à tour.")
+    print("\n📌 Vous allez voir chaque caméra tour à tour dans UNE seule fenêtre.")
     print("   Identifiez la caméra GLOBALE (vue d'ensemble du plateau) et")
     print("   la caméra PINCE (sur le follower). Les deux étant identiques,")
     print("   distinguez-les par ce qu'elles cadrent.")
-    print("\n   Appuyez sur ENTRÉE pour continuer...")
+    print("\n   ⌨️  Réponds DIRECTEMENT DANS LA FENÊTRE (pas au terminal) :")
+    print("      G = globale   P = pince   Q = passer   Échap = tout annuler")
+    print("\n   Appuyez sur ENTRÉE pour commencer...")
     input()
 
+    FENETRE = "Identification camera"
     cam_top_index = None
     cam_follower_index = None
 
     for idx in cameras:
         if cam_top_index is not None and cam_follower_index is not None:
             break  # les deux caméras sont identifiées, inutile de continuer
-        print(f"\n🎥 Caméra index {idx}...")
+        print(f"\n🎥 Caméra index {idx} — dans la FENÊTRE, appuie sur :")
+        print( "      G = GLOBALE (plateau)    P = PINCE (follower)    Q = passer    Échap = annuler")
         cap = cv2.VideoCapture(idx)
         if not cap.isOpened():
             print(f"   ❌ Impossible d'ouvrir la caméra {idx} — passée.")
@@ -311,44 +312,56 @@ def identification_cameras():
 
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, CONFIG['camera_width'])
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CONFIG['camera_height'])
-        window_name = f"Camera {idx} - Identifiez cette camera"
 
-        ret, frame = cap.read()
-        fenetre_ouverte = False
-        if ret:
-            cv2.putText(frame, f"Camera {idx}", (10, 30),
-                       cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-            cv2.putText(frame, "Repondez dans le TERMINAL", (10, 60),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 1)
-            cv2.imshow(window_name, frame)
-            cv2.waitKey(100)
-            fenetre_ouverte = True
+        # Vue LIVE + touches lues DANS la fenêtre (une seule fenêtre persistante,
+        # réutilisée pour toutes les caméras). Aucune réponse au terminal → pas de
+        # clic à donner. Si aucune image lisible pendant ~2 s, on ne propose pas
+        # cette caméra (pas de confirmation à l'aveugle).
+        choix = None
+        image_vue = False
+        t0 = time.time()
+        while choix is None:
+            ret, frame = cap.read()
+            if ret:
+                image_vue = True
+                # Bandeau noir en haut → légende lisible même sur une image très claire.
+                cv2.rectangle(frame, (0, 0), (frame.shape[1], 72), (0, 0, 0), -1)
+                cv2.putText(frame, f"Camera {idx}", (10, 28),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                cv2.putText(frame, "G=GLOBALE (plateau)  P=PINCE (follower)  Q=passer  Echap=annuler", (10, 58),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+                cv2.imshow(FENETRE, frame)
+            k = cv2.waitKey(30) & 0xFF
+            if k in (ord('g'), ord('G')):
+                choix = 'G'
+            elif k in (ord('p'), ord('P')):
+                choix = 'P'
+            elif k in (ord('q'), ord('Q')):
+                choix = 'Q'
+            elif k == 27:  # Échap
+                choix = 'ESC'
+            elif not image_vue and (time.time() - t0) > 2.0:
+                choix = 'NOIMG'
         cap.release()
 
-        # Sans image lisible, l'identification visuelle est impossible : on ne propose
-        # PAS cette caméra (pas de confirmation à l'aveugle) et on ne détruit pas une
-        # fenêtre qui n'a jamais été affichée.
-        if not fenetre_ouverte:
+        if choix == 'NOIMG':
             print(f"   ⚠️  Image indisponible pour la caméra {idx} — identification impossible, on passe.")
             continue
-
-        print(f"   📺 Regardez la fenêtre '{window_name}'")
-        print(f"   → Tapez G + Entrée si c'est la caméra GLOBALE (vue d'ensemble)")
-        print(f"   → Tapez P + Entrée si c'est la caméra PINCE (sur le follower)")
-        print(f"   → Tapez Q + Entrée pour passer")
-        choix_cam = input("   Votre choix : ").strip().upper()
-        cv2.destroyWindow(window_name)
-        cv2.waitKey(1)
-
-        if choix_cam == 'G':
+        if choix == 'ESC':
+            print("   ⏹  Identification annulée.")
+            cv2.destroyAllWindows()
+            cv2.waitKey(1)
+            return None, None
+        if choix == 'G':
             cam_top_index = idx
             print(f"   ✅ Caméra {idx} = {CAM_TOP} (globale)")
-        elif choix_cam == 'P':
+        elif choix == 'P':
             cam_follower_index = idx
             print(f"   ✅ Caméra {idx} = {CAM_FOLLOWER} (pince)")
-        else:
+        else:  # Q
             print(f"   ⏭️  Caméra {idx} passée")
 
+    # Fermeture UNE seule fois, à la fin.
     cv2.destroyAllWindows()
     cv2.waitKey(1)
 
@@ -1068,11 +1081,23 @@ class DatasetRecorder:
         dataset_path = self.get_dataset_path(position_id)
         meta_path = dataset_path / "meta"
         pos_name = POSITIONS[position_id]['nom']
+        # total_frames RÉEL = somme des longueurs de TOUS les épisodes de cette
+        # position. Les précédents sont déjà dans episodes.jsonl (une ligne
+        # "length" par épisode) ; on ajoute l'épisode courant (pas encore écrit).
+        # Évite l'hypothèse fausse « tous les épisodes ont la même durée ».
+        total_frames = num_frames
+        episodes_jsonl = meta_path / "episodes.jsonl"
+        if episodes_jsonl.exists():
+            with open(episodes_jsonl) as f:
+                for ligne in f:
+                    ligne = ligne.strip()
+                    if ligne:
+                        total_frames += json.loads(ligne).get("length", 0)
         info = {
             "codebase_version": "v2.1",
             "robot_type": "so101_follower",
             "total_episodes": episode_idx + 1,
-            "total_frames": (episode_idx + 1) * num_frames,
+            "total_frames": total_frames,
             "total_tasks": 1,
             "total_videos": (episode_idx + 1) * 2,
             "fps": CONFIG['fps'],
@@ -1211,9 +1236,10 @@ def keyboard_thread():
     """Lecture clavier caractère-par-caractère pour les menus d'enregistrement.
 
     PAUSE (keyboard_pause=True) : le thread restaure le terminal en mode
-    normal et CESSE de lire stdin, pour que les input() classiques (contrôle
-    caméra, contrôle qualité, confirmations) reçoivent les touches sans
-    concurrence. À la reprise, le mode caractère est rétabli. Sans ce
+    normal et CESSE de lire stdin, pour que les input() classiques
+    (instructions, confirmations, menus ponctuels) reçoivent les touches sans
+    concurrence. Le contrôle caméra C/R/Q, lui, se lit dans la fenêtre OpenCV,
+    pas au terminal. À la reprise, le mode caractère est rétabli. Sans ce
     mécanisme, deux lecteurs se partagent stdin et se volent les touches."""
     global stop_threads, cmd_queue
     try:
@@ -1253,16 +1279,18 @@ def keyboard_thread():
 
 
 def suspendre_clavier():
-    """Pause du thread clavier avant des input() interactifs (laisse 0,3 s
-    au thread pour restaurer le terminal)."""
+    """Pause du thread clavier avant une section interactive contrôlée (input
+    terminal OU décision lue dans la fenêtre) pour éviter les commandes fantômes
+    (laisse 0,3 s au thread pour restaurer le terminal)."""
     global keyboard_pause
     keyboard_pause = True
     time.sleep(0.3)
 
 
 def reprendre_clavier():
-    """Reprise du thread clavier après les input() ; purge les touches
-    tapées entre-temps pour éviter des commandes fantômes au menu."""
+    """Reprise du thread clavier après une section interactive contrôlée (input
+    terminal ou décision lue dans la fenêtre) ; purge les touches tapées
+    entre-temps pour éviter des commandes fantômes au menu."""
     global keyboard_pause
     while True:
         try:
@@ -1611,35 +1639,103 @@ def session_enregistrement(recorder, position_id, num_episodes, lk, lp, fk, fp, 
 # PROGRAMME PRINCIPAL
 # ============================================
 
+def controle_camera_simple_interactif(cam, index, nom, est_globale):
+    """Contrôle image simple d'UNE caméra (image BRUTE, avant masque) + retour
+    lumière. Le verdict détaillé s'affiche au TERMINAL ; la décision se prend
+    DANS LA FENÊTRE NORMALE « Cameras SO-ARM 101 », qui reste LIVE (on lit la
+    touche renvoyée par refresh_display). Pas de fenêtre spéciale. En 🟠/🔴, un
+    bandeau (titre + touches) est incrusté EN HAUT de la fenêtre, comme à
+    l'identification ; en 🟢 et hors contrôle, l'affichage reste normal.
+
+    Décision selon le verdict :
+      🟢 → verdict au terminal, fenêtre live ~1,5 s, puis on continue
+           AUTOMATIQUEMENT (rien à faire) ;
+      🟠 → dans la fenêtre : C = enregistrer / R = re-régler l'exposition / Q = annuler ;
+      🔴 → dans la fenêtre : R = re-régler l'exposition après correction / Q = annuler
+           (PAS de C). L'image reste VIVANTE : on voit l'effet du réglage lumière.
+    Le réglage d'exposition n'est relancé QUE sur demande explicite [R] (jamais en automatique).
+    Retourne True si l'enregistrement reste autorisé pour cette caméra."""
+    T_C = (ord('c'), ord('C'))
+    T_R = (ord('r'), ord('R'))
+    T_Q = (ord('q'), ord('Q'))
+    while True:
+        res = controle_image_simple(
+            cam.async_read, nom, CONFIG['camera_width'], CONFIG['camera_height'],
+            masque_path=str(MASK_FILE), est_globale=est_globale)
+        print(f"\n📷 {texte_verdict(nom, res)}")
+        verdict = res["verdict"]
+
+        # 🟢 : fenêtre normale live ~1,5 s, puis on continue automatiquement.
+        if verdict == "🟢":
+            t0 = time.time()
+            while time.time() - t0 < 1.5:
+                refresh_display()
+            return True
+
+        # 🟠 / 🔴 : décision DANS la fenêtre normale, qui reste LIVE (on voit
+        # l'effet du réglage lumière en direct). Touches lues via refresh_display.
+        titre_img = "Controle lumiere - " + ("GLOBALE" if est_globale else "PINCE")
+        if verdict == "🟠":
+            print("   👉 Dans la fenêtre caméra : C = enregistrer quand même / R = re-régler / Q = annuler")
+            continuer_possible = True
+            legende_img = "C = enregistrer   R = re-regler   Q = annuler"
+        else:  # 🔴
+            print("   👉 Dans la fenêtre caméra : R = ajuste la lumière puis re-règle / Q = annuler (pas de C)")
+            continuer_possible = False
+            legende_img = "R = re-regler (ajuste la lumiere)   Q = annuler   (pas de C)"
+
+        decision = None
+        while decision is None:
+            k = refresh_display(titre=titre_img, legende=legende_img)   # haut : titre + touches
+            if k is None:
+                continue
+            if continuer_possible and k in T_C:
+                decision = "continuer"
+            elif k in T_R:
+                decision = "relancer"
+            elif k in T_Q:
+                decision = "quitter"
+
+        if decision == "continuer":
+            return True
+        if decision == "quitter":
+            return False
+        # relancer : l'opérateur a (éventuellement) ajusté la lumière
+        print(f"   🛠️  Recalage exposition — {nom} (auto puis figée)...")
+        r = regler_exposition_auto_puis_figee(index, nom, cam.async_read)
+        if not r["ok"]:
+            print(f"   ❌ {nom} : réglage d'exposition non appliqué — {', '.join(r['echecs'])}")
+            return False
+        # boucle : on recontrôle après recalage
+
+
 def controle_camera_bloc(pos, cam_top, cam_top_index, cam_follower,
                          cam_follower_index, lk, lp, fk, fp, calib_l, calib_f):
-    """Contrôle caméra avant un bloc d'enregistrement (spec multi-caméra
-    §5 ; décision Q2 : appliqué au bloc complet ET au test rapide).
+    """Contrôle caméra simple avant un bloc d'enregistrement.
 
-    Les DEUX caméras sont contrôlées, l'une après l'autre (jamais en
-    parallèle — règle d'architecture du module) ; l'enregistrement n'est
-    autorisé que si LES DEUX images sont exploitables.
+    Les DEUX caméras sont contrôlées sur leur image BRUTE (avant masque), l'une
+    après l'autre ; l'enregistrement n'est autorisé que si LES DEUX images sont
+    exploitables. Le réglage d'exposition N'est PAS recalculé automatiquement (cohérence
+    intra-séance) ; si la lumière a changé, l'option [R] du verdict 🟠 permet de
+    relancer le réglage d'exposition manuellement.
 
-    Séquence (le module mesure avec SA propre capture, caméras du script
-    LIBÉRÉES) :
+    Séquence (caméras du script TOUJOURS connectées : lecture via async_read) :
       1. robots au repos, maintenus (scène stable) ;
-      2. les deux caméras du script libérées ;
-      3. contrôle GLOBALE puis contrôle PINCE — autorisation = ET ;
-      4. reconnexion des deux + vérification résolution + verrouillage
-         (un réglage [R] a pu changer les réglages) ;
-      5. reprise de la téléopération.
+      2. contrôle simple GLOBALE puis PINCE — autorisation = ET ;
+      3. reprise de la téléopération.
     Retourne True si l'enregistrement du bloc est autorisé."""
     global pause_teleop
     clear_screen()
     print(f"\n📷 Contrôle des deux caméras avant le bloc (position {pos})...")
 
-    # Le contrôle qualité (réglages [R]) utilise input() : suspension du thread
-    # clavier pour qu'il ne vole pas les touches (terminal rendu au mode
-    # normal), reprise + purge à la fin.
+    # Section contrôlée (robots au repos + contrôle caméra dans la fenêtre) : on
+    # suspend le thread clavier pour qu'il ne consomme pas le terminal pendant ce
+    # temps, puis on le reprend à la fin. Les décisions C/R/Q du contrôle se lisent
+    # DANS la fenêtre (via refresh_display), pas au terminal.
     suspendre_clavier()
     try:
 
-        # 1) Robots au repos — scène stable et reproductible pour le contrôle qualité
+        # 1) Robots au repos — scène stable et reproductible pour le contrôle
         pause_teleop = True
         time.sleep(0.1)
         for i in range(1, 7):
@@ -1656,52 +1752,15 @@ def controle_camera_bloc(pos, cam_top, cam_top_index, cam_follower,
             pause_teleop = False
             return False
 
-        # 2) Libération des DEUX caméras (le module ouvre les siennes)
-        if cam_top is not None:
-            cam_top.disconnect()
-        if cam_follower is not None:
-            cam_follower.disconnect()
-
-        # 3) Contrôles qualité séquentiels — autorisation = LES DEUX exploitables (ET).
-        #    Toute exception = bloc annulé, jamais de crash. Si la première
-        #    caméra annule, la seconde n'est pas contrôlée (inutile).
+        # 2) Contrôles simples séquentiels (image brute) — autorisation = ET.
+        #    Si la première caméra annule, la seconde n'est pas contrôlée.
         autorise = True
-        for nom_cam, idx_cam, lib in ((CAM_TOP, cam_top_index, "GLOBALE"),
-                                      (CAM_FOLLOWER, cam_follower_index, "PINCE")):
-            if not autorise:
-                break
-            try:
-                res = controle_qualite_camera(
-                    idx_cam, nom_cam,
-                    contexte=f"bloc position {pos} — {lib}")
-                if not bool(res.get("autorise")):
-                    autorise = False
-            except Exception as e:
-                print(f"\n⚠️  Contrôle {lib} interrompu ({e}) — bloc annulé.")
-                autorise = False
+        if cam_top is not None:
+            autorise = controle_camera_simple_interactif(cam_top, cam_top_index, CAM_TOP, True)
+        if autorise and cam_follower is not None:
+            autorise = controle_camera_simple_interactif(cam_follower, cam_follower_index, CAM_FOLLOWER, False)
 
-        # 4) Reconnexion des deux mêmes instances caméra +
-        #    mêmes vérifications qu'au démarrage + verrouillage
-        def _reconnecter(cam, idx_cam, nom_cam, lib):
-            nonlocal autorise
-            if cam is None:
-                return
-            if not cam.connect() or not cam.is_connected:
-                print(f"\n❌ Caméra {lib} non reconnectée — arrêt.")
-                sys.exit(1)
-            frame_test = cam.async_read()
-            if frame_test is not None and frame_test.shape[:2] != (CONFIG['camera_height'], CONFIG['camera_width']):
-                print(f"\n❌ Résolution caméra {lib} incorrecte : {frame_test.shape[:2]}")
-                print(f"   Attendu : {(CONFIG['camera_height'], CONFIG['camera_width'])}")
-                sys.exit(1)
-            if not verrouiller_camera(f"/dev/video{idx_cam}", nom_cam):
-                print(f"\n❌ Verrouillage {lib} incomplet — bloc annulé (fail closed).")
-                autorise = False
-
-        _reconnecter(cam_top, cam_top_index, CAM_TOP, "GLOBALE")
-        _reconnecter(cam_follower, cam_follower_index, CAM_FOLLOWER, "PINCE")
-
-        # 5) Reprise téléopération : libérer Leader, garder Follower actif
+        # 3) Reprise téléopération : libérer Leader, garder Follower actif
         for i in range(1, 7):
             lk.write1ByteTxRx(lp, i, 40, 0)
             fk.write1ByteTxRx(fp, i, 40, 1)
@@ -1747,25 +1806,14 @@ Format de sortie : LeRobotDataset v2.1 (2 caméras: top + follower)
         print("❌ Calibration Follower absente, incomplète ou invalide — refaire la Phase 3.")
         return
 
-    # Garde-fou : le module de configuration caméra doit être disponible.
-    # Sans lui, impossible de régler puis verrouiller les caméras → on arrête (fail closed)
-    # plutôt que d'enregistrer en auto-exposition, incohérent avec le déploiement.
-    if not CAMERA_LOCK_AVAILABLE:
-        print("\n❌ Module de configuration caméra (SEM_so101_camera_config.py) indisponible.")
-        print(f"   Erreur : {CAMERA_LOCK_IMPORT_ERROR}")
-        print("   → Impossible de régler puis verrouiller les caméras.")
-        print("   → Enregistrement annulé pour éviter des images en mode auto (incohérence avec le déploiement).")
-        print("   → Vérifiez que SEM_so101_camera_config.py est dans le même dossier que ce script.")
-        sys.exit(1)
-
-    # Garde-fou étape 5 (décision Q1, fail closed) : sans le module de
-    # qualité caméra, on n'enregistre PAS. Vérifié ICI (tôt) ; le contrôle
-    # qualité lui-même est fait plus bas, robots au repos.
-    if not CAMERA_QUALITY_AVAILABLE:
-        print("\n❌ Module qualité caméra (SEM_so101_camera_reference.py) indisponible.")
-        print(f"   Erreur : {CAMERA_QUALITY_IMPORT_ERROR}")
-        print("   → Impossible de contrôler la qualité absolue de l'image (image exploitable).")
-        print("   → Enregistrement annulé. Vérifiez que SEM_so101_camera_reference.py est")
+    # Garde-fou : le module caméra (exposition auto-figée + contrôle image simple)
+    # doit être disponible. Sans lui, impossible de régler l'exposition et de contrôler
+    # l'image → on arrête (fail closed) plutôt que d'enregistrer à l'aveugle.
+    if not CAMERA_AUTO_AVAILABLE:
+        print("\n❌ Module caméra (SEM_so101_camera_auto.py) indisponible.")
+        print(f"   Erreur : {CAMERA_AUTO_IMPORT_ERROR}")
+        print("   → Impossible de régler l'exposition et de contrôler l'image.")
+        print("   → Enregistrement annulé. Vérifiez que SEM_so101_camera_auto.py est")
         print("     dans le même dossier que ce script.")
         sys.exit(1)
 
@@ -1822,78 +1870,69 @@ Format de sortie : LeRobotDataset v2.1 (2 caméras: top + follower)
             print("\n❌ Enregistrement annulé : les deux caméras (globale + pince) sont requises.")
             sys.exit(1)
 
-        # ORDRE VALIDÉ (étape 5) : robots MAINTENUS au repos (couples actifs
-        # depuis position_repos_parallele) PENDANT la préparation caméra (qualité
-        # absolue) — la vue de la PINCE dépend de la pose du bras. Les caméras du
-        # script ne sont pas encore connectées : le module ouvre les siennes.
-        # Le thread clavier n'est pas encore lancé → les input() de préparation
-        # caméra fonctionnent directement (pas de suspension nécessaire ici).
-        # Préparation caméra (V1, sans référence) : image propre de séance,
-        # verrouillage intra-séance, puis plancher qualité ABSOLU via
-        # controle_qualite_camera — pour LES DEUX caméras. Aucun matching
-        # couleur, aucune référence colorimétrique. Une caméra non exploitable
-        # arrête proprement l'enregistrement.
-        verdicts_prep = {}
-        for nom_cam, idx_cam, lib in ((CAM_TOP, cam_top_index, "GLOBALE"),
-                                      (CAM_FOLLOWER, cam_follower_index, "PINCE")):
-            print(f"\n🛠️  PRÉPARATION CAMÉRA — {lib}")
-            try:
-                res = controle_qualite_camera(idx_cam, nom_cam, contexte="préparation")
-            except Exception as e:
-                print(f"\n❌ Préparation {lib} interrompue ({e}) — enregistrement annulé.")
+        # ORDRE VALIDÉ : robots MAINTENUS au repos PENDANT la préparation caméra
+        # — la vue de la PINCE dépend de la pose du bras. On connecte d'abord les
+        # caméras (l'exposition auto a besoin d'un flux ACTIF pour converger), puis on
+        # règle l'exposition UNE fois par séance (auto puis figée + 50 Hz), puis le
+        # contrôle image simple sur l'image BRUTE (avant masque). Le Leader n'est
+        # libéré qu'ENSUITE. Le thread clavier n'est pas encore lancé → les input()
+        # fonctionnent directement (pas de suspension nécessaire ici).
+        if not CV2_AVAILABLE:
+            print("\n❌ OpenCV indisponible — enregistrement annulé (caméras requises).")
+            sys.exit(1)
+
+        print("\n📷 Connexion des caméras identifiées...")
+        cam_top = ThreadedCamera(cam_top_index, CAM_TOP, CONFIG['camera_width'], CONFIG['camera_height'], CONFIG['fps'])
+        if not cam_top.connect() or not cam_top.is_connected:
+            print("\n❌ Caméra globale non connectée — arrêt.")
+            sys.exit(1)
+        frame_test = cam_top.async_read()
+        if frame_test is not None and frame_test.shape[:2] != (CONFIG['camera_height'], CONFIG['camera_width']):
+            print(f"\n❌ Résolution caméra globale incorrecte : {frame_test.shape[:2]}")
+            print(f"   Attendu : {(CONFIG['camera_height'], CONFIG['camera_width'])}")
+            sys.exit(1)
+
+        cam_follower = ThreadedCamera(cam_follower_index, CAM_FOLLOWER, CONFIG['camera_width'], CONFIG['camera_height'], CONFIG['fps'])
+        if not cam_follower.connect() or not cam_follower.is_connected:
+            print("\n❌ Caméra pince non connectée — arrêt.")
+            sys.exit(1)
+        frame_test = cam_follower.async_read()
+        if frame_test is not None and frame_test.shape[:2] != (CONFIG['camera_height'], CONFIG['camera_width']):
+            print(f"\n❌ Résolution caméra pince incorrecte : {frame_test.shape[:2]}")
+            print(f"   Attendu : {(CONFIG['camera_height'], CONFIG['camera_width'])}")
+            sys.exit(1)
+
+        # Affichage : assigner les caméras d'affichage DÈS la connexion (pas après
+        # toute la préparation), pour que refresh_display() puisse montrer les deux
+        # flux en direct pendant le réglage d'exposition et le contrôle image ci-dessous.
+        _display_cam_top = cam_top
+        _display_cam_follower = cam_follower
+
+        # Réglage d'exposition UNE fois par séance (auto puis figée + 50 Hz), fail-closed.
+        for cam, idx_cam, nom_cam, lib in ((cam_top, cam_top_index, CAM_TOP, "GLOBALE"),
+                                           (cam_follower, cam_follower_index, CAM_FOLLOWER, "PINCE")):
+            print(f"\n🛠️  RÉGLAGE EXPOSITION — {lib} (auto puis figée)...")
+            r = regler_exposition_auto_puis_figee(idx_cam, nom_cam, cam.async_read)
+            if not r["ok"]:
+                print(f"\n❌ {lib} : réglage d'exposition non appliqué — {', '.join(r['echecs'])}")
+                print("   Enregistrement annulé (fail closed).")
                 sys.exit(1)
-            verdicts_prep[lib] = res.get("verdict", "🔴")
-            if not res.get("autorise"):
+
+        # Contrôle image simple (image BRUTE, avant masque) : plancher physique
+        # global + retour lumière. 🔴 = arrêt ; 🟠 = l'opérateur décide.
+        for cam, idx_cam, nom_cam, lib, est_glob in (
+                (cam_top, cam_top_index, CAM_TOP, "GLOBALE", True),
+                (cam_follower, cam_follower_index, CAM_FOLLOWER, "PINCE", False)):
+            print(f"\n🔎 CONTRÔLE IMAGE — {lib}")
+            if not controle_camera_simple_interactif(cam, idx_cam, nom_cam, est_glob):
                 print(f"\n❌ {lib} : image non exploitable — enregistrement annulé.")
                 sys.exit(1)
-        print("\n📋 Verdict qualité : "
-              + "   ".join(f"{lib} {v}" for lib, v in verdicts_prep.items()))
 
-        input("\n✅ Caméras prêtes. Appuyez sur ENTRÉE pour libérer le Leader et lancer la téléopération...")
+        input("\n✅ Caméras prêtes (exposition réglée). Appuyez sur ENTRÉE pour libérer le Leader et lancer la téléopération...")
 
         for i in range(1, 7):
             lk.write1ByteTxRx(lp, i, 40, 0)
             fk.write1ByteTxRx(fp, i, 40, 1)
-
-        if CV2_AVAILABLE:
-            print("\n📷 Connexion des caméras identifiées...")
-            if cam_top_index is not None:
-                cam_top = ThreadedCamera(cam_top_index, CAM_TOP, CONFIG['camera_width'], CONFIG['camera_height'], CONFIG['fps'])
-                # Point A : arrêt si la connexion physique échoue
-                if not cam_top.connect() or not cam_top.is_connected:
-                    print("\n❌ Caméra globale non connectée — arrêt.")
-                    sys.exit(1)
-                # Point B : arrêt si la résolution réelle n'est pas celle attendue
-                frame_test = cam_top.async_read()
-                if frame_test is not None and frame_test.shape[:2] != (CONFIG['camera_height'], CONFIG['camera_width']):
-                    print(f"\n❌ Résolution caméra globale incorrecte : {frame_test.shape[:2]}")
-                    print(f"   Attendu : {(CONFIG['camera_height'], CONFIG['camera_width'])}")
-                    sys.exit(1)
-
-            if cam_follower_index is not None:
-                cam_follower = ThreadedCamera(cam_follower_index, CAM_FOLLOWER, CONFIG['camera_width'], CONFIG['camera_height'], CONFIG['fps'])
-                # Point A : arrêt si la connexion physique échoue
-                if not cam_follower.connect() or not cam_follower.is_connected:
-                    print("\n❌ Caméra pince non connectée — arrêt.")
-                    sys.exit(1)
-                # Point B : arrêt si la résolution réelle n'est pas celle attendue
-                frame_test = cam_follower.async_read()
-                if frame_test is not None and frame_test.shape[:2] != (CONFIG['camera_height'], CONFIG['camera_width']):
-                    print(f"\n❌ Résolution caméra pince incorrecte : {frame_test.shape[:2]}")
-                    print(f"   Attendu : {(CONFIG['camera_height'], CONFIG['camera_width'])}")
-                    sys.exit(1)
-
-            # Verrouillage matériel APRÈS connexion + contrôle STRICT du résultat
-            # (bool explicite : robuste même si verrouiller_camera renvoyait None)
-            ok_top = True
-            ok_follower = True
-            if cam_top_index is not None:
-                ok_top = bool(verrouiller_camera(f"/dev/video{cam_top_index}", CAM_TOP))
-            if cam_follower_index is not None:
-                ok_follower = bool(verrouiller_camera(f"/dev/video{cam_follower_index}", CAM_FOLLOWER))
-            if not (ok_top and ok_follower):
-                print("\n❌ Verrouillage caméra incomplet — enregistrement annulé (fail closed).")
-                sys.exit(1)
 
         stop_threads = False
         cmd_queue = queue.Queue()
@@ -1904,10 +1943,6 @@ Format de sortie : LeRobotDataset v2.1 (2 caméras: top + follower)
             daemon=True
         )
         teleop_t.start()
-
-        # Assignation pour la boucle d'affichage dans le main thread
-        _display_cam_top = cam_top
-        _display_cam_follower = cam_follower
 
         kb_t = threading.Thread(target=keyboard_thread, daemon=True)
         kb_t.start()
