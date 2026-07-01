@@ -10,7 +10,7 @@ Prépare, en un seul geste, le dataset destiné à l'entraînement (script 10) :
   1. Analyse + validation des données source (script 8) — fail-closed.
   2. Consolidation des 5 positions dans un dossier TEMPORAIRE.
   3. Finalisation : info.json complet, tasks.jsonl, episodes.jsonl, episodes_stats.jsonl,
-     traçabilité caméra, conversion H.264 (navigateur), vérification frames vidéo/parquet.
+     conversion H.264 (navigateur), vérification frames vidéo/parquet.
   4. Bascule ATOMIQUE vers le dataset final UNIQUEMENT si les étapes critiques réussissent.
   5. Visualisation LeRobot optionnelle — désormais intégrée ici (ancienne étape de visualisation séparée).
 
@@ -18,7 +18,7 @@ Entrée : ~/.cache/huggingface/lerobot/local/so101_pick_place/position_X_*/
 Sortie : ~/.cache/huggingface/lerobot/local/so101_pick_place_consolidated/
 
 Auteur: Service Écoles-Médias (SEM)
-Version: 2.1 (préparation complète du dataset + visualisation intégrée)
+Version: 2.2 (préparation complète du dataset + visualisation intégrée)
 """
 
 import os
@@ -32,24 +32,6 @@ import urllib.request
 import time
 from pathlib import Path
 from datetime import datetime
-
-# Module de référence visuelle caméra (étape 5, décision Q3) : à la consolidation,
-# la référence et le journal sont copiés dans le meta/ du dataset, qui devient leur
-# exemplaire de vérité. Import protégé et NON bloquant : consolider un dataset doit
-# rester possible sans le module (traçabilité incomplète signalée à la place ; le
-# script 11 possède un mode LEGACY pour les datasets sans références).
-try:
-    from SEM_so101_camera_reference import copier_reference_vers_meta
-    from SEM_so101_camera_reference import LOG_FILE as CAMERA_REF_LOG
-    from SEM_so101_camera_reference import CALIB_DIR as CAMERA_REF_CALIB_DIR
-    CAMERA_REF_AVAILABLE = True
-except Exception:
-    copier_reference_vers_meta = None
-    CAMERA_REF_LOG = None
-    # Fallback : même module cassé, on garde le chemin de calibration pour détecter
-    # d'éventuelles références SOURCE locales (échec d'import ≠ vrai legacy).
-    CAMERA_REF_CALIB_DIR = Path(os.path.expanduser("~/lerobot/calibration"))
-    CAMERA_REF_AVAILABLE = False
 
 # Auto-activation de l'environnement lerobot si nécessaire
 try:
@@ -222,21 +204,10 @@ def verifier_videos(inventaire):
 # CONSOLIDATION (vers un dossier de destination)
 # ============================================
 
-def compter_references_camera_locales():
-    """Nombre de références caméra SOURCE présentes localement (0, 1 ou 2) dans
-    ~/lerobot/calibration. Distingue un VRAI dataset legacy (aucune source) d'un
-    échec d'import/copie (sources présentes mais non copiées dans meta/)."""
-    return sum(
-        1 for cam in (CAM_TOP, CAM_FOLLOWER)
-        if (CAMERA_REF_CALIB_DIR / f"camera_reference_{cam}.json").exists()
-    )
-
-
 def consolider(inventaire, dest_base):
     """Fusionne toutes les positions dans dest_base (dossier TEMPORAIRE).
     Fail-closed : si une vidéo source attendue est absente au moment de la copie,
-    la consolidation est annulée (return (False, ref_status)). Retourne
-    (True, ref_status) sinon, avec ref_status dans {"copiee","partielle","absente","echec"}."""
+    la consolidation est annulée (return False). Retourne True sinon."""
     data_out = dest_base / "data" / "chunk-000"
     video_top_out = dest_base / "videos" / "chunk-000" / f"observation.images.{CAM_TOP}"
     video_fol_out = dest_base / "videos" / "chunk-000" / f"observation.images.{CAM_FOLLOWER}"
@@ -294,7 +265,7 @@ def consolider(inventaire, dest_base):
                 manque = CAM_TOP if not src_vid_top.exists() else CAM_FOLLOWER
                 print(f"\n  ❌ Vidéo {manque} absente pour position {pos_id} épisode {orig_idx}"
                       f" — consolidation annulée (dataset incomplet).")
-                return False, "echec"
+                return False
             shutil.copy2(src_vid_top, video_top_out / new_fname)
             shutil.copy2(src_vid_fol, video_fol_out / new_fname)
 
@@ -379,59 +350,7 @@ def consolider(inventaire, dest_base):
     with open(meta_out / "consolidation_trace.json", 'w') as f:
         json.dump(trace, f, indent=2)
 
-    # 8. Traçabilité « Référence visuelle caméra » — statut fondé sur la PRÉSENCE
-    #    RÉELLE des fichiers dans meta/ (le script 11 y cherche des fichiers réels,
-    #    pas un code de retour). Non bloquant : le script 11 a un mode LEGACY.
-    ref_status = "absente"
-    if CAMERA_REF_AVAILABLE:
-        print("\n📷 Traçabilité caméra → meta/ ...")
-        ref_echec = False
-        try:
-            copier_reference_vers_meta(meta_out)
-        except Exception as e:
-            print(f"   ⚠️  Copie de la référence caméra impossible ({e}).")
-            ref_echec = True
-        # Vérification effective : fichiers camera_reference_<cam>.json attendus.
-        attendus = [meta_out / f"camera_reference_{CAM_TOP}.json",
-                    meta_out / f"camera_reference_{CAM_FOLLOWER}.json"]
-        presents = sum(1 for p in attendus if p.exists())
-        # Distingue un VRAI legacy (aucune source) d'un ÉCHEC de copie (sources
-        # présentes mais absentes de meta/).
-        sources_locales = compter_references_camera_locales()
-        if presents == 2:
-            ref_status = "copiee"
-        elif presents == 1:
-            ref_status = "partielle"
-        elif ref_echec or sources_locales > 0:
-            ref_status = "echec"      # sources présentes mais 0 copiée → panne (pas legacy)
-        else:
-            ref_status = "absente"    # aucune source locale → vrai dataset legacy
-        if ref_status == "copiee":
-            print("   ✅ Références caméra présentes dans meta/ (2/2).")
-        elif ref_status == "partielle":
-            print(f"   ⚠️  Référence caméra incomplète dans meta/ ({presents}/2 — traçabilité partielle).")
-        else:
-            print("   ⚠️  Aucune référence caméra dans meta/ (traçabilité incomplète).")
-        if CAMERA_REF_LOG is not None and Path(CAMERA_REF_LOG).exists():
-            try:
-                shutil.copy2(CAMERA_REF_LOG, meta_out / Path(CAMERA_REF_LOG).name)
-                print(f"   ✅ Journal copié : {Path(CAMERA_REF_LOG).name}")
-            except Exception as e:
-                print(f"   ⚠️  Copie du journal impossible ({e}).")
-        else:
-            print("   ℹ️  Aucun journal de passages 🟠 (normal si tout était 🟢).")
-    else:
-        print("\n⚠️  Module SEM_so101_camera_reference indisponible.")
-        if compter_references_camera_locales() > 0:
-            ref_status = "echec"
-            print("   Mais des références caméra locales existent — non copiées dans meta/ :")
-            print("   échec d'import/copie → préparation BLOQUANTE (pas un vrai legacy).")
-        else:
-            ref_status = "absente"
-            print("   Aucune référence locale détectée — dataset traité en LEGACY")
-            print("   après confirmation (mode LEGACY au script 11).")
-
-    return True, ref_status
+    return True
 
 
 # ============================================
@@ -808,14 +727,8 @@ def basculer_vers_final():
         return False
 
 
-def afficher_rapport_final(ref_status, h264_status, frames_status):
+def afficher_rapport_final(h264_status, frames_status):
     """Rapport à états DISTINCTS : on ne déclare jamais « tout prêt » d'un bloc."""
-    map_ref = {
-        "copiee": "✅ présentes dans meta/ (2/2)",
-        "partielle": "⚠️  INCOMPLÈTES dans meta/ (1/2) — le script 11 BLOQUERA le déploiement",
-        "absente": "⚠️  absentes (traçabilité incomplète — mode LEGACY au script 11)",
-        "echec":  "❌ copie échouée (traçabilité incomplète)",
-    }
     map_h264 = {
         "ok": "✅ vidéos en H.264 (visualisation navigateur OK)",
         "non_fait": "⚠️  non faite (ffmpeg absent) — vidéos encore en mp4v, visualisation navigateur indisponible",
@@ -830,7 +743,6 @@ def afficher_rapport_final(ref_status, h264_status, frames_status):
     print("  RAPPORT DE PRÉPARATION DU DATASET")
     print("=" * 60)
     print(f"  • Consolidation + métadonnées v2.1 : ✅ (info.json, tasks, episodes, episodes_stats)")
-    print(f"  • Références caméra : {map_ref.get(ref_status, ref_status)}")
     print(f"  • Conversion H.264 (navigateur) : {map_h264.get(h264_status, h264_status)}")
     print(f"  • Vérification frames vidéo/parquet : {map_frames.get(frames_status, frames_status)}")
     print("-" * 60)
@@ -958,38 +870,11 @@ def preparer_dataset():
 
     # Construction dans le dossier temporaire (atomicité).
     nettoyer_tmp()
-    ok_consol, ref_status = consolider(inventaire, TMP_BASE)
+    ok_consol = consolider(inventaire, TMP_BASE)
     if not ok_consol:
         nettoyer_tmp()
         print("\n❌ Consolidation annulée — dataset final inchangé.")
         return False
-
-    # Politique fail-closed sur la référence caméra :
-    #   - 'partielle' (1/2) = état incohérent → bloqué (le script 11 le refuserait).
-    #   - 'echec' = exception de copie, OU sources locales présentes mais aucune
-    #     référence copiée (module cassé / copie ratée — pas un legacy) → bloqué.
-    #   - 'absente' (0/2) = aucune référence : toléré pour les datasets LEGACY, mais
-    #     JAMAIS en silence → confirmation explicite exigée.
-    if ref_status in ("partielle", "echec"):
-        nettoyer_tmp()
-        if ref_status == "partielle":
-            print("\n❌ Références caméra partielles (1/2) — état incohérent, refusé au déploiement"
-                  " par le script 11. Préparation annulée (dataset final inchangé).")
-            print("   → Complétez la référence des DEUX caméras, ou retirez la référence partielle.")
-        else:
-            print("\n❌ Référence caméra en échec (copie impossible, ou module indisponible"
-                  " malgré des sources locales) — préparation annulée (dataset final inchangé).")
-            print("   → Vérifie le module SEM_so101_camera_reference et ~/lerobot/calibration/, puis relance.")
-        return False
-
-    if ref_status == "absente":
-        print("\n⚠️  Aucune référence caméra (0/2) dans meta/.")
-        print("   Le script 8 étant fail-closed, un dataset NEUF devrait en avoir une.")
-        print("   Poursuivre installe un dataset LEGACY (déployable uniquement en mode LEGACY au script 11).")
-        if input("   Confirmer la préparation SANS référence caméra ? [O/N] : ").strip().upper() != 'O':
-            nettoyer_tmp()
-            print("   Préparation annulée (dataset final inchangé).")
-            return False
 
     # Finalisation (sur le dossier temporaire).
     completer_info_json(TMP_BASE)
@@ -1024,7 +909,7 @@ def preparer_dataset():
     with open(info_file) as f:
         info = json.load(f)
     afficher_resume(info, OUTPUT_BASE)
-    afficher_rapport_final(ref_status, h264_status, frames_status)
+    afficher_rapport_final(h264_status, frames_status)
     return True
 
 
