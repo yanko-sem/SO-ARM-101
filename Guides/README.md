@@ -21,6 +21,9 @@ Installation complète de l'environnement de développement.
 - Support servos Feetech STS3215
 - Compatible Ubuntu 22.04+
 
+**Scripts utilisés :**
+- Aucun (phase d'installation)
+
 
 ### 📙 Phase 2 — Configuration des Servos
 
@@ -39,6 +42,9 @@ Configuration individuelle de chaque servo avec son ID.
 **Ratios Follower :**
 - Tous : 1:345
 
+**Script utilisé :**
+- `SEM_so101_1_configure.py`
+
 
 ### 📗 Phase 3 — Calibration
 
@@ -48,6 +54,10 @@ Définition des limites de mouvement pour chaque servo.
 - Sauvegarde automatique après chaque servo
 - Centrage en douceur (courbe sinusoïdale)
 - Validation des amplitudes
+
+**Scripts utilisés :**
+- `SEM_so101_2_calibrate.py`
+- `SEM_so101_3_monitor.py`
 
 **Fichiers générés :**
 - `~/lerobot/calibration/leader_calibration.json`
@@ -93,6 +103,7 @@ Installation et configuration du système de vision.
 - Installation physique des caméras USB
 - Correction OpenCV (headless → GUI)
 - Test de capture avec LeRobot
+- Création du masque de zone utile de la caméra globale (`camera_mask.json`), réutilisé aux Phases 7 et 10
 - Téléopération avec retour caméra en temps réel
 
 **Script utilisé :**
@@ -105,15 +116,14 @@ Capture de démonstrations pour l'apprentissage par imitation.
 
 - 2 caméras simultanées (cam_top + cam_follower)
 - Identification caméras par touches G (Globale) et P (Pince)
-- **Référence visuelle des deux caméras** : menus de référence (globale puis pince) au démarrage, contrôle de conformité avant chaque bloc (image cohérente avec le dataset)
+- **Contrôle image des deux caméras** : exposition (et balance des blancs) réglée automatiquement puis figée au démarrage, puis contrôle de l'image (lumière) avant chaque bloc
 - Format LeRobotDataset v2.1
 - 5 positions × 10 épisodes = 50 démonstrations
 - Tâche : prendre un prisme hexagonal (désigné « cube » dans le dataset) et le déposer dans une boîte
 
 **Scripts utilisés :**
 - `SEM_so101_8_record_dataset.py` — Enregistrement
-- `SEM_so101_camera_config.py` — Réglage et verrouillage des caméras
-- `SEM_so101_camera_reference.py` — Référence visuelle (contrôle des 2 caméras)
+- `SEM_so101_camera_auto.py` — Réglage caméra (exposition auto puis figée) et contrôle image
 
 
 ### 📕 Phase 8 — Consolidation et Visualisation
@@ -124,12 +134,10 @@ Préparation du dataset pour l'entraînement.
 - Normalisation des timestamps (fréquence régulière à 30 FPS)
 - Génération des statistiques par épisode
 - Conversion des vidéos en H.264 (compatibilité navigateur)
-- Copie des **références visuelles des deux caméras** dans le `meta/` du dataset (traçabilité pour le déploiement)
 - Visualisation interactive dans le navigateur via l'outil LeRobot
 
 **Scripts utilisés :**
 - `SEM_so101_9_dataset.py` — Préparation complète (consolidation, métadonnées, conversion H.264, vérification, visualisation)
-- `SEM_so101_camera_reference.py` — Copie des références visuelles dans le `meta/`
 
 **Fichiers générés :**
 - `~/.cache/huggingface/lerobot/local/so101_pick_place_consolidated/`
@@ -159,14 +167,13 @@ Inférence autonome : le modèle ACT pilote le robot sans opérateur.
 - Sélection d'un checkpoint entraîné
 - Inférence en boucle à ~30 images/seconde
 - Bras Follower seul (le Leader n'est pas nécessaire — le modèle remplace l'opérateur)
-- Masque réappliqué + **contrôle des deux caméras vs les références du dataset** d'entraînement (cohérence entraînement↔déploiement ; recalibrage guidé si l'éclairage a dérivé)
+- Masque réappliqué + **contrôle image des deux caméras** (exposition auto puis figée, adaptée à la lumière de la salle, puis contrôle de l'image)
 - Contrôles : Pause (P), fin d'essai (R), nouvel essai (Entrée), quitter (Q)
 - Arrêt d'urgence (CTRL+C)
 
 **Scripts utilisés :**
 - `SEM_so101_11_deploy.py` — Déploiement
-- `SEM_so101_camera_config.py` — Réglage et verrouillage des caméras
-- `SEM_so101_camera_reference.py` — Contrôle des 2 caméras
+- `SEM_so101_camera_auto.py` — Réglage caméra (exposition auto puis figée) et contrôle image
 
 
 ## 🔧 Matériel Requis
@@ -174,33 +181,8 @@ Inférence autonome : le modèle ACT pilote le robot sans opérateur.
 - 2× Bras SO-ARM 101 (Leader + Follower)
 - 2× Adaptateurs USB Feetech
 - 2× Alimentations (5V ou 12V selon kit)
-- 1× PC Ubuntu 22.04+ avec GPU NVIDIA (recommandé pour l'entraînement)
+- 1× PC Ubuntu 22.04+ ; GPU NVIDIA fortement recommandé pour l'entraînement, CPU possible mais beaucoup plus lent
 - 2× Caméras USB (à partir de la Phase 6)
-
-
-## 📋 Workflow Recommandé
-
-```
-Phase 1 (Installation)
-  ↓
-Phase 2 (Configuration servos)
-  ↓
-Phase 3 (Calibration)
-  ↓
-Phase 4 (Tests et contrôle)
-  ↓
-Phase 5 (Téléopération)
-  ↓
-Phase 6 (Caméras)
-  ↓
-Phase 7 (Enregistrement dataset)
-  ↓
-Phase 8 (Consolidation et visualisation)
-  ↓
-Phase 9 (Entraînement ACT)
-  ↓
-Phase 10 (Déploiement autonome)
-```
 
 
 ## 📌 Notes Importantes
@@ -212,9 +194,9 @@ Phase 10 (Déploiement autonome)
 5. **Un robot à la fois :** Pour les phases 2-3
 6. **Alimentation :** Vérifier les LEDs avant utilisation
 7. **Caméras :** Brancher sur des ports USB différents pour éviter les conflits de bande passante
-8. **GPU :** Requis pour la Phase 9 (entraînement)
+8. **GPU :** fortement recommandé pour la Phase 9 (entraînement) ; CPU possible mais beaucoup plus lent
 
 ---
 
 Service Écoles-Médias — DIP Genève
-Dernière mise à jour : 22.06.2026
+Dernière mise à jour : 01.07.2026
