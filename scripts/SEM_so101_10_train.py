@@ -21,6 +21,7 @@ import sys
 import json
 import subprocess
 import shutil
+import re
 from pathlib import Path
 from datetime import datetime
 
@@ -50,7 +51,14 @@ LEROBOT_DIR = Path(os.path.expanduser("~/lerobot"))
 
 TRAIN_SCRIPT = LEROBOT_DIR / "lerobot" / "scripts" / "train.py"
 
-OUTPUT_DIR = LEROBOT_DIR / "outputs" / "train" / "act_so101_pick_place"
+# Base commune des modèles nommés (registre local). Chaque modèle est un
+# sous-dossier de TRAIN_BASE contenant sa propre structure LeRobot
+# (checkpoints/<step>/pretrained_model). OUTPUT_DIR est déterminé APRÈS le
+# choix du modèle (voir selectionner_ou_creer_modele et main) : il reste None
+# tant qu'aucun modèle n'a été choisi.
+TRAIN_BASE = LEROBOT_DIR / "outputs" / "train"
+
+OUTPUT_DIR = None
 
 # Paramètres d'entraînement optimisés pour la machine GPU de référence (Quadro
 # RTX 4000, 8 Go VRAM) ; utilisables aussi sur CPU, avec des temps beaucoup plus longs.
@@ -103,6 +111,110 @@ TRAINING_CONFIGS = {
 
 def clear_screen():
     os.system('clear')
+
+
+NOM_MODELE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+
+
+def nom_modele_valide(nom):
+    """Vrai si `nom` respecte la convention sûre [a-z0-9_-], non vide.
+
+    On REFUSE (sans réécrire) tout nom hors convention : une espace, un accent,
+    un '/' ou un '.' casserait le chemin du dossier modèle. Le nom est libre
+    par ailleurs (aucun préfixe imposé)."""
+    return bool(nom) and NOM_MODELE_RE.match(nom) is not None
+
+
+def checkpoint_chargeable(cp):
+    """Vrai si le checkpoint `cp` (dossier d'un pas, ex. .../checkpoints/002000)
+    est RÉELLEMENT chargeable par ACTPolicy.from_pretrained() : son
+    pretrained_model/ contient config.json ET model.safetensors (les deux
+    fichiers que from_pretrained consomme). Un checkpoint partiel est écarté."""
+    pm = cp / "pretrained_model"
+    return (pm.is_dir()
+            and (pm / "config.json").exists()
+            and (pm / "model.safetensors").exists())
+
+
+def lister_modeles():
+    """Liste triée des dossiers de modèles VALIDES sous TRAIN_BASE.
+
+    Un modèle est valide s'il contient au moins un checkpoint RÉELLEMENT
+    chargeable : un dossier checkpoints/<step>/pretrained_model contenant
+    config.json ET model.safetensors — les deux fichiers que
+    ACTPolicy.from_pretrained() consomme (config du policy + poids). Le filtre
+    est STRUCTUREL (pas basé sur le nom) ; un checkpoint partiel/incomplet est
+    ignoré."""
+    if not TRAIN_BASE.exists():
+        return []
+    modeles = []
+    for d in sorted(TRAIN_BASE.iterdir()):
+        if not d.is_dir():
+            continue
+        ckpt = d / "checkpoints"
+        if ckpt.is_dir() and any(
+                checkpoint_chargeable(cp) for cp in ckpt.iterdir()):
+            modeles.append(d)
+    return modeles
+
+
+def selectionner_ou_creer_modele():
+    """Choix du modèle à entraîner (registre local de modèles nommés).
+
+    - Liste les modèles existants (pour les reprendre, prolonger ou remplacer).
+    - Permet de créer un nouveau modèle nommé.
+    Retourne le NOM du modèle (dossier = TRAIN_BASE/<nom>), ou None si l'on
+    quitte. Nom libre dans [a-z0-9_-], aucun préfixe imposé, aucun défaut : la
+    saisie est explicite (fail-closed : pas d'état caché, pas de réécriture)."""
+    while True:
+        modeles = lister_modeles()
+
+        print("\n" + "=" * 60)
+        print("📂 MODÈLE À ENTRAÎNER")
+        print("=" * 60)
+
+        if modeles:
+            print(f"\n📋 Modèles existants ({len(modeles)}) :")
+            for i, d in enumerate(modeles, start=1):
+                n_ok = sum(1 for cp in (d / "checkpoints").iterdir()
+                           if checkpoint_chargeable(cp))
+                print(f"   [{i:>2}]  {d.name:<32} ({n_ok} checkpoint(s))")
+        else:
+            print("\n   (aucun modèle existant pour l'instant)")
+
+        print("\n   [C] Créer un nouveau modèle")
+        print("   [Q] Quitter")
+        choix = input("\n→ Votre choix (numéro, C ou Q) : ").strip()
+
+        if choix.upper() == "Q":
+            return None
+
+        if choix.upper() == "C":
+            nom = input(
+                "\n   Nom du nouveau modèle (a-z, 0-9, '-', '_') : ").strip()
+            if not nom_modele_valide(nom):
+                print("\n   ❌ Nom refusé. Autorisé : a-z, 0-9, '-', '_' "
+                      "(sans espace ni accent) ; le nom doit commencer par une "
+                      "lettre ou un chiffre.")
+                input("   Appuyez sur ENTRÉE pour réessayer...")
+                continue
+            cible = TRAIN_BASE / nom
+            if cible.exists():
+                # Le dossier existe déjà (modèle complet OU partiel/échoué). On
+                # NE bloque PAS : on retourne ce nom pour que
+                # reprendre_entrainement() propose reprendre / prolonger /
+                # remplacer / autre modèle / quitter — y compris pour un dossier
+                # incomplet sans checkpoint reprenable. Sinon un dossier partiel
+                # bloquerait définitivement ce nom (impasse).
+                print(f"\n   ℹ️  « {nom} » existe déjà — reprise ou remplacement "
+                      "proposés à l'étape suivante.")
+            return nom
+
+        if choix.isdigit() and 1 <= int(choix) <= len(modeles):
+            return modeles[int(choix) - 1].name
+
+        print("\n   ❌ Choix invalide.")
+        input("   Appuyez sur ENTRÉE pour réessayer...")
 
 
 def verifier_prerequis():
@@ -288,7 +400,7 @@ def charger_params_sem():
     utilise le train_config.json du checkpoint, pas ce fichier. S'il est absent,
     vide ou corrompu, on l'ignore proprement.
     """
-    params_file = Path(__file__).parent / "sem_training_params.json"
+    params_file = OUTPUT_DIR / "sem_training_params.json"
     if not params_file.exists():
         return None
     try:
@@ -374,26 +486,22 @@ def lancer_entrainement(config_key, effacer_ancien=False):
         print("   Annulé.")
         return False
 
-    # Si l'utilisateur a demandé un nouvel entraînement, on supprime l'ancien
-    # uniquement après cette confirmation finale. Cela évite de perdre
-    # un ancien modèle/checkpoint si l'utilisateur annule au menu suivant.
+    # Remplacement d'un modèle existant : suppression UNIQUEMENT après cette
+    # confirmation finale ET une confirmation forte (saisie de SUPPRIMER).
+    # Fail-closed : toute autre saisie annule sans rien supprimer. LeRobot
+    # refuse un output_dir déjà existant pour un entraînement neuf
+    # (FileExistsError) : la suppression est donc nécessaire, mais jamais
+    # silencieuse.
     if effacer_ancien and OUTPUT_DIR.exists():
-        print(f"\n🗑️  Suppression de l'ancien entraînement : {OUTPUT_DIR}")
+        print(f"\n⚠️  REMPLACEMENT du modèle : {OUTPUT_DIR}")
+        print("   Cette opération SUPPRIME définitivement ce modèle et tous ses checkpoints.")
+        conf = input("   Tapez SUPPRIMER (en majuscules) pour confirmer, ou ENTRÉE pour annuler : ").strip()
+        if conf != "SUPPRIMER":
+            print("   Annulé — modèle existant conservé.")
+            return False
+        print(f"\n🗑️  Suppression du modèle existant : {OUTPUT_DIR}")
         shutil.rmtree(OUTPUT_DIR)
-        print("   ✅ Ancien entraînement supprimé.")
-
-    # Sauvegarder les paramètres (à côté du script, pas dans output_dir)
-    params = {
-        "config": config_key,
-        "params": config,
-        "dataset": str(DATASET_PATH),
-        "started_at": datetime.now().isoformat(),
-        "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU",
-        "output_dir": str(OUTPUT_DIR),
-    }
-    script_dir = Path(__file__).parent
-    with open(script_dir / "sem_training_params.json", 'w') as f:
-        json.dump(params, f, indent=2)
+        print("   ✅ Modèle existant supprimé.")
 
     # Lancer
     print("\n" + "=" * 60)
@@ -403,9 +511,30 @@ def lancer_entrainement(config_key, effacer_ancien=False):
 
     start_time = datetime.now()
 
+    def _ecrire_params_sem():
+        # Métadonnées SEM écrites DANS le dossier du modèle, une fois celui-ci
+        # créé par LeRobot. On n'écrit jamais avant le lancement : un output_dir
+        # non vide ferait échouer un entraînement neuf. Informatif uniquement.
+        if not OUTPUT_DIR.exists():
+            return
+        params = {
+            "config": config_key,
+            "params": config,
+            "dataset": str(DATASET_PATH),
+            "started_at": start_time.isoformat(),
+            "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU",
+            "output_dir": str(OUTPUT_DIR),
+        }
+        try:
+            with open(OUTPUT_DIR / "sem_training_params.json", 'w') as f:
+                json.dump(params, f, indent=2)
+        except Exception as e:
+            print(f"   ⚠️  Écriture de sem_training_params.json impossible — ignoré ({e})")
+
     try:
         cmd_exec = ajouter_inhibition_systeme(cmd)
         result = subprocess.run(cmd_exec, cwd=str(LEROBOT_DIR))
+        _ecrire_params_sem()
 
         end_time = datetime.now()
         duration = end_time - start_time
@@ -421,6 +550,7 @@ def lancer_entrainement(config_key, effacer_ancien=False):
             return False
 
     except KeyboardInterrupt:
+        _ecrire_params_sem()
         end_time = datetime.now()
         duration = end_time - start_time
         print(f"\n\n⚠️  Entraînement interrompu par l'utilisateur")
@@ -511,12 +641,15 @@ def reprendre_entrainement():
         print(f"\n⚠️  Dossier d'entraînement existant mais non reprenable :")
         print(f"   {OUTPUT_DIR}")
         print("   Aucun dossier checkpoints/ n'a été trouvé.")
-        print("\n  N — Nouvel entraînement (écrase l'ancien après confirmation finale)")
+        print("\n  N — Remplacer ce modèle (supprime l'existant, confirmation forte requise)")
+        print("  A — Choisir un autre modèle")
         print("  Q — Quitter")
         choix = input("\n  Votre choix : ").strip().upper()
         if choix == 'N':
-            print("\n⚠️  Nouvel entraînement demandé : l'ancien dossier sera supprimé seulement après confirmation finale du lancement.")
+            print("\n⚠️  Remplacement demandé : l'ancien dossier sera supprimé seulement après confirmation forte (SUPPRIMER) au lancement.")
             return "new"
+        elif choix == 'A':
+            return "reselect"
         sys.exit(0)
 
     checkpoints = sorted([cp for cp in checkpoints_dir.glob("*/") if cp.is_dir()])
@@ -529,13 +662,16 @@ def reprendre_entrainement():
         print(f"\n⚠️  Dossier checkpoints présent mais aucun checkpoint reprenable trouvé :")
         print(f"   {checkpoints_dir}")
         print("   Aucun fichier pretrained_model/train_config.json n'a été trouvé.")
-        print("\n  N — Nouvel entraînement (écrase l'ancien après confirmation finale)")
+        print("\n  N — Remplacer ce modèle (supprime l'existant, confirmation forte requise)")
+        print("  A — Choisir un autre modèle")
         print("  V — Voir les dossiers checkpoints")
         print("  Q — Quitter")
         choix = input("\n  Votre choix : ").strip().upper()
         if choix == 'N':
-            print("\n⚠️  Nouvel entraînement demandé : l'ancien dossier sera supprimé seulement après confirmation finale du lancement.")
+            print("\n⚠️  Remplacement demandé : l'ancien dossier sera supprimé seulement après confirmation forte (SUPPRIMER) au lancement.")
             return "new"
+        elif choix == 'A':
+            return "reselect"
         elif choix == 'V':
             afficher_checkpoints()
             input("\nAppuyez sur ENTRÉE...")
@@ -562,7 +698,8 @@ def reprendre_entrainement():
 
     print(f"\n  R — Reprendre l'entraînement")
     print(f"  P — Prolonger l'entraînement (reprendre et augmenter le nombre de steps)")
-    print(f"  N — Nouvel entraînement (écrase l'ancien après confirmation finale)")
+    print(f"  N — Remplacer ce modèle (supprime l'existant, confirmation forte requise)")
+    print(f"  A — Choisir un autre modèle")
     print(f"  V — Voir les checkpoints")
     print(f"  Q — Quitter")
 
@@ -647,8 +784,11 @@ def reprendre_entrainement():
         return "done"
 
     elif choix == 'N':
-        print("\n⚠️  Nouvel entraînement demandé : l'ancien dossier sera supprimé seulement après confirmation finale du lancement.")
+        print("\n⚠️  Remplacement demandé : l'ancien dossier sera supprimé seulement après confirmation forte (SUPPRIMER) au lancement.")
         return "new"
+
+    elif choix == 'A':
+        return "reselect"
 
     elif choix == 'V':
         afficher_checkpoints()
@@ -664,6 +804,7 @@ def reprendre_entrainement():
 # ============================================
 
 def main():
+    global OUTPUT_DIR
     clear_screen()
     print("""
 ╔══════════════════════════════════════════════════════════╗
@@ -680,10 +821,21 @@ def main():
             print(f"   • {err}")
         return
 
-    # 2. Vérifier si un entraînement précédent existe
-    decision = reprendre_entrainement()
-    if decision == "done":
-        return
+    # 2. Choix du modèle (registre local de modèles nommés) puis, si le modèle
+    #    existe déjà, proposition de reprise / prolongation / remplacement.
+    while True:
+        nom_modele = selectionner_ou_creer_modele()
+        if nom_modele is None:
+            print("\n✅ Entraînement annulé.")
+            return
+        OUTPUT_DIR = TRAIN_BASE / nom_modele
+
+        decision = reprendre_entrainement()
+        if decision == "reselect":
+            continue
+        if decision == "done":
+            return
+        break
 
     effacer_ancien = (decision == "new")
 
