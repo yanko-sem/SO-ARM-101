@@ -31,6 +31,7 @@ import math
 import time
 import queue
 import threading
+import re
 from pathlib import Path
 
 # Supprimer les messages d'erreur OpenCV
@@ -107,8 +108,11 @@ CONFIG = {
     'baud_rate': 1000000,
 }
 
-# Chemin du dossier d'entraînement (portable, fonctionne sur tout PC)
-TRAIN_OUTPUT_DIR = Path.home() / "lerobot" / "outputs" / "train" / "act_so101_pick_place"
+# Base commune des modèles nommés (registre local). Le modèle précis est choisi
+# au lancement (selectionner_modele) ; TRAIN_OUTPUT_DIR est renseigné à ce
+# moment-là. Portable, fonctionne sur tout PC.
+TRAIN_BASE = Path.home() / "lerobot" / "outputs" / "train"
+TRAIN_OUTPUT_DIR = None
 
 # Calibration
 CALIB_DIR = Path.home() / "lerobot" / "calibration"
@@ -635,6 +639,110 @@ class ThreadedCamera:
 # SÉLECTION DU CHECKPOINT
 # ============================================
 
+NOM_MODELE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+
+
+def nom_modele_valide(nom):
+    """Vrai si `nom` respecte la convention sûre [a-z0-9_-], non vide (mêmes
+    règles qu'au script 10). On refuse tout nom hors convention plutôt que de le
+    réécrire : une espace, un accent, un '/' ou un '.' casserait le chemin."""
+    return bool(nom) and NOM_MODELE_RE.match(nom) is not None
+
+
+def checkpoint_chargeable(cp):
+    """Vrai si le checkpoint `cp` (dossier d'un pas, ex. .../checkpoints/002000)
+    est RÉELLEMENT chargeable par ACTPolicy.from_pretrained() : son
+    pretrained_model/ contient config.json ET model.safetensors (les deux
+    fichiers que from_pretrained consomme). Un checkpoint partiel est écarté."""
+    pm = cp / "pretrained_model"
+    return (pm.is_dir()
+            and (pm / "config.json").exists()
+            and (pm / "model.safetensors").exists())
+
+
+def lister_modeles():
+    """Liste triée des dossiers de modèles VALIDES sous TRAIN_BASE.
+
+    Filtre STRUCTUREL (indépendant du nom) : au moins un checkpoint RÉELLEMENT
+    chargeable, c.-à-d. un checkpoints/<step>/pretrained_model contenant
+    config.json ET model.safetensors — les deux fichiers que
+    ACTPolicy.from_pretrained() consomme. Un checkpoint partiel est écarté,
+    pour ne pas proposer en démo un modèle qui échouerait au chargement."""
+    if not TRAIN_BASE.exists():
+        return []
+    modeles = []
+    for d in sorted(TRAIN_BASE.iterdir()):
+        if not d.is_dir():
+            continue
+        ckpt = d / "checkpoints"
+        if ckpt.is_dir() and any(
+                checkpoint_chargeable(cp) for cp in ckpt.iterdir()):
+            modeles.append(d)
+    return modeles
+
+
+def selectionner_modele():
+    """Choix EXPLICITE du modèle à déployer (registre local de modèles nommés).
+
+    Décision de conception (fail-closed) : AUCUN modèle par défaut, aucun
+    « dernier modèle » mémorisé, aucun fichier d'état. L'utilisateur choisit à
+    chaque démo — pas de surprise, rien à porter d'une machine à l'autre.
+    Retourne le Path du dossier modèle choisi, ou None (aucun modèle / abandon).
+
+    La sélection du CHECKPOINT à l'intérieur du modèle garde, elle, son défaut
+    habituel (dernier checkpoint) : les deux niveaux sont distincts.
+    """
+    print("\n" + "=" * 60)
+    print("📂 SÉLECTION DU MODÈLE")
+    print("=" * 60)
+
+    while True:
+        modeles = lister_modeles()
+
+        if not modeles:
+            print("\n❌ Aucun modèle entraîné trouvé dans :")
+            print(f"   {TRAIN_BASE}")
+            print("   → Lancez d'abord l'entraînement (Script 10).")
+            return None
+
+        print(f"\n📋 Modèles disponibles ({len(modeles)}) :")
+        for i, d in enumerate(modeles, start=1):
+            n_ok = sum(1 for cp in (d / "checkpoints").iterdir()
+                       if checkpoint_chargeable(cp))
+            print(f"   [{i:>2}]  {d.name:<32} ({n_ok} checkpoint(s))")
+
+        print("\n   [N] Entrer un nom de modèle manuellement")
+        print("   [Q] Quitter")
+        choix = input("\n→ Votre choix (numéro, N ou Q) : ").strip()
+
+        if choix.upper() == "Q":
+            return None
+
+        if choix.upper() == "N":
+            nom = input("\n   Nom du modèle (a-z, 0-9, '-', '_') : ").strip()
+            if not nom_modele_valide(nom):
+                print("\n   ❌ Nom refusé. Autorisé : a-z, 0-9, '-', '_' "
+                      "(sans espace ni accent) ; le nom doit commencer par une "
+                      "lettre ou un chiffre.")
+                continue
+            cible = TRAIN_BASE / nom
+            ckpt = cible / "checkpoints"
+            if not (cible.is_dir() and ckpt.is_dir() and any(
+                    checkpoint_chargeable(cp) for cp in ckpt.iterdir())):
+                print(f"\n   ❌ Modèle « {nom} » introuvable ou sans checkpoint "
+                      f"dans {TRAIN_BASE}.")
+                continue
+            print(f"\n✅ Modèle sélectionné : {nom}")
+            return cible
+
+        if choix.isdigit() and 1 <= int(choix) <= len(modeles):
+            d = modeles[int(choix) - 1]
+            print(f"\n✅ Modèle sélectionné : {d.name}")
+            return d
+
+        print("\n   ❌ Choix invalide.")
+
+
 def selectionner_checkpoint():
     """
     Liste les checkpoints disponibles dans le sous-dossier 'checkpoints/'
@@ -672,7 +780,7 @@ def selectionner_checkpoint():
 
     checkpoints = sorted(
         [item for item in checkpoints_dir.iterdir()
-         if item.is_dir() and (item / "pretrained_model").is_dir()],
+         if item.is_dir() and checkpoint_chargeable(item)],
         key=_cle_checkpoint,
     )
 
@@ -1370,7 +1478,7 @@ def controle_camera_simple_interactif(cam, index, nom, est_globale):
 # ============================================
 
 def main():
-    global urgence
+    global urgence, TRAIN_OUTPUT_DIR
     clear_screen()
     print("""
 ╔══════════════════════════════════════════════════════════════════════╗
@@ -1389,10 +1497,16 @@ def main():
         sys.exit(1)
 
     print(f"🖥️  Device     : {DEVICE}")
-    print(f"📂 Modèles    : {TRAIN_OUTPUT_DIR}")
+    print(f"📂 Modèles    : {TRAIN_BASE}")
     print(f"📷 Résolution : {CONFIG['camera_width']}×{CONFIG['camera_height']} @ {CONFIG['fps']} fps")
 
-    # 1. Sélection du checkpoint
+    # Sélection du MODÈLE (choix explicite, aucun défaut) PUIS du checkpoint.
+    modele_dir = selectionner_modele()
+    if modele_dir is None:
+        sys.exit(1)
+    TRAIN_OUTPUT_DIR = modele_dir
+
+    # 1. Sélection du checkpoint (dans le modèle choisi)
     checkpoint_path = selectionner_checkpoint()
     if checkpoint_path is None:
         sys.exit(1)
@@ -1613,6 +1727,7 @@ def main():
             print("\n✅ Script 11 terminé proprement.")
 
         print("━" * 60)
+        print(f"   Modèle utilisé     : {TRAIN_OUTPUT_DIR.name}")
         print(f"   Checkpoint utilisé : {checkpoint_path.parent.name}")
         print("━" * 60)
 
