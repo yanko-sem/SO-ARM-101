@@ -6,13 +6,13 @@ Service Écoles-Médias (SEM)
 
 ### 🧩 Scripts utilisés
 
-- `SEM_so101_11_deploy.py` — déploiement autonome du modèle ACT : sélection du checkpoint, chargement du modèle, contrôle du Follower, lecture des deux caméras, inférence et sécurité.
+- `SEM_so101_11_deploy.py` — déploiement autonome du modèle ACT : **sélection du modèle nommé, puis du checkpoint**, chargement du modèle, contrôle du Follower, lecture des deux caméras, inférence et sécurité.
 - `SEM_so101_camera_auto.py` — réglage caméra en **exposition (et balance des blancs) auto puis figée** (via `v4l2-ctl`) et **contrôle image simple** (plancher physique de lumière sur l'image brute).
 
 ### 📋 Prérequis
 
 - Phases 1 à 9 complétées
-- Un modèle ACT entraîné (checkpoint dans `~/lerobot/outputs/train/act_so101_pick_place/checkpoints/`)
+- Au moins un modèle ACT entraîné et **chargeable** : un dossier `~/lerobot/outputs/train/<nom>/checkpoints/<step>/pretrained_model/` contenant `config.json` et `model.safetensors`
 - Bras **Follower** branché (le **Leader n'est pas nécessaire** — le modèle remplace l'opérateur)
 - Les **deux caméras** (Globale + Pince) branchées, **aux mêmes positions** qu'à l'enregistrement
 - Fichiers de calibration présents : `follower_calibration.json` et
@@ -29,7 +29,7 @@ Service Écoles-Médias (SEM)
 
 Cette phase permet de :
 
-- Charger un modèle ACT entraîné (un checkpoint) et le faire piloter le bras Follower
+- Choisir un modèle ACT entraîné (parmi ceux disponibles) et l'un de ses checkpoints, puis le faire piloter le bras Follower
 - Exécuter la tâche en boucle, à ~30 images/seconde
 - Enchaîner plusieurs essais (replacer la pièce, relancer)
 - Arrêter le robot en sécurité à tout moment
@@ -65,30 +65,37 @@ python SEM_so101_11_deploy.py
 > **🔑 Ordre du démarrage (important).** Comme à l'enregistrement, la vue de
 > la caméra **pince** dépend de la position du bras. Le bras Follower est
 > donc **mis au repos AVANT** la préparation des caméras, et y reste maintenu
-> pendant le réglage et le contrôle. Déroulé : **checkpoint → module caméra →
-> chargement du modèle → masque → Follower au repos → identification caméras →
-> connexion des caméras → réglage exposition (auto puis figée) → contrôle image
-> → inférence.**
+> pendant le réglage et le contrôle. Déroulé : **modèle → checkpoint → module
+> caméra → chargement du modèle → masque → Follower au repos → identification
+> caméras → connexion des caméras → réglage exposition (auto puis figée) →
+> contrôle image → inférence.**
 
 Le script enchaîne :
 
-1. **Sélection du checkpoint** — la liste s'affiche ; `[Entrée]` utilise le
-   dernier (`last`, recommandé), ou tapez un numéro.
-2. **Vérification du module caméra** — le module `SEM_so101_camera_auto` est
+1. **Sélection du modèle** — la liste des modèles disponibles s'affiche. Le
+   choix est **explicite** (tapez un numéro) : il n'y a **aucun modèle par
+   défaut**. Vous pouvez aussi taper **N** pour saisir un nom manuellement, ou
+   **Q** pour quitter. Seuls les modèles possédant au moins un checkpoint
+   **réellement chargeable** sont proposés.
+2. **Sélection du checkpoint** — la liste s'affiche ; `[Entrée]` utilise le
+   checkpoint recommandé — `last` s'il est chargeable, sinon le plus grand
+   checkpoint numérique chargeable —, ou tapez un numéro. Seuls les checkpoints
+   chargeables (`config.json` + `model.safetensors`) sont listés.
+3. **Vérification du module caméra** — le module `SEM_so101_camera_auto` est
    obligatoire ; le script s'arrête s'il manque.
-3. **Chargement du modèle ACT** — le checkpoint sélectionné est chargé sur le
+4. **Chargement du modèle ACT** — le checkpoint sélectionné est chargé sur le
    périphérique disponible (GPU si présent, sinon CPU).
-4. **Masque de la Globale** — chargé depuis `camera_mask.json`. **Absent →
+5. **Masque de la Globale** — chargé depuis `camera_mask.json`. **Absent →
    le script s'arrête** (lancer le script 7 pour le créer).
-5. **Connexion du bras Follower et mise au repos** — « Branchez le bras
+6. **Connexion du bras Follower et mise au repos** — « Branchez le bras
    FOLLOWER », puis `[Entrée]` (le Leader reste débranché). Le bras est mis
    **au repos** et y reste maintenu pendant tout le réglage et le contrôle
    caméra.
-6. **Identification des caméras** — pour chaque caméra affichée (fenêtre live),
+7. **Identification des caméras** — pour chaque caméra affichée (fenêtre live),
    tapez **G** (Globale), **P** (Pince), **Q** pour passer cette caméra ou
    **Échap** pour tout annuler. Les deux caméras doivent être identifiées ;
    sinon le déploiement s'arrête.
-7. **Réglage de l'exposition (auto puis figée) et contrôle image** des deux
+8. **Réglage de l'exposition (auto puis figée) et contrôle image** des deux
    caméras (voir Étape 1 bis).
 
 ### 📷 Étape 1 bis : Réglage et contrôle des deux caméras
@@ -175,7 +182,8 @@ Si le comportement est mauvais :
 
 | Problème | Cause possible | Solution |
 | :--- | :--- | :--- |
-| Dossier de checkpoints introuvable | Entraînement non fait | Lancer le script 10 (Phase 9) |
+| Aucun modèle proposé (« aucun modèle trouvé ») | Aucun entraînement, ou aucun checkpoint chargeable | Lancer le script 10 (Phase 9) et laisser au moins un checkpoint se sauvegarder |
+| Un modèle attendu n'apparaît pas dans la liste | Ses checkpoints sont incomplets (`config.json`/`model.safetensors` absents) | Réentraîner ou prolonger ce modèle jusqu'à un checkpoint complet |
 | Résolution caméra incorrecte | Caméra ≠ 640×360 | La résolution doit être identique à l'entraînement (640×360) |
 | Module caméra indisponible | `SEM_so101_camera_auto.py` absent | Le placer dans le dossier des scripts (obligatoire) |
 | « réglage d'exposition non appliqué » → arrêt | `v4l2-ctl` absent, ou contrôle refusé par le pilote | Installer `v4l-utils` ; vérifier les caméras ; relancer |
@@ -194,7 +202,7 @@ Si le comportement est mauvais :
 3. **Commencez par une position connue** : placez la pièce comme lors des démonstrations.
 4. **Utilisez R puis Entrée** pour enchaîner les essais proprement, sans relancer le script.
 5. **CTRL+C** est l'arrêt d'urgence — gardez-le à l'esprit en cas de mouvement dangereux.
-6. **Démarrez avec le checkpoint `last`** ; testez d'autres checkpoints si le comportement n'est pas satisfaisant.
+6. **Choisissez le modèle voulu, puis démarrez avec le checkpoint recommandé** (`last` s'il est chargeable) ; testez d'autres checkpoints (ou un autre modèle) si le comportement n'est pas satisfaisant.
 
 
 ### 🚀 Commandes de référence rapide
@@ -208,6 +216,7 @@ python SEM_so101_11_deploy.py
 
 | Action | Touche |
 | :--- | :--- |
+| Choisir le modèle | numéro, ou N pour saisir un nom |
 | Choisir le checkpoint | numéro ou Entrée (dernier) |
 | Identifier les caméras | G (Globale) / P (Pince) / Q (passer) / Échap (annuler) |
 | Contrôle image caméra (🟠/🔴) | C (continuer si 🟠) / R (re-régler l'exposition) / Q |
@@ -222,7 +231,7 @@ python SEM_so101_11_deploy.py
 
 **✅ Phase 10 terminée quand :**
 
-- Le modèle ACT est chargé depuis un checkpoint
+- Le modèle nommé et son checkpoint ont été choisis, et le modèle ACT est chargé
 - Le bras Follower exécute la tâche **de façon autonome**
 - Vous savez arrêter le robot en sécurité (Q et CTRL+C)
 - Vous pouvez enchaîner plusieurs essais (R / Entrée)
