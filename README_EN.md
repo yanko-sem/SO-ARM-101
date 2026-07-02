@@ -36,7 +36,7 @@ Developed by the **Service Écoles-Médias (SEM)**, part of Geneva's **Departmen
 - 🛠️ **DIY and turnkey**: from software setup to autonomous deployment.
 - 🤖 **Hands-on AI**: imitation learning, dataset, training, and inference on a real robot.
 - 📷 **Two cameras**: a global view plus a gripper-mounted camera view.
-- 🔁 **Reproducible**: scripts, guides, calibration, masks, **camera visual references**, and checkpoints.
+- 🔁 **Reproducible**: scripts, guides, calibration, masks, **camera setup (auto exposure, then frozen for the session) + image check**, and checkpoints.
 - 🚀 **Modern**: built on LeRobot, PyTorch, the Dynamixel SDK, and ACT.
 
 ---
@@ -165,7 +165,7 @@ For a complete and safe installation, follow the detailed guides in the `Guides/
 # Key points: Python 3.10, PyTorch, Dynamixel SDK, ffmpeg
 # USB permissions: sudo usermod -a -G dialout $USER
 # Camera permissions: sudo usermod -a -G video $USER
-# Camera tools: v4l-utils and guvcview
+# Camera tools: v4l-utils (v4l2-ctl); guvcview optional
 ```
 
 ### Phase 2: Servo Configuration
@@ -227,9 +227,9 @@ python SEM_so101_8_record_dataset.py
 # Task: Pick up a hexagonal prism (labeled "cube" in the dataset) and place it in a box
 # 5 positions × 10 episodes = 50 demonstrations
 # Output format: LeRobotDataset v2.1
-# Visual reference for both cameras: reference menus at startup (global then
-# gripper) and a conformity check before each block, to ensure the dataset's
-# visual consistency (and consistency with deployment)
+# Camera check: exposure and white balance are auto-adjusted, then frozen at
+# startup (global camera, then gripper camera), with an image-quality check
+# before each recording block to ensure usable images
 ```
 
 ### Phase 8: Consolidation and Visualization
@@ -261,8 +261,8 @@ python SEM_so101_10_train.py
 python SEM_so101_11_deploy.py
 
 # The Follower acts autonomously from the two cameras
-# Mask reapplied + check of both cameras against the training dataset's
-# references (guided recalibration if the lighting has drifted)
+# Mask reapplied + two-camera check: exposure auto-adjusted to the room
+# lighting, then frozen, followed by an image-quality check
 # Controls: P = pause, R = return to rest + stop model, Enter = restart, Q = quit
 ```
 
@@ -289,8 +289,7 @@ python SEM_so101_11_deploy.py
 ├── README.md
 └── scripts
     ├── __pycache__
-    ├── SEM_so101_camera_config.py
-    ├── SEM_so101_camera_reference.py
+    ├── SEM_so101_camera_auto.py
     ├── SEM_so101_10_train.py
     ├── SEM_so101_11_deploy.py
     ├── SEM_so101_1_configure.py
@@ -305,7 +304,7 @@ python SEM_so101_11_deploy.py
     └── Version_26_05_26
 ```
 
-**Note:** The `~/lerobot/calibration/` folder is created automatically by the scripts. It notably contains `leader_calibration.json`, `follower_calibration.json`, `repos_position.json`, `camera_mask.json`, `camera_settings.json`, and the **camera visual references** (`camera_reference_cam_top.json`, `camera_reference_cam_follower.json`, and their associated files).
+**Note:** The `~/lerobot/calibration/` folder is created automatically by the scripts. It notably contains `leader_calibration.json`, `follower_calibration.json`, `repos_position.json`, and `camera_mask.json`.
 
 ---
 
@@ -317,8 +316,7 @@ The SEM scripts include several safeguards:
 
 - strict consistency between recording and deployment;
 - a shared mask for the global camera;
-- **per-camera visual reference with quantitative conformity scoring**: conformity check before each recording block and at deployment (image consistent with the dataset, guided recalibration if needed);
-- exposure / white-balance / gain locking;
+- **image check of both cameras**: auto-then-frozen exposure (and white balance), then an image (lighting) check before each recording block and at deployment;
 - verification of both camera streams;
 - monitoring of serial reads and writes during recording;
 - safe return to the rest position;
@@ -337,9 +335,9 @@ The SEM scripts include several safeguards:
 | Import error | `conda activate lerobot` |
 | Script won't start | Check the Python 3.10 environment |
 | Camera not detected | Check the `video` group and test with `v4l2-ctl --list-devices` |
-| Camera settings won't apply | Check `v4l2-ctl --version` and `guvcview --version` |
+| Camera exposure adjustment fails | Check `v4l2-ctl --version` (`v4l-utils` package) |
 | Empty videos | Check `ffmpeg -version` and that both cameras are connected |
-| Inconsistent dataset | Check the mask, camera settings, 640×360 resolution, and synchronization of both cameras |
+| Inconsistent dataset | Check the mask, camera exposure setup, image quality, 640×360 resolution, and synchronization of both cameras |
 | Frequent "instant ignoré" (skipped timestep) messages | Check cables, power supply, and serial-bus stability |
 
 ---
@@ -368,9 +366,9 @@ The SEM scripts include several safeguards:
 - Video format: MP4, then H.264 conversion if needed
 - Global camera: `cam_top`
 - Gripper camera: `cam_follower`
-- Locked settings: exposure, white balance, gain
+- Auto-then-frozen exposure (and white balance) per session
 - Working-area mask applied to the global camera
-- Per-camera visual reference with quantitative conformity scoring (recording ↔ deployment conformity check, `SEM_so101_camera_reference.py` module)
+- Image check of both cameras (usable lighting, `SEM_so101_camera_auto.py` module)
 
 ---
 
@@ -437,4 +435,4 @@ This work is licensed under the Creative Commons Attribution-NonCommercial-Share
   Service Écoles-Médias (SEM) — Department of Public Instruction (DIP), Geneva
 </p>
 
-**Last updated: 22 June 2026**
+**Last updated: 2 July 2026**
