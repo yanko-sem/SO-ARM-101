@@ -18,6 +18,19 @@ Ce README décrit la chaîne actuelle validée des scripts SEM :
 11 Déploiement ACT
 ```
 
+## ✅ Changements majeurs intégrés dans cette version
+
+Cette version du README tient compte des mises à jour récentes de la chaîne complète, en particulier :
+
+- suppression de l'ancienne séparation entre préparation, visualisation, entraînement et déploiement ;
+- `SEM_so101_9_dataset.py` prépare désormais le dataset complet et intègre la visualisation ;
+- `SEM_so101_10_train.py` est le script d'entraînement ACT ;
+- `SEM_so101_11_deploy.py` est le script de déploiement autonome ;
+- `SEM_so101_camera_auto.py` est le module canonique de réglage caméra (exposition auto puis figée) et de contrôle image ;
+- les scripts 8, 9, 10 et 11 sont maintenant alignés sur la même logique de traçabilité, de fail-closed et de sécurité robot.
+
+---
+
 ## 🔧 Prérequis
 
 ```bash
@@ -28,9 +41,10 @@ conda activate lerobot
 groups | grep dialout
 groups | grep video
 
-# Outils vidéo nécessaires pour les réglages matériels caméra
+# Outils vidéo nécessaires (v4l2-ctl pour l'exposition, ffmpeg pour la vidéo)
 sudo apt update
-sudo apt install v4l-utils guvcview ffmpeg
+sudo apt install v4l-utils ffmpeg
+# guvcview est optionnel (inspection manuelle ponctuelle)
 ```
 
 Prévoir également, dans l'environnement `lerobot` :
@@ -175,57 +189,20 @@ python SEM_so101_7_teleoperation_camera.py
 
 ---
 
-## 📸 Module utilitaire : `SEM_so101_camera_config.py`
+## 📷 Module utilitaire : `SEM_so101_camera_auto.py`
 
-Module canonique de verrouillage matériel des caméras.
+Module canonique de réglage caméra et de contrôle image.
 
-Ce module n'est pas une étape numérotée. Il est utilisé par les scripts 8 et 11 pour garantir que les réglages caméra restent cohérents entre l'enregistrement et le déploiement.
-
-Fonctions principales :
-
-- lecture et sauvegarde de `camera_settings.json` ;
-- verrouillage de l'exposition, de la balance des blancs et du gain ;
-- capture des réglages via `v4l2-ctl` et, si nécessaire, `guvcview` ;
-- gestion fail-closed des fichiers absents, corrompus ou incohérents ;
-- refus d'écraser un fichier corrompu si la sauvegarde de sécurité échoue.
-
-**Utilisation autonome optionnelle :**
-
-```bash
-python SEM_so101_camera_config.py --show
-python SEM_so101_camera_config.py --capture cam_top /dev/video0
-python SEM_so101_camera_config.py --capture cam_follower /dev/video2
-```
-
----
-
-## 📷 Module utilitaire : `SEM_so101_camera_reference.py`
-
-Module canonique de référence visuelle des caméras.
-
-Ce module remplace le réglage caméra « à l'œil » par une comparaison chiffrée entre l'image actuelle et une référence validée.
+Ce module n'est pas une étape numérotée. Il est utilisé par les scripts 8 et 11 pour régler l'exposition des caméras et vérifier que l'image est exploitable, à l'enregistrement comme au déploiement.
 
 Fonctions principales :
 
-- création d'une référence visuelle pour `cam_top` et `cam_follower` ;
-- définition de zones de mesure ;
-- diagnostic de conformité visuelle ;
-- statuts de conformité lisibles ;
-- copie des références dans le `meta/` du dataset préparé par le script 9 ;
-- contrôle des caméras au déploiement via le script 11.
-
-**Principe important :**
-
-- pendant l'enregistrement, les références locales servent à contrôler les caméras ;
-- pendant le déploiement, le script 11 compare les caméras aux références copiées dans le dataset utilisé pour entraîner le modèle ;
-- le mode `LEGACY` n'est autorisé que pour un ancien dataset identifié, mais sans références caméra.
-
-**Utilisation autonome optionnelle :**
-
-```bash
-python SEM_so101_camera_reference.py
-# Choisir G pour la caméra globale ou P pour la caméra pince, puis suivre le menu
-```
+- **exposition (et balance des blancs) auto puis figée** : le pilote laisse l'auto s'ajuster à la lumière réelle de la salle pendant quelques secondes (flux actif), puis fige la valeur trouvée pour la session (fréquence secteur 50 Hz, anti-scintillement) ;
+- réglage appliqué via `v4l2-ctl` (paquet `v4l-utils`) ; `guvcview` n'est pas requis ;
+- **contrôle image simple** sur l'image brute (avant masque) : plancher physique de lumière (luminosité, part de pixels très clairs / très sombres) ;
+- mesure dans la **zone utile du masque** pour la caméra globale (le plateau), en **plein cadre** pour la caméra pince ;
+- verdict gradué 🟢 (exploitable) / 🟠 (limite) / 🔴 (cramée ou écrasée) ;
+- gestion fail-closed : un réglage non appliqué arrête le script appelant.
 
 ---
 
@@ -242,8 +219,8 @@ Fonctions principales :
 
 - identification explicite des deux caméras ;
 - mise au repos des robots avant la préparation caméra ;
-- contrôle de conformité des deux caméras avant chaque bloc ;
-- verrouillage matériel des réglages caméra ;
+- réglage de l'exposition des caméras (auto puis figée) au démarrage de la session ;
+- contrôle image des deux caméras avant chaque bloc ;
 - application du masque de la caméra globale ;
 - enregistrement synchronisé des images et des états/action servo ;
 - rejet des frames si la lecture série ou vidéo n'est pas valide ;
@@ -286,19 +263,10 @@ Fonctions principales :
 - vérification de la présence des vidéos des deux caméras ;
 - fusion des cinq positions dans un dataset consolidé ;
 - génération de `info.json`, `tasks.jsonl`, `episodes.jsonl` et `episodes_stats.jsonl` ;
-- copie des références caméra dans `meta/` ;
-- distinction stricte entre référence copiée, partielle, absente ou en échec ;
 - conversion H.264 tout-ou-rien pour la visualisation navigateur ;
 - vérification résolution vidéo `640×360` et cohérence frames vidéo / lignes parquet ;
 - construction dans un dossier temporaire puis bascule finale seulement si les étapes critiques réussissent ;
 - visualisation LeRobot intégrée en fin de script.
-
-Politique caméra :
-
-- `copiee` : références présentes dans `meta/`, dataset normal ;
-- `partielle` : état incohérent, préparation bloquée ;
-- `echec` : sources locales présentes mais copie impossible, préparation bloquée ;
-- `absente` : vrai dataset ancien possible, confirmation explicite requise.
 
 **Utilisation :**
 
@@ -349,17 +317,11 @@ Fonctions principales :
 
 - sélection du checkpoint avec priorité à `last`, sinon plus grand checkpoint numérique ;
 - chargement du modèle ACT avec `ACTPolicy.from_pretrained()` ;
-- récupération du dataset d'origine via `train_config.json` ;
-- refus des checkpoints non traçables ;
-- contrôle des deux références caméra dans le `meta/` du dataset ;
-- mode `LEGACY` seulement si le dataset est identifié mais ne contient aucune référence caméra ;
 - masque de caméra globale obligatoire ;
 - calibration Follower chargée et validée avant ouverture du port et activation du couple ;
-- retour repos avant contrôle caméra et avant inférence ;
+- retour repos avant réglage caméra et avant inférence ;
 - identification explicite de `cam_top` et `cam_follower` ;
-- contrôle caméra mesuré avant déploiement ;
-- verrouillage matériel des caméras ;
-- stabilisation courte après verrouillage ;
+- réglage de l'exposition (auto puis figée) et contrôle image des deux caméras avant déploiement ;
 - inférence à environ 30 Hz ;
 - clipping calibré des actions du modèle dans les plages `[min, max]` de chaque servo ;
 - vérification des écritures servo ;
@@ -391,11 +353,22 @@ python SEM_so101_11_deploy.py
 
 ### Identification des caméras, scripts 8 et 11
 
+Touches lues **directement dans la fenêtre live** (pas de `Entrée`) :
+
 | Touche | Action |
 | --- | --- |
-| G + Entrée | Identifier la caméra comme globale, `cam_top` |
-| P + Entrée | Identifier la caméra comme pince, `cam_follower` |
-| Q + Entrée | Passer la caméra affichée |
+| G | Identifier la caméra comme globale, `cam_top` |
+| P | Identifier la caméra comme pince, `cam_follower` |
+| Q | Passer la caméra affichée |
+| Échap | Annuler |
+
+### Contrôle image caméra, scripts 8 et 11
+
+| Verdict | Touches (dans la fenêtre) |
+| --- | --- |
+| 🟢 | continue automatiquement |
+| 🟠 | `C` continuer / `R` re-régler / `Q` annuler |
+| 🔴 | `R` re-régler / `Q` annuler — pas de `C` |
 
 ### Menu d'enregistrement, script 8
 
@@ -436,11 +409,7 @@ Fichiers principaux :
 - `teleoperation_config_cote.json` : profil de téléopération côte à côte ;
 - `teleoperation_config_face.json` : profil de téléopération face à face ;
 - `repos_position.json` : position de repos partagée par les scripts ;
-- `camera_mask.json` : masque de la zone utile de la caméra globale ;
-- `camera_settings.json` : réglages matériels caméra ;
-- `camera_reference_cam_top.json` : référence visuelle caméra globale ;
-- `camera_reference_cam_follower.json` : référence visuelle caméra pince ;
-- `camera_reference_log.jsonl` : journal des contrôles caméra, si des passages orange ou rouges ont été rencontrés.
+- `camera_mask.json` : masque de la zone utile de la caméra globale.
 
 ---
 
@@ -468,7 +437,7 @@ position_5_droite/
 ~/.cache/huggingface/lerobot/local/so101_pick_place_consolidated/
 ```
 
-Ce dossier est produit par le script 9. Il contient les parquets, les vidéos, les métadonnées LeRobot et les références caméra copiées dans `meta/`.
+Ce dossier est produit par le script 9. Il contient les parquets, les vidéos et les métadonnées LeRobot.
 
 ### Modèles entraînés
 
@@ -489,12 +458,10 @@ Les checkpoints sont stockés dans :
 1. Un seul robot doit être connecté pour les scripts qui travaillent sur un seul bras. Les scripts 5, 6, 7 et 8 nécessitent les deux bras.
 2. Le script 11 ne nécessite que le Follower, mais il exige deux caméras fonctionnelles.
 3. Le Follower doit être alimenté pour être détecté sur le port série.
-4. Le dataset utilisé en déploiement doit correspondre au checkpoint sélectionné.
-5. Le déploiement normal utilise les références caméra stockées dans le `meta/` du dataset d'entraînement, pas les références locales.
-6. Le mode `LEGACY` doit rester exceptionnel : il sert uniquement aux anciens modèles entraînés avant l'ajout du système de référence caméra.
-7. Les scripts récents privilégient le fail-closed : si la traçabilité, la caméra, la calibration ou la communication servo sont douteuses, le script refuse de continuer plutôt que de créer ou utiliser un état ambigu.
-8. Avant de relancer un nouvel entraînement avec le script 10, vérifier si l'ancien dossier `act_so101_pick_place` doit être conservé ou supprimé.
-9. Avant un déploiement réel, vérifier manuellement que la zone de travail est dégagée et que le bras peut revenir au repos sans obstacle.
+4. Les conditions matérielles au déploiement (positions et cadrage des caméras) doivent correspondre à celles de l'enregistrement du dataset d'entraînement.
+5. Les scripts récents privilégient le fail-closed : si la caméra, la calibration ou la communication servo sont douteuses, le script refuse de continuer plutôt que de créer ou utiliser un état ambigu.
+6. Avant de relancer un nouvel entraînement avec le script 10, vérifier si l'ancien dossier `act_so101_pick_place` doit être conservé ou supprimé.
+7. Avant un déploiement réel, vérifier manuellement que la zone de travail est dégagée et que le bras peut revenir au repos sans obstacle.
 
 ---
 
