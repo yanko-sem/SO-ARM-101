@@ -4,6 +4,29 @@ Toutes les modifications importantes du projet seront documentées dans ce fichi
 
 Le format s’inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le projet utilise une logique de versionnement stable à partir de la version `v1.0.0`.
 
+## [Unreleased]
+
+Migration du système caméra vers l'**exposition auto puis figée** par session et le **contrôle image simple** (`SEM_so101_camera_auto.py`), en remplacement du système de référence visuelle et du verrouillage matériel.
+
+### Ajouté
+
+- **`SEM_so101_camera_auto.py`** : réglage de l'exposition (et de la balance des blancs) **auto puis figée** par session (via `v4l2-ctl`, secteur 50 Hz anti-scintillement) et **contrôle image simple** sur l'image brute (caméra globale mesurée en zone utile du masque, caméra pince en plein cadre ; verdict 🟢/🟠/🔴).
+
+### Modifié
+
+- **Scripts 8 (enregistrement) et 11 (déploiement)** migrés vers `camera_auto` : exposition auto puis figée au démarrage de session, puis contrôle image (avant chaque bloc à l'enregistrement, avant l'inférence au déploiement) ; identification des caméras en fenêtre live (G / P / Q / Échap).
+- **Script 9 (consolidation)** : suppression de la copie des références caméra dans le `meta/` du dataset.
+
+### Retiré
+
+- Du workflow courant : modules `SEM_so101_camera_config.py` et `SEM_so101_camera_reference.py`, fichier `camera_settings.json`, système de **référence visuelle** (zones, diagnostic, recalibrage), copie des références dans le `meta/`, et mode **`LEGACY`** au déploiement. `guvcview` n'est plus requis (optionnel).
+
+### Documentation
+
+- Guides de phase (1, 7, 8, 10), `README_guides.md`, `README.md` et `README_scripts.md` réalignés sur le nouveau paradigme caméra.
+
+> Cette section sera renommée `[1.5.0]` (avec sa date) une fois les **tests machine réels** des scripts 8 et 11 effectués.
+
 ## [1.4.0] - 2026-06-26
 
 Fiabilisation de la définition de la **position de repos** (script 3) et de la chaîne de **référence visuelle des caméras** (module `SEM_so101_camera_reference.py`, version interne `8.2`), avec alignement des guides correspondants (phases 3, 7, 10).
