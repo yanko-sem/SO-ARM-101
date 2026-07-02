@@ -29,13 +29,13 @@ conda remove --name lerobot --all -y
 **Nettoyage des dossiers**
 
 > ⚠️ **Opération destructive — irréversible.** Cette étape supprime définitivement :
-> - le dépôt cloné `~/lerobot`, **y compris `~/lerobot/calibration/`** : calibrations des bras, `camera_settings.json`, `repos_position.json`, `camera_mask.json` et les certificats VR ;
+> - le dépôt cloné `~/lerobot`, **y compris `~/lerobot/calibration/`** : calibrations des bras, `repos_position.json`, `camera_mask.json` et les certificats VR ;
 > - le cache `~/.cache/huggingface/lerobot`, **y compris les datasets enregistrés** (ex. `local/so101_pick_place/`).
 >
 > À n'utiliser que pour une réinstallation complète, sur un poste ne contenant aucune donnée à conserver. **Sauvegardez `~/lerobot/calibration/` et vos datasets avant de continuer.**
 
 ```bash
-# Supprimer le dépôt cloné (inclut ~/lerobot/calibration/ : calibrations, réglages caméra, certificats VR)
+# Supprimer le dépôt cloné (inclut ~/lerobot/calibration/ : calibrations, position repos, masque caméra, certificats VR)
 rm -rf ~/lerobot
 # Supprimer le cache HuggingFace/LeRobot (inclut les datasets enregistrés)
 rm -rf ~/.cache/huggingface/lerobot
@@ -201,21 +201,22 @@ Les mots `dialout` et `video` doivent apparaître dans la liste.
 > **Note :** Cette étape est indispensable. Sans elle, les scripts des phases suivantes ne pourront pas communiquer avec les robots ni accéder aux caméras. Répétez cette opération pour chaque compte utilisateur (enseignant, élèves).
 
 
-### 📷 Étape 7 : Installation des outils caméra (v4l-utils + guvcview)
+### 📷 Étape 7 : Installation des outils caméra (v4l-utils)
 
-Pourquoi cette installation ? Les scripts SEM des phases suivantes verrouillent l'exposition, la balance des blancs et le gain des caméras, afin que les images soient identiques entre l'enregistrement du dataset (script 8) et le déploiement du modèle (script 11). Ce verrouillage s'appuie sur `v4l2-ctl` (paquet `v4l-utils`), et le réglage de l'image en direct se fait avec `guvcview`. Sans ces outils, le script 8 ne pourra ni régler ni verrouiller les caméras.
+Pourquoi cette installation ? Aux phases suivantes, chaque caméra est réglée en **exposition (et balance des blancs) automatique puis figée** : au démarrage d'une session, le pilote laisse l'auto s'ajuster à la lumière **réelle** de la salle pendant quelques secondes, puis la valeur trouvée est **figée** pour toute la session. Ce réglage s'appuie sur `v4l2-ctl` (paquet `v4l-utils`). Sans cet outil, les scripts 8 (enregistrement) et 11 (déploiement) ne pourront pas régler les caméras.
 
 ```bash
 sudo apt update
-sudo apt install v4l-utils guvcview -y
+sudo apt install v4l-utils -y
 ```
 
 **Vérification :**
 
 ```bash
 v4l2-ctl --version
-guvcview --version
 ```
+
+> **💡 Optionnel — `guvcview`.** `guvcview` permet d'inspecter ou d'ajuster une caméra à la main (diagnostic ponctuel), mais n'est **pas** nécessaire au fonctionnement des scripts SEM. Pour l'installer si besoin : `sudo apt install guvcview -y`.
 
 
 ### 🎮 Étape 8 : Installation des drivers NVIDIA (Optionnel)
@@ -330,7 +331,7 @@ python -c "from lerobot.common.policies.act.modeling_act import ACTPolicy; print
 | Groupe dialout | — | `groups \| grep dialout` |
 | Groupe video | — | `groups \| grep video` |
 | v4l-utils | — | `v4l2-ctl --version` |
-| guvcview | — | `guvcview --version` |
+| guvcview *(optionnel)* | — | `guvcview --version` |
 
 
 ### 🔧 Dépannage
