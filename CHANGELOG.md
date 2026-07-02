@@ -4,28 +4,33 @@ Toutes les modifications importantes du projet seront documentées dans ce fichi
 
 Le format s’inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le projet utilise une logique de versionnement stable à partir de la version `v1.0.0`.
 
-## [Unreleased]
+## [1.5.0] - 2026-07-02
 
-Migration du système caméra vers l'**exposition auto puis figée** par session et le **contrôle image simple** (`SEM_so101_camera_auto.py`), en remplacement du système de référence visuelle et du verrouillage matériel.
+**Changement de direction sur la gestion de la lumière**, validé par les tests machine réels de la chaîne complète (scripts 8 → 11 : enregistrement → consolidation → entraînement → déploiement).
+
+Les versions précédentes cherchaient à rendre chaque session visuellement **identique à une référence fixe** enregistrée : verrouillage matériel de l'exposition, de la balance des blancs et du gain (`camera_settings.json`, module `camera_config`), et **référence visuelle chiffrée** par caméra avec contrôle de conformité et recalibrage vers cette référence (module `camera_reference`), plus un mode `LEGACY` pour les datasets antérieurs. Cette approche supposait un éclairage reproductible.
+
+Or, en salle de classe, l'éclairage **ne se contrôle pas** (emplacement, heure, saison) : exiger la convergence de chaque session vers une référence fixe unique est physiquement intenable. Le nouveau principe inverse la logique : chaque caméra laisse son exposition (et sa balance des blancs) **s'ajuster automatiquement à la lumière réelle de la salle**, puis la **fige** pour la durée de la session (cohérence intra-session, sans exiger d'identité inter-session). La robustesse à la variété d'éclairage est **recherchée** en enregistrant des démonstrations sous des conditions lumineuses variées mais exploitables — une augmentation d'éclairage à l'entraînement pourra la renforcer ultérieurement. Un **contrôle image simple** sur l'image brute (plancher physique de lumière) remplace la comparaison à une référence.
 
 ### Ajouté
 
-- **`SEM_so101_camera_auto.py`** : réglage de l'exposition (et de la balance des blancs) **auto puis figée** par session (via `v4l2-ctl`, secteur 50 Hz anti-scintillement) et **contrôle image simple** sur l'image brute (caméra globale mesurée en zone utile du masque, caméra pince en plein cadre ; verdict 🟢/🟠/🔴).
+- Module **`SEM_so101_camera_auto.py`** : réglage de l'exposition (et de la balance des blancs) **auto puis figée** par session (via `v4l2-ctl` ; secteur 50 Hz anti-scintillement ; convergence courte flux actif, puis figeage), et **contrôle image simple** sur l'image brute (avant masque) — luminosité et part de pixels très clairs / très sombres. La caméra globale est mesurée dans la **zone utile du masque**, la caméra pince en **plein cadre**. Verdict gradué 🟢 (exploitable) / 🟠 (limite) / 🔴 (cramée ou écrasée), *fail-closed* (un réglage non appliqué arrête le script appelant).
 
 ### Modifié
 
-- **Scripts 8 (enregistrement) et 11 (déploiement)** migrés vers `camera_auto` : exposition auto puis figée au démarrage de session, puis contrôle image (avant chaque bloc à l'enregistrement, avant l'inférence au déploiement) ; identification des caméras en fenêtre live (G / P / Q / Échap).
-- **Script 9 (consolidation)** : suppression de la copie des références caméra dans le `meta/` du dataset.
+- **Script 8 (enregistrement)** migré vers `camera_auto` : identification des caméras en **fenêtre live** (touches directes G / P / Q / Échap), réglage exposition auto puis figée au démarrage de session, puis **contrôle image avant chaque bloc**. Suppression du verrouillage matériel et des menus de référence.
+- **Script 11 (déploiement)** migré vers `camera_auto` : réglage exposition auto puis figée et contrôle image **avant l'inférence** ; modèle chargé sur le **périphérique disponible** (GPU si présent, sinon CPU). Suppression du contrôle contre les références du dataset, du verrouillage matériel, de la résolution de la traçabilité méta (`resoudre_meta_dataset`) et du mode `LEGACY`.
+- **Script 9 (consolidation)** : suppression de la copie des **références caméra** dans le `meta/` du dataset et des états de traçabilité associés (copiée / partielle / absente / échec).
 
 ### Retiré
 
-- Du workflow courant : modules `SEM_so101_camera_config.py` et `SEM_so101_camera_reference.py`, fichier `camera_settings.json`, système de **référence visuelle** (zones, diagnostic, recalibrage), copie des références dans le `meta/`, et mode **`LEGACY`** au déploiement. `guvcview` n'est plus requis (optionnel).
+- Du workflow courant : modules **`SEM_so101_camera_config.py`** (verrouillage matériel) et **`SEM_so101_camera_reference.py`** (référence visuelle : zones, diagnostic de conformité, recalibrage), fichier **`camera_settings.json`**, copie des **références caméra** dans le `meta/`, et mode **`LEGACY`** au déploiement.
+- **`guvcview`** n'est plus un outil requis (optionnel, inspection manuelle uniquement) ; `v4l-utils` (commande `v4l2-ctl`) reste requis.
 
 ### Documentation
 
-- Guides de phase (1, 7, 8, 10), `README_guides.md`, `README.md` et `README_scripts.md` réalignés sur le nouveau paradigme caméra.
-
-> Cette section sera renommée `[1.5.0]` (avec sa date) une fois les **tests machine réels** des scripts 8 et 11 effectués.
+- **Guides de phase** réalignés sur le nouveau paradigme : **Phase 1** (outils caméra : `v4l-utils` requis, `guvcview` optionnel), **Phase 7** (enregistrement : exposition auto puis figée + contrôle image, philosophie d'éclairage réécrite), **Phase 8** (retrait de la traçabilité « référence visuelle »), **Phase 10** (déploiement : contrôle image, GPU/CPU, prérequis calibration Follower). Guides des phases 2, 3, 4, 5, 6 et 9 inchangés (non concernés).
+- **READMEs** réalignés : `README_guides.md`, `README.md`, `README_EN.md` et `README_scripts.md` — retrait des modules et fichiers de l'ancien paradigme, section unique `camera_auto`, harmonisation GPU/CPU (« fortement recommandé ; CPU possible mais beaucoup plus lent »), tables d'identification et de contrôle image.
 
 ## [1.4.0] - 2026-06-26
 
