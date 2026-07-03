@@ -152,19 +152,20 @@ Formation du modèle d'intelligence artificielle sur les démonstrations.
 - Optimisé pour GPU NVIDIA (Quadro RTX 4000, batch size 4)
 - Sauvegarde de checkpoints régulière
 - Reprise d'entraînement interrompu
+- Registre local de **modèles nommés** (plusieurs modèles conservables, choix au déploiement)
 
 **Script utilisé :**
 - `SEM_so101_10_train.py`
 
 **Fichiers générés :**
-- `~/lerobot/outputs/train/act_so101_pick_place/checkpoints/`
+- `~/lerobot/outputs/train/<nom_du_modele>/checkpoints/`
 
 
 ### 📙 Phase 10 — Déploiement Autonome
 
 Inférence autonome : le modèle ACT pilote le robot sans opérateur.
 
-- Sélection d'un checkpoint entraîné
+- Sélection du **modèle nommé**, puis du checkpoint (choix explicite du modèle, aucun défaut)
 - Inférence en boucle à ~30 images/seconde
 - Bras Follower seul (le Leader n'est pas nécessaire — le modèle remplace l'opérateur)
 - Masque réappliqué + **contrôle image des deux caméras** (exposition auto puis figée, adaptée à la lumière de la salle, puis contrôle de l'image)
@@ -199,4 +200,4 @@ Inférence autonome : le modèle ACT pilote le robot sans opérateur.
 ---
 
 Service Écoles-Médias — DIP Genève
-Dernière mise à jour : 01.07.2026
+Dernière mise à jour : voir `CHANGELOG.md`
