@@ -11,7 +11,7 @@ Ce document recense les principaux fichiers lus ou écrits par le pipeline — d
 - **Écrit par** : script (ou module) qui crée ou met à jour le fichier.
 - **Lu par** : script (ou module) qui le lit.
 - **Écriture atomique** : la plupart des fichiers de configuration sont écrits via un fichier `*.tmp` puis renommés (`os.replace`), pour éviter un fichier corrompu en cas d'interruption. Les `*.tmp` sont **transitoires** (jamais persistants).
-- Quatre racines de stockage : `~/lerobot/calibration/`, `~/.cache/huggingface/lerobot/local/`, `~/lerobot/outputs/train/act_so101_pick_place/`, et le dossier des scripts.
+- Quatre racines de stockage : `~/lerobot/calibration/`, `~/.cache/huggingface/lerobot/local/`, `~/lerobot/outputs/train/` (un sous-dossier par **modèle nommé**), et le dossier des scripts.
 
 
 ### 📁 1. `~/lerobot/calibration/` — configuration persistante
@@ -80,10 +80,15 @@ Construit par le **script 9** (fusion des 5 positions), lu par le **script 10**.
 > **Note 5 — bascule « tout ou rien » :** le script 9 construit d'abord dans `so101_pick_place_consolidated_tmp/`, puis renomme l'ancien dataset en `so101_pick_place_consolidated_old/`, installe le nouveau, et **annule (rollback)** si le renommage échoue. Les fichiers `*.tmp.mp4` sont des conversions vidéo temporaires. Ces dossiers/fichiers sont transitoires.
 
 
-### 🧠 4. Sorties d'entraînement — `~/lerobot/outputs/train/act_so101_pick_place/`
+### 🧠 4. Sorties d'entraînement — `~/lerobot/outputs/train/<nom_du_modele>/`
+
+Chaque entraînement crée ou reprend un **modèle nommé** : un dossier
+`~/lerobot/outputs/train/<nom_du_modele>/` (le nom est celui saisi au script 10,
+sans préfixe). Les chemins ci-dessous sont relatifs à ce dossier.
 
 | Fichier / dossier | Rôle | Écrit par | Lu par |
 | :--- | :--- | :--- | :--- |
+| `sem_training_params.json` | Mémoire **informative** des paramètres SEM du lancement (entraînement neuf ou remplacement) — **non mise à jour** en reprise/prolongation, et **ne pilote pas** la reprise | 10 | 10 (affichage à la reprise) |
 | `checkpoints/<step>/pretrained_model/` | Checkpoint ACT (modèle + config) | LeRobot (via 10) | 10, 11 |
 | `checkpoints/<step>/pretrained_model/model.safetensors` | Poids du modèle ACT | LeRobot | 11 |
 | `checkpoints/<step>/pretrained_model/config.json` | Configuration de la policy | LeRobot | 11 |
@@ -95,11 +100,15 @@ Construit par le **script 9** (fusion des 5 positions), lu par le **script 10**.
 
 ### 📝 5. Dossier des scripts — `~/lerobot/Scripts_SEM/scripts/`
 
-| Fichier | Rôle |
-| :--- | :--- |
-| `sem_training_params.json` | Mémoire **informative** des derniers paramètres d'entraînement SEM |
+Le dossier des scripts ne contient **aucun fichier de données persistant** : il
+n'héberge que les scripts eux-mêmes.
 
-> **Note 7 — exception notable :** ce fichier est écrit **à côté du script 10** (`Path(__file__).parent`), et non dans `outputs/train/`. Il est purement informatif : la reprise fiable s'appuie sur `train_config.json` du checkpoint, pas sur ce fichier.
+> **Note 7 — `sem_training_params.json` :** ce fichier est désormais écrit dans le
+> dossier du **modèle** (`~/lerobot/outputs/train/<nom_du_modele>/`, voir section 4),
+> **après** le lancement de l'entraînement — jamais avant, pour ne pas créer un
+> `output_dir` non vide qui ferait échouer un entraînement neuf. Il est purement
+> informatif : la reprise fiable s'appuie sur `train_config.json` du checkpoint,
+> pas sur ce fichier.
 
 
 ### 📌 Notes finales
