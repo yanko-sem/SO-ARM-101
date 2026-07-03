@@ -435,4 +435,4 @@ This work is licensed under the Creative Commons Attribution-NonCommercial-Share
   Service Écoles-Médias (SEM) — Department of Public Instruction (DIP), Geneva
 </p>
 
-**Last updated: 2 July 2026**
+**Last updated: see `CHANGELOG.md`**
