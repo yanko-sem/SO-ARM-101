@@ -18,17 +18,6 @@ Ce README décrit la chaîne actuelle validée des scripts SEM :
 11 Déploiement ACT
 ```
 
-## ✅ Changements majeurs intégrés dans cette version
-
-Cette version du README tient compte des mises à jour récentes de la chaîne complète, en particulier :
-
-- suppression de l'ancienne séparation entre préparation, visualisation, entraînement et déploiement ;
-- `SEM_so101_9_dataset.py` prépare désormais le dataset complet et intègre la visualisation ;
-- `SEM_so101_10_train.py` est le script d'entraînement ACT ;
-- `SEM_so101_11_deploy.py` est le script de déploiement autonome ;
-- `SEM_so101_camera_auto.py` est le module canonique de réglage caméra (exposition auto puis figée) et de contrôle image ;
-- les scripts 8, 9, 10 et 11 sont maintenant alignés sur la même logique de traçabilité, de fail-closed et de sécurité robot.
-
 ---
 
 ## 🔧 Prérequis
@@ -282,6 +271,7 @@ Entraînement de la politique ACT sur le dataset consolidé.
 
 Fonctions principales :
 
+- sélection ou création d'un **modèle nommé** (registre local sous `~/lerobot/outputs/train/`), nom libre validé par `^[a-z0-9][a-z0-9_-]*$` (= nom exact du dossier, sans préfixe) ;
 - vérification des prérequis avant lancement ;
 - détection du GPU / CUDA, avec bascule automatique sur CPU si absent (avertissement non bloquant) ;
 - vérification PyAV, requis par `--dataset.video_backend=pyav` ;
@@ -297,7 +287,8 @@ Fonctions principales :
 - reprise fiable avec `train_config.json` du checkpoint ;
 - prolongation d'un entraînement existant vers un nombre de steps supérieur ;
 - tri numérique des checkpoints, pour éviter de reprendre un checkpoint plus ancien par erreur ;
-- suppression d'un ancien entraînement uniquement après confirmation finale.
+- **remplacement** d'un modèle existant uniquement après confirmation forte (saisie de `SUPPRIMER`), avec l'option « choisir un autre modèle » ; un dossier existant même partiel ne bloque pas le nom ;
+- `sem_training_params.json` écrit dans le dossier du modèle, **après** le lancement.
 
 **Utilisation :**
 
@@ -315,7 +306,7 @@ Le modèle observe les deux caméras et l'état actuel du Follower, puis command
 
 Fonctions principales :
 
-- sélection du checkpoint avec priorité à `last`, sinon plus grand checkpoint numérique ;
+- sélection **explicite du modèle nommé** (aucun défaut), puis du checkpoint **chargeable** — priorité à `last` s'il est chargeable, sinon le plus grand checkpoint numérique chargeable ; seuls les modèles et checkpoints réellement chargeables (`config.json` + `model.safetensors`) sont proposés ;
 - chargement du modèle ACT avec `ACTPolicy.from_pretrained()` ;
 - masque de caméra globale obligatoire ;
 - calibration Follower chargée et validée avant ouverture du port et activation du couple ;
@@ -441,14 +432,18 @@ Ce dossier est produit par le script 9. Il contient les parquets, les vidéos et
 
 ### Modèles entraînés
 
+Chaque entraînement crée un **modèle nommé** sous une racine commune (un
+sous-dossier par modèle) :
+
 ```text
-~/lerobot/outputs/train/act_so101_pick_place/
+~/lerobot/outputs/train/                 # un sous-dossier par modèle
+~/lerobot/outputs/train/<nom_du_modele>/
 ```
 
-Les checkpoints sont stockés dans :
+Les checkpoints d'un modèle sont stockés dans :
 
 ```text
-~/lerobot/outputs/train/act_so101_pick_place/checkpoints/
+~/lerobot/outputs/train/<nom_du_modele>/checkpoints/
 ```
 
 ---
@@ -460,7 +455,7 @@ Les checkpoints sont stockés dans :
 3. Le Follower doit être alimenté pour être détecté sur le port série.
 4. Les conditions matérielles au déploiement (positions et cadrage des caméras) doivent correspondre à celles de l'enregistrement du dataset d'entraînement.
 5. Les scripts récents privilégient le fail-closed : si la caméra, la calibration ou la communication servo sont douteuses, le script refuse de continuer plutôt que de créer ou utiliser un état ambigu.
-6. Avant de relancer un nouvel entraînement avec le script 10, vérifier si l'ancien dossier `act_so101_pick_place` doit être conservé ou supprimé.
+6. Chaque entraînement est un **modèle nommé** ; vous pouvez en conserver plusieurs. Réutiliser un nom existant propose de reprendre, prolonger ou **remplacer** ce modèle ; le remplacement (suppression de l'existant) exige la saisie de `SUPPRIMER`.
 7. Avant un déploiement réel, vérifier manuellement que la zone de travail est dégagée et que le bras peut revenir au repos sans obstacle.
 
 ---
