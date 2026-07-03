@@ -436,4 +436,4 @@ Cette œuvre est mise à disposition selon les termes de la Licence Creative Com
   Service Écoles-Médias (SEM) — Département de l’Instruction Publique (DIP), Genève
 </p>
 
-**Dernière mise à jour : 02.07.2026**
+**Dernière mise à jour : voir `CHANGELOG.md`**
