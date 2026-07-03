@@ -27,7 +27,7 @@ Dérouler la **Phase 1** (`SEM_SO101_Phase1.md`) : environnement conda `lerobot`
 | Configuration / calibration | `~/lerobot/calibration/` *(dossier entier)* | scripts 3 → 11 | toujours |
 | Dataset brut | `~/.cache/huggingface/lerobot/local/so101_pick_place/` | 8 (poursuite), 9 | si travail sur dataset |
 | Dataset consolidé | `~/.cache/huggingface/lerobot/local/so101_pick_place_consolidated/` | 10, visualisation | si entraînement / visu |
-| Sorties d'entraînement | `~/lerobot/outputs/train/act_so101_pick_place/` *(dossier entier)* | 10 (reprise), 11 (déploiement) | si déploiement / reprise |
+| Sorties d'entraînement | `~/lerobot/outputs/train/` *(tous les modèles nommés)* | 10 (reprise), 11 (déploiement) | si déploiement / reprise |
 
 `~/lerobot/calibration/` contient : `leader_calibration.json`, `follower_calibration.json`, `repos_position.json`, `teleoperation_config_cote.json` (+ `_face.json` si utilisé), `camera_mask.json`.
 
@@ -40,7 +40,7 @@ Vérifier d'abord quels dossiers existent (retirer de la commande ceux qui sont 
 ```bash
 ls ~/lerobot/calibration
 ls ~/.cache/huggingface/lerobot/local/
-ls ~/lerobot/outputs/train/act_so101_pick_place/
+ls ~/lerobot/outputs/train/
 ```
 
 Sur le PC d'origine — créer l'archive (le `h` de `czhf` déréférence le lien `checkpoints/last`) :
@@ -48,7 +48,7 @@ Sur le PC d'origine — créer l'archive (le `h` de `czhf` déréférence le lie
 ```bash
 tar czhf portage_so101.tgz -C ~ \
   lerobot/calibration \
-  lerobot/outputs/train/act_so101_pick_place \
+  lerobot/outputs/train \
   .cache/huggingface/lerobot/local/so101_pick_place \
   .cache/huggingface/lerobot/local/so101_pick_place_consolidated
 ```
@@ -58,7 +58,7 @@ Sur le nouveau PC (après Phase 1) — **si le poste contient déjà une configu
 ```bash
 mkdir -p ~/backup_so101_avant_portage
 cp -a ~/lerobot/calibration                        ~/backup_so101_avant_portage/ 2>/dev/null
-cp -a ~/lerobot/outputs/train/act_so101_pick_place ~/backup_so101_avant_portage/ 2>/dev/null
+cp -a ~/lerobot/outputs/train                      ~/backup_so101_avant_portage/ 2>/dev/null
 cp -a ~/.cache/huggingface/lerobot/local           ~/backup_so101_avant_portage/ 2>/dev/null
 ```
 
@@ -72,7 +72,7 @@ Alternative réseau (déréférence aussi les liens symboliques) :
 
 ```bash
 rsync -aL ORIGINE:lerobot/calibration/ ~/lerobot/calibration/
-rsync -aL ORIGINE:lerobot/outputs/train/act_so101_pick_place/ ~/lerobot/outputs/train/act_so101_pick_place/
+rsync -aL ORIGINE:lerobot/outputs/train/ ~/lerobot/outputs/train/
 rsync -a  ORIGINE:.cache/huggingface/lerobot/local/so101_pick_place/ ~/.cache/huggingface/lerobot/local/so101_pick_place/
 rsync -a  ORIGINE:.cache/huggingface/lerobot/local/so101_pick_place_consolidated/ ~/.cache/huggingface/lerobot/local/so101_pick_place_consolidated/
 ```
@@ -80,9 +80,10 @@ rsync -a  ORIGINE:.cache/huggingface/lerobot/local/so101_pick_place_consolidated
 Après copie, vérifier que le **modèle** est bien présent. Avec `tar -h` / `rsync -aL`, `last` devient un vrai dossier — `readlink` n'est donc pas un test fiable ; on teste le contenu réel (les deux fichiers lus par le script 11) :
 
 ```bash
-ls -l ~/lerobot/outputs/train/act_so101_pick_place/checkpoints/last
-test -f ~/lerobot/outputs/train/act_so101_pick_place/checkpoints/last/pretrained_model/model.safetensors && echo "modele OK"
-test -f ~/lerobot/outputs/train/act_so101_pick_place/checkpoints/last/pretrained_model/config.json       && echo "config OK"
+# Remplacez <nom_du_modele> par le nom de chaque modèle à vérifier
+ls -l ~/lerobot/outputs/train/<nom_du_modele>/checkpoints/last
+test -f ~/lerobot/outputs/train/<nom_du_modele>/checkpoints/last/pretrained_model/model.safetensors && echo "modele OK"
+test -f ~/lerobot/outputs/train/<nom_du_modele>/checkpoints/last/pretrained_model/config.json       && echo "config OK"
 ```
 
 > **Note `checkpoints/last` :** souvent un lien symbolique à l'origine. Si vous ne le déréférencez pas, déployez plutôt depuis un checkpoint numérique (ex. `checkpoints/100000/`) qu'un lien éventuellement cassé. `readlink -f .../last` reste utile à titre purement informatif.
@@ -105,9 +106,10 @@ python SEM_so101_7_teleoperation_camera.py --refaire-masque
 
 - **Entraînement (script 10) sur un portable sans GPU** : bascule automatique sur **CPU**, beaucoup plus lent — utilisable pour un test léger, pas pour un entraînement complet.
 - **Mêmes bras physiques** requis pour que la calibration copiée ait un sens.
+- **Déploiement vs reprise après portage :** un modèle copié est directement **déployable** (script 11 : le chemin lui est fourni au chargement). En revanche, **reprendre** l'entraînement d'un modèle copié (script 10) suppose que le chemin de sortie enregistré dans `train_config.json` corresponde au chemin sur le nouveau poste ; si le compte utilisateur ou le chemin `home` diffère, cette reprise peut échouer. À **vérifier sur la machine** avant de compter dessus (même logique que la règle « ne pas renommer un dossier de modèle »).
 
 ### 📝 Récapitulatif
 
 - **Réinstaller** : l'environnement (Phase 1).
-- **Copier** : `~/lerobot/calibration/`, les datasets voulus, `~/lerobot/outputs/train/act_so101_pick_place/`.
+- **Copier** : `~/lerobot/calibration/`, les datasets voulus, `~/lerobot/outputs/train/` (tous les modèles nommés).
 - **Vérifier sur place** : calibration (recalibrer si dérive), masque (si la caméra a bougé).
