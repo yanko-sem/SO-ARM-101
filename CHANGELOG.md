@@ -4,6 +4,34 @@ Toutes les modifications importantes du projet seront documentées dans ce fichi
 
 Le format s’inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et le projet utilise une logique de versionnement stable à partir de la version `v1.0.0`.
 
+## [1.6.0] - 2026-07-03
+
+**Registre local de modèles nommés** (scripts 10 et 11). Le pipeline passe d'un
+**modèle unique** à un emplacement fixe (`~/lerobot/outputs/train/act_so101_pick_place/`)
+à **plusieurs modèles nommés** sous `~/lerobot/outputs/train/<nom>/`. On peut ainsi
+entraîner et conserver plusieurs modèles issus de démonstrations différentes, puis
+**choisir explicitement** lequel déployer — sans réentraîner entre deux démonstrations.
+
+### Ajouté
+
+- **Modèles nommés (scripts 10 et 11).** Chaque entraînement crée ou reprend un modèle nommé sous `~/lerobot/outputs/train/<nom>/`. Le nom est **libre** (validé par `^[a-z0-9][a-z0-9_-]*$`, il commence par une lettre ou un chiffre) et devient le **nom exact du dossier**, sans préfixe ajouté. Fonction partagée **`checkpoint_chargeable()`** : un checkpoint n'est considéré valide que si son `pretrained_model/` contient `config.json` **et** `model.safetensors` (les deux fichiers chargés par `ACTPolicy.from_pretrained()`).
+- **Script 10 :** menu de **sélection ou création de modèle** en tête de l'entraînement (nouvelles fonctions `checkpoint_chargeable`, `lister_modeles`, `nom_modele_valide`, `selectionner_ou_creer_modele`).
+- **Script 11 :** **sélection explicite du modèle** (aucun modèle par défaut) **avant** la sélection du checkpoint (nouvelle fonction `selectionner_modele`) ; le résumé de fin d'exécution affiche le **modèle utilisé** en plus du checkpoint.
+
+### Modifié
+
+- **Script 10 :** `OUTPUT_DIR` **dynamique** (base commune `TRAIN_BASE = ~/lerobot/outputs/train`). Le fichier **`sem_training_params.json` est désormais écrit dans le dossier du modèle**, **après** le lancement (et non plus « à côté du script »), afin de ne pas créer un `output_dir` non vide qui ferait échouer un entraînement neuf. Menu de reprise : l'ancien « Nouveau » devient **« Remplacer ce modèle »** (suppression gardée par la saisie de `SUPPRIMER`), avec une nouvelle option **« Choisir un autre modèle »**. Un dossier existant **même partiel** (entraînement interrompu/échoué) ne bloque plus le nom : il est routé vers la reprise/le remplacement.
+- **Script 11 :** `selectionner_checkpoint()` ne **liste et ne recommande** que des checkpoints **chargeables** (`config.json` + `model.safetensors`) ; sans `last` chargeable, la recommandation retombe sur le plus grand checkpoint numérique chargeable. Le **comptage des checkpoints** affiché dans les menus repose lui aussi sur `checkpoint_chargeable`.
+
+### Sécurité
+
+- **Remplacement d'un modèle** (script 10) gardé par une **confirmation forte** : saisie explicite du mot `SUPPRIMER`. Fail-closed — aucune suppression silencieuse ; toute autre saisie conserve le modèle.
+
+### Documentation
+
+- **Guides Phase 9 (entraînement) et Phase 10 (déploiement)** réalignés : sélection/création de modèle nommé, convention de nommage sans préfixe, règle **« ne pas renommer un dossier de modèle »**, menu de reprise (Remplacer/`SUPPRIMER`, Autre modèle), **sélection du modèle avant le checkpoint**, chemin exact `checkpoints/<step>/pretrained_model/`, et formulation du **checkpoint recommandé** (`last` s'il est chargeable, sinon le plus grand checkpoint numérique chargeable). Atténuation du paragraphe sur l'« équivalence » de la prolongation (comportement de reprise à confirmer sur le `train.py` installé).
+- **READMEs et documents annexes** réalignés : `README_fichiers.md` (`sem_training_params.json` désormais dans le dossier du modèle ; racine `outputs/train/` par modèle nommé), `README_scripts.md` (descriptions des scripts 10/11, stockage par modèle nommé, filtre « chargeable »), `README_guides.md` (registre de modèles, sélection du modèle), et `portage_autre_PC.md` (copie de l'ensemble `~/lerobot/outputs/train/` — tous les modèles nommés — et note sur déploiement vs reprise d'un modèle porté).
+
 ## [1.5.0] - 2026-07-02
 
 **Changement de direction sur la gestion de la lumière**, validé par les tests machine réels de la chaîne complète (scripts 8 → 11 : enregistrement → consolidation → entraînement → déploiement).
